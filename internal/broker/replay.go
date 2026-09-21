@@ -63,6 +63,9 @@ func init() {
 		Label:       "Rejeu (simulation)",
 		Description: "Rejoue l'historique M1 local comme un flux temps réel, sur un compte simulé.",
 		Simulated:   true,
+		// Le rejeu surveille lui-même stop et limite à chaque tick
+		// (cf. checkBarriers plus bas) : les barrières sont bien portées.
+		SupportsBracket: true,
 		Requirements: "Un historique téléchargé localement. Aucun courtier, aucun terminal, " +
 			"aucun argent réel — les chiffres affichés sont ceux d'un compte fictif.",
 	}, func(opts Options) (Gateway, error) {

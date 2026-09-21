@@ -31,6 +31,17 @@ type Info struct {
 	// Simulated : true si le compte, les positions et les prix sont
 	// produits par le programme lui-même et non par un courtier.
 	Simulated bool
+	// SupportsBracket : la passerelle porte-t-elle le stop et la limite
+	// CHEZ le courtier, liés à l'entrée ?
+	//
+	// Une stratégie propose ses barrières dans le Signal, le risque les
+	// reporte sur l'OrderRequest, et le moteur les envoie. Si la
+	// passerelle ignore ces deux champs, l'entrée part NUE : l'écran
+	// affiche un stop qui n'existe nulle part, et une position censée
+	// risquer 1,5 ATR risque tout le compte. Déclarer la capacité permet
+	// au moteur de refuser l'entrée plutôt que de découvrir le problème
+	// sur un relevé de courtier.
+	SupportsBracket bool
 	// Requirements : ce qu'il faut avoir installé/lancé à côté.
 	Requirements string
 }

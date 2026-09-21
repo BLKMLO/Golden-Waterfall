@@ -67,8 +67,13 @@ type Stats struct {
 	Orders           int64
 	Fills            int64
 	RejectedByBroker int64
-	LastTick         time.Time
-	LastBar          time.Time
+	// UnprotectedRefused : entrées REFUSÉES par le moteur parce que la
+	// passerelle ne sait pas porter les barrières. Compté, jamais tu :
+	// une abstention et un refus technique ne veulent pas dire la même
+	// chose.
+	UnprotectedRefused int64
+	LastTick           time.Time
+	LastBar            time.Time
 }
 
 // NewEngine assemble le moteur. Le câblage réel se fait dans Runtime.
@@ -274,6 +279,19 @@ func (e *Engine) onBarClosed(ctx context.Context, symbol string, bar core.Bar) {
 		return
 	}
 
+	// Une entrée protégée par des barrières que la passerelle ne portera
+	// pas est une entrée NUE. On refuse plutôt que de l'apprendre sur un
+	// relevé de courtier.
+	if reason, ok := e.unprotected(*dec.Order); !ok {
+		e.mu.Lock()
+		e.stats.UnprotectedRefused++
+		e.mu.Unlock()
+		e.logger.Error("ENTRÉE REFUSÉE par le moteur : "+reason,
+			"symbole", symbol, "passerelle", e.gateway.Info().Name,
+			"stop", dec.Order.StopLoss, "limite", dec.Order.TakeProfit)
+		return
+	}
+
 	e.mu.Lock()
 	if e.inFlight[symbol] != "" {
 		e.mu.Unlock()
@@ -302,6 +320,21 @@ func (e *Engine) onBarClosed(ctx context.Context, symbol string, bar core.Bar) {
 	e.logger.Info("ordre soumis", "symbole", symbol, "sens", dec.Order.Side,
 		"quantite", dec.Order.Quantity, "ordre", orderID,
 		"stop", dec.Order.StopLoss, "limite", dec.Order.TakeProfit)
+}
+
+// unprotected : l'ordre peut-il partir tel quel ?
+//
+// Seules les ENTRÉES sont concernées : une sortie n'a pas de barrières à
+// porter, et rien ne doit jamais empêcher de fermer une position.
+func (e *Engine) unprotected(order core.OrderRequest) (string, bool) {
+	if order.StopLoss == 0 && order.TakeProfit == 0 {
+		return "", true
+	}
+	if e.gateway.Info().SupportsBracket {
+		return "", true
+	}
+	return "la passerelle ne porte pas le stop et la limite chez le courtier ; " +
+		"la position partirait sans protection", false
 }
 
 // dayStartEquity lit (ou pose) le repère d'équité du jour UTC.
@@ -425,6 +458,11 @@ func (e *Engine) Describe() string {
 	armed := e.store.ArmedSymbols()
 	if len(armed) == 0 {
 		return "aucune paire armée"
+	}
+	if !e.gateway.Info().SupportsBracket {
+		// Dit AVANT la première bougie plutôt qu'après une heure de
+		// silence inexpliqué.
+		return "passerelle sans barrières chez le courtier : aucune entrée ne partira"
 	}
 	return fmt.Sprintf("%d paire(s) armée(s)", len(armed))
 }

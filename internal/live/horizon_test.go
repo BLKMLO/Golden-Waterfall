@@ -29,6 +29,12 @@ type recordingGateway struct {
 
 func (g *recordingGateway) Connected() bool { return true }
 
+// Par défaut la passerelle de test porte les barrières : les cas qui
+// éprouvent le refus passent par bracketGateway, plus bas.
+func (g *recordingGateway) Info() broker.Info {
+	return broker.Info{Name: "test", SupportsBracket: true}
+}
+
 func (g *recordingGateway) Positions(context.Context) ([]core.Position, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -129,3 +135,78 @@ func TestDisarmedKillSwitchForcesNothing(t *testing.T) {
 }
 
 var _ strategy.Strategy = muteStrategy{}
+
+// entryStrategy émet une entrée protégée par des barrières, à chaque
+// bougie.
+type entryStrategy struct{}
+
+func (entryStrategy) Describe() strategy.Description {
+	return strategy.Description{Name: "entree", Version: "test"}
+}
+func (entryStrategy) Warmup(context.Context, strategy.WarmupRequest) error { return nil }
+func (entryStrategy) Shutdown() error                                      { return nil }
+func (entryStrategy) Ready() (bool, string)                                { return true, "" }
+func (entryStrategy) OnBar(_ context.Context, symbol string, _ core.Series, _ int) (core.Signal, error) {
+	return core.Signal{Symbol: symbol, Action: core.EnterLong, StopLoss: 98, TakeProfit: 102}, nil
+}
+
+// bracketGateway déclare — ou non — porter les barrières chez le courtier.
+type bracketGateway struct {
+	*recordingGateway
+	supports bool
+}
+
+func (g bracketGateway) Info() broker.Info {
+	return broker.Info{Name: "test", SupportsBracket: g.supports}
+}
+
+func newEntryEngine(t *testing.T, supports bool) (*Engine, *recordingGateway) {
+	t.Helper()
+	store, err := storage.Open(filepath.Join(t.TempDir(), "gw.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	if err := store.SetTrading("TEST", true); err != nil {
+		t.Fatal(err)
+	}
+	rec := &recordingGateway{}
+	logger := slog.New(slog.DiscardHandler)
+	cfg := config.Default()
+	eng := NewEngine(bracketGateway{recordingGateway: rec, supports: supports},
+		entryStrategy{}, risk.New(cfg.Risk, logger), store, core.NewBus(), logger, data.H4)
+	eng.SetEnabled(true)
+	return eng, rec
+}
+
+func TestEntryRefusedWhenGatewayCannotCarryBarriers(t *testing.T) {
+	eng, gw := newEntryEngine(t, false)
+	bar := core.Bar{Time: time.Date(2024, 3, 4, 0, 0, 0, 0, time.UTC),
+		BidOpen: 100, BidHigh: 100, BidLow: 100, BidClose: 100}
+	eng.onBarClosed(context.Background(), "TEST", bar)
+
+	if n := len(gw.placed()); n != 0 {
+		t.Fatalf("%d ordre(s) soumis : une entrée dont les barrières ne seront pas portées part NUE", n)
+	}
+	if got := eng.Stats().UnprotectedRefused; got != 1 {
+		t.Fatalf("%d refus compté(s), 1 attendu — un refus tu est un silence inexpliqué", got)
+	}
+}
+
+func TestEntryPassesWhenGatewayCarriesBarriers(t *testing.T) {
+	eng, gw := newEntryEngine(t, true)
+	bar := core.Bar{Time: time.Date(2024, 3, 4, 0, 0, 0, 0, time.UTC),
+		BidOpen: 100, BidHigh: 100, BidLow: 100, BidClose: 100}
+	eng.onBarClosed(context.Background(), "TEST", bar)
+
+	orders := gw.placed()
+	if len(orders) != 1 {
+		t.Fatalf("%d ordre(s) soumis, 1 entrée attendue", len(orders))
+	}
+	if orders[0].StopLoss != 98 || orders[0].TakeProfit != 102 {
+		t.Fatalf("les barrières de la stratégie doivent être reportées sur l'ordre : %+v", orders[0])
+	}
+	if got := eng.Stats().UnprotectedRefused; got != 0 {
+		t.Fatalf("%d refus compté(s) alors que la passerelle porte les barrières", got)
+	}
+}

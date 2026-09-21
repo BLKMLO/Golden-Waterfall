@@ -277,6 +277,11 @@ func (m *Model) renderHeader() string {
 		badges = append(badges, m.th.BadgeOff.Render("PAPER"))
 	}
 	badges = append(badges, component.Badge(m.th, snap.GatewayName, snap.Connected))
+	if !snap.SupportsBracket {
+		// Le moteur refusera toute entrée : mieux vaut le lire dans
+		// l'entête que le déduire d'une heure sans ordre.
+		badges = append(badges, m.th.BadgeWarn.Render("SANS BARRIÈRES"))
+	}
 	badges = append(badges, component.Badge(m.th, "kill-switch", snap.KillSwitch))
 	badges = append(badges, m.th.BadgeOff.Render(snap.StrategyName))
 
