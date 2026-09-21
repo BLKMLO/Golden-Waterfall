@@ -254,7 +254,11 @@ func (v *Data) Render(width, height int) string {
 	}
 	sb.WriteString(component.Panel(th, "Historique local", component.Table(th, cols, rows, v.cursor, height-10), width))
 
-	sb.WriteString("\n" + th.Muted.Render("Dossier : "+v.deps.App.Config.Paths.HistoryDir()))
+	// Tronqué : hors panneau, rien ne borne cette ligne, et un chemin long
+	// débordait la largeur du terminal — ce qui décale toute la mise en
+	// page, pas seulement cette ligne.
+	sb.WriteString("\n" + th.Muted.Render(component.Truncate(
+		"Dossier : "+v.deps.App.Config.Paths.HistoryDir(), width)))
 	return sb.String()
 }
 

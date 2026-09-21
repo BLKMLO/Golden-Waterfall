@@ -149,3 +149,46 @@ func TestLabelsAreBinary(t *testing.T) {
 		}
 	}
 }
+
+// TestExpiredDesignatesTheLastBarOfTheWindow : la règle de la barrière
+// verticale est appelée par les DEUX moteurs. Elle doit désigner la même
+// bougie que la fenêtre (t, t+horizon] de l'étiquetage.
+func TestExpiredDesignatesTheLastBarOfTheWindow(t *testing.T) {
+	entry := time.Date(2024, 3, 4, 0, 0, 0, 0, time.UTC)
+	deadline := Deadline(entry)
+	const h4 = 4 * time.Hour
+
+	if want := entry.Add(time.Duration(MaxHoldDays) * 24 * time.Hour); !deadline.Equal(want) {
+		t.Fatalf("échéance %s, %s attendue", deadline, want)
+	}
+	// Une bougie qui se termine AVANT l'échéance : la fenêtre continue.
+	if Expired(deadline.Add(-2*h4), h4, deadline) {
+		t.Fatal("une bougie entièrement dans la fenêtre ne doit pas expirer")
+	}
+	// La bougie qui CONTIENT l'échéance est la dernière de la fenêtre.
+	if !Expired(deadline.Add(-h4/2), h4, deadline) {
+		t.Fatal("la bougie qui atteint l'échéance doit fermer la position")
+	}
+	if !Expired(deadline, h4, deadline) {
+		t.Fatal("la bougie qui commence à l'échéance doit fermer la position")
+	}
+}
+
+func TestExpiredWithoutCadenceFallsBackToStrictOverrun(t *testing.T) {
+	entry := time.Date(2024, 3, 4, 0, 0, 0, 0, time.UTC)
+	deadline := Deadline(entry)
+	if Expired(deadline, 0, deadline) {
+		t.Fatal("sans cadence connue, on attend un dépassement STRICT")
+	}
+	if !Expired(deadline.Add(time.Minute), 0, deadline) {
+		t.Fatal("après l'échéance, la position doit être fermée")
+	}
+}
+
+// TestExpiredWithoutDeadlineNeverFires : une position sans échéance (aucune
+// entrée) ne doit jamais déclencher de sortie.
+func TestExpiredWithoutDeadlineNeverFires(t *testing.T) {
+	if Expired(time.Now(), 4*time.Hour, time.Time{}) {
+		t.Fatal("sans échéance posée, rien ne doit expirer")
+	}
+}
