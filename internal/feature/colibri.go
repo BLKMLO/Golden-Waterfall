@@ -1,0 +1,307 @@
+package feature
+
+import (
+	"math"
+
+	"github.com/BLKMLO/Golden-Waterfall/internal/core"
+	"github.com/BLKMLO/Golden-Waterfall/internal/indicator"
+)
+
+// --- Fenêtres : elles font partie de la DÉFINITION du modèle Colibri ---
+//
+// Ce ne sont PAS des réglages runtime. Les changer change le modèle, donc
+// sa version. Elles n'ont rien à faire dans config.yaml.
+var (
+	ReturnWindows = []int{1, 3, 5, 10, 20}
+	SMAWindows    = []int{10, 20, 50}
+	EMAWindows    = []int{12, 26}
+	RSIWindows    = []int{7, 14}
+	ROCWindows    = []int{5, 10}
+)
+
+const (
+	RangeWindow   = 20
+	ATRPeriod     = 14
+	ADXPeriod     = 14
+	StochPeriod   = 14
+	StochSmooth   = 3
+	BBWindow      = 20
+	RVWindow      = 20
+	VolRatioShort = 10
+	VolRatioLong  = 50
+	VolumeWindow  = 20
+	MACDFast      = 12
+	MACDSlow      = 26
+	MACDSignal    = 9
+
+	// WarmupBars : historique minimum avant la première ligne pleinement
+	// valide (la plus longue fenêtre vaut 50 ; les lissages de Wilder se
+	// stabilisent au-delà). En deçà, les lignes contiennent des NaN.
+	WarmupBars = 60
+
+	// ContextBars : bougies de contexte à fournir avant un bloc évalué,
+	// confortablement au-dessus de WarmupBars pour que les indicateurs
+	// RÉCURSIFS (EMA, Wilder), sans fenêtre finie, soient stabilisés dès
+	// la première bougie décidée.
+	ContextBars = 300
+)
+
+// Columns est l'ordre CANONIQUE et FIGÉ des colonnes. Entraînement et
+// inférence doivent partager exactement cette liste et cet ordre — c'est
+// la seule chose qui garantit qu'un modèle rechargé voit les mêmes
+// colonnes qu'au fit.
+var Columns = buildColumns()
+
+func buildColumns() []string {
+	cols := make([]string, 0, 34)
+	for _, n := range ReturnWindows {
+		cols = append(cols, sprintf("ret_log_%d", n))
+	}
+	cols = append(cols, "range_pos_20", "gap_open")
+	for _, n := range SMAWindows {
+		cols = append(cols, sprintf("sma_dev_%d", n))
+	}
+	cols = append(cols, "sma_slope_20")
+	for _, n := range EMAWindows {
+		cols = append(cols, sprintf("ema_dev_%d", n))
+	}
+	cols = append(cols, "macd", "macd_signal", "macd_hist", "adx_14")
+	for _, n := range RSIWindows {
+		cols = append(cols, sprintf("rsi_%d", n))
+	}
+	cols = append(cols, "stoch_k_14", "stoch_d_14")
+	for _, n := range ROCWindows {
+		cols = append(cols, sprintf("roc_%d", n))
+	}
+	cols = append(cols, "atr_norm_14", "realized_vol_20", "bb_width_20", "vol_ratio_10_50")
+	cols = append(cols, "vol_rel_20", "vol_spike_20", "obv_z_20")
+	cols = append(cols, "dow", "days_to_friday", "hour_utc", "session")
+	return cols
+}
+
+// Compute calcule les 34 features causales de Colibri sur une série.
+//
+// Le côté BID sert de référence (le côté ask n'entre que dans la mesure du
+// spread, côté backtest). Les lignes de chauffe contiennent des NaN, et les
+// ±Inf sont ramenés à NaN : une division par un dénominateur nul ne doit
+// pas produire une valeur « énorme » que l'arbre prendrait pour un signal.
+func Compute(series core.Series) *Matrix {
+	n := len(series)
+	m := NewMatrix(n, Columns)
+	if n == 0 {
+		return m
+	}
+
+	open := series.Opens()
+	high := series.Highs()
+	low := series.Lows()
+	closes := series.Closes()
+	volume := series.Volumes()
+	logClose := indicator.Log(closes)
+
+	col := func(name string) int {
+		i, err := m.ColumnIndex(name)
+		if err != nil {
+			// Impossible par construction : Columns et les écritures
+			// ci-dessous sont dans le même fichier. Paniquer ici signale
+			// une incohérence de code, pas une donnée fautive.
+			panic(err)
+		}
+		return i
+	}
+
+	// --- Prix et retours ---------------------------------------------------
+	for _, w := range ReturnWindows {
+		m.SetColumn(col(sprintf("ret_log_%d", w)), indicator.Diff(logClose, w))
+	}
+	lowR := indicator.RollingMin(low, RangeWindow)
+	highR := indicator.RollingMax(high, RangeWindow)
+	rangePos := make([]float64, n)
+	gapOpen := make([]float64, n)
+	for i := 0; i < n; i++ {
+		span := highR[i] - lowR[i]
+		if math.IsNaN(span) || span == 0 {
+			rangePos[i] = math.NaN()
+		} else {
+			rangePos[i] = (closes[i] - lowR[i]) / span
+		}
+		if i == 0 || closes[i-1] <= 0 || open[i] <= 0 {
+			gapOpen[i] = math.NaN()
+		} else {
+			gapOpen[i] = math.Log(open[i] / closes[i-1])
+		}
+	}
+	m.SetColumn(col("range_pos_20"), rangePos)
+	m.SetColumn(col("gap_open"), gapOpen)
+
+	// --- Tendance ----------------------------------------------------------
+	for _, w := range SMAWindows {
+		sma := indicator.RollingMean(closes, w)
+		dev := make([]float64, n)
+		for i := 0; i < n; i++ {
+			if math.IsNaN(sma[i]) || sma[i] == 0 {
+				dev[i] = math.NaN()
+				continue
+			}
+			dev[i] = closes[i]/sma[i] - 1.0
+		}
+		m.SetColumn(col(sprintf("sma_dev_%d", w)), dev)
+	}
+	sma20 := indicator.RollingMean(closes, 20)
+	slope := make([]float64, n)
+	for i := 0; i < n; i++ {
+		if i < 5 || math.IsNaN(sma20[i]) || math.IsNaN(sma20[i-5]) || sma20[i] == 0 {
+			slope[i] = math.NaN()
+			continue
+		}
+		slope[i] = (sma20[i] - sma20[i-5]) / sma20[i]
+	}
+	m.SetColumn(col("sma_slope_20"), slope)
+
+	for _, w := range EMAWindows {
+		ema := indicator.EWMSpan(closes, w, w)
+		dev := make([]float64, n)
+		for i := 0; i < n; i++ {
+			if math.IsNaN(ema[i]) || ema[i] == 0 {
+				dev[i] = math.NaN()
+				continue
+			}
+			dev[i] = closes[i]/ema[i] - 1.0
+		}
+		m.SetColumn(col(sprintf("ema_dev_%d", w)), dev)
+	}
+
+	macd, macdSig, macdHist := indicator.MACD(closes, MACDFast, MACDSlow, MACDSignal)
+	// Normalisation par le prix : sans elle, un MACD d'EURUSD (1,08) et
+	// d'USDJPY (150) ne vivent pas sur la même échelle, et un modèle poolé
+	// apprendrait l'instrument au lieu du marché.
+	m.SetColumn(col("macd"), divideBy(macd, closes))
+	m.SetColumn(col("macd_signal"), divideBy(macdSig, closes))
+	m.SetColumn(col("macd_hist"), divideBy(macdHist, closes))
+	m.SetColumn(col("adx_14"), indicator.ADX(high, low, closes, ADXPeriod))
+
+	// --- Momentum ----------------------------------------------------------
+	for _, w := range RSIWindows {
+		m.SetColumn(col(sprintf("rsi_%d", w)), indicator.RSI(closes, w))
+	}
+	k, d := indicator.Stochastic(high, low, closes, StochPeriod, StochSmooth)
+	m.SetColumn(col("stoch_k_14"), k)
+	m.SetColumn(col("stoch_d_14"), d)
+	for _, w := range ROCWindows {
+		roc := indicator.PctChange(closes, w)
+		for i := range roc {
+			roc[i] *= 100.0
+		}
+		m.SetColumn(col(sprintf("roc_%d", w)), roc)
+	}
+
+	// --- Volatilité --------------------------------------------------------
+	atr := indicator.ATR(high, low, closes, ATRPeriod)
+	m.SetColumn(col("atr_norm_14"), divideBy(atr, closes))
+	ret1 := indicator.Diff(logClose, 1)
+	m.SetColumn(col("realized_vol_20"), indicator.RollingStd(ret1, RVWindow))
+	m.SetColumn(col("bb_width_20"), indicator.BollingerWidth(closes, BBWindow))
+	rvShort := indicator.RollingStd(ret1, VolRatioShort)
+	rvLong := indicator.RollingStd(ret1, VolRatioLong)
+	m.SetColumn(col("vol_ratio_10_50"), divide(rvShort, rvLong))
+
+	// --- Volume (⚠ Dukascopy forex = volume de TICKS, pas réel) ------------
+	volMean := indicator.RollingMean(volume, VolumeWindow)
+	volStd := indicator.RollingStd(volume, VolumeWindow)
+	volRel := divide(volume, volMean)
+	spike := make([]float64, n)
+	for i := 0; i < n; i++ {
+		switch {
+		case math.IsNaN(volMean[i]) || math.IsNaN(volStd[i]):
+			spike[i] = math.NaN()
+		case volStd[i] == 0:
+			// Volume à variance nulle (flux de test, certains indices) :
+			// pic = 0, jamais NaN — sinon une colonne entièrement NaN
+			// ferait tout sauter au filtrage du jeu d'entraînement.
+			spike[i] = 0
+		default:
+			spike[i] = (volume[i] - volMean[i]) / volStd[i]
+		}
+	}
+	m.SetColumn(col("vol_rel_20"), volRel)
+	m.SetColumn(col("vol_spike_20"), spike)
+	m.SetColumn(col("obv_z_20"), indicator.OBVZScore(closes, volume, VolumeWindow))
+
+	// --- Calendrier / saisonnalité ----------------------------------------
+	dow := make([]float64, n)
+	daysToFriday := make([]float64, n)
+	hour := make([]float64, n)
+	session := make([]float64, n)
+	for i, bar := range series {
+		t := bar.Time.UTC()
+		// time.Weekday : dimanche = 0. On réaligne sur la convention
+		// ISO/pandas (lundi = 0, vendredi = 4) attendue par days_to_friday.
+		wd := (int(t.Weekday()) + 6) % 7
+		dow[i] = float64(wd)
+		daysToFriday[i] = math.Max(4.0-float64(wd), 0)
+		h := t.Hour()
+		hour[i] = float64(h)
+		// Sessions FX par heure UTC : 0 Asie, 1 Europe, 2 US, 3 creux.
+		switch {
+		case h < 7:
+			session[i] = 0
+		case h < 13:
+			session[i] = 1
+		case h < 21:
+			session[i] = 2
+		default:
+			session[i] = 3
+		}
+	}
+	m.SetColumn(col("dow"), dow)
+	m.SetColumn(col("days_to_friday"), daysToFriday)
+	m.SetColumn(col("hour_utc"), hour)
+	m.SetColumn(col("session"), session)
+
+	sanitize(m)
+	return m
+}
+
+// ATR expose l'ATR de Wilder BRUT (non normalisé) de la série.
+//
+// Source de vérité UNIQUE de l'ATR pour tout Colibri : le labeling
+// triple-barrier (placement des barrières sur l'historique) ET l'inférence
+// (dimensionnement des TP/SL à l'entrée) l'appellent — mêmes valeurs des
+// deux côtés, aucune divergence entraînement/exécution possible.
+func ATR(series core.Series) []float64 {
+	return indicator.ATR(series.Highs(), series.Lows(), series.Closes(), ATRPeriod)
+}
+
+func divideBy(num, den []float64) []float64 {
+	out := make([]float64, len(num))
+	for i := range num {
+		if math.IsNaN(num[i]) || i >= len(den) || den[i] == 0 {
+			out[i] = math.NaN()
+			continue
+		}
+		out[i] = num[i] / den[i]
+	}
+	return out
+}
+
+func divide(num, den []float64) []float64 {
+	out := make([]float64, len(num))
+	for i := range num {
+		if math.IsNaN(num[i]) || math.IsNaN(den[i]) || den[i] == 0 {
+			out[i] = math.NaN()
+			continue
+		}
+		out[i] = num[i] / den[i]
+	}
+	return out
+}
+
+// sanitize ramène tout ±Inf à NaN : une valeur infinie serait traitée par
+// l'arbre comme un extrême légitime et créerait un split absurde.
+func sanitize(m *Matrix) {
+	for i, v := range m.Data {
+		if math.IsInf(v, 0) {
+			m.Data[i] = math.NaN()
+		}
+	}
+}

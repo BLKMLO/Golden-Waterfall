@@ -1,0 +1,114 @@
+# Publie une version de Golden Waterfall.
+#
+# Deux déclencheurs :
+#   - pousser un tag « v… » ;
+#   - lancer le workflow à la main depuis l'onglet Actions, en saisissant la
+#     version — le tag est alors créé par le workflow lui-même.
+#
+# Le jeton fourni par GitHub Actions a le droit de créer tags et releases, ce
+# qu'un jeton d'application externe n'a en général pas : c'est la raison
+# d'être de ce fichier.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version à publier, par exemple v0.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Une version ne se publie pas sans que le code soit sain. Le
+      # détecteur de concurrence n'est pas optionnel : le moteur live, le
+      # bus et les travaux de fond tournent tous en goroutines.
+      - name: Vérifier le code
+        run: |
+          set -euo pipefail
+          unformatted="$(gofmt -l ./cmd ./internal)"
+          if [ -n "$unformatted" ]; then
+            echo "Fichiers non formatés :" >&2
+            echo "$unformatted" >&2
+            exit 1
+          fi
+          go vet ./...
+          go test -race ./...
+
+      - name: Déterminer la version
+        id: version
+        run: |
+          set -euo pipefail
+          version="${{ inputs.version || github.ref_name }}"
+          case "$version" in
+            v*) ;;
+            *) echo "La version doit commencer par « v », reçu : $version" >&2; exit 1 ;;
+          esac
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+
+      # Le projet est en Go pur, sans cgo : la compilation croisée depuis un
+      # seul runner suffit et évite trois machines.
+      #
+      # CGO_ENABLED=0 n'est pas une optimisation, c'est la garantie que le
+      # binaire publié n'a AUCUNE dépendance native — la promesse centrale
+      # du projet.
+      - name: Compiler les binaires
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          build() {
+            goos="$1"; arch="$2"; label="$3"; ext="${4:-}"
+            name="golden-waterfall-${VERSION}-${label}-${arch}"
+            echo "→ $name"
+            GOOS="$goos" GOARCH="$arch" CGO_ENABLED=0 go build \
+              -trimpath -ldflags "-s -w -X main.Version=${VERSION}" \
+              -o "dist/gw${ext}" ./cmd/gw
+            # Une archive, un fichier. Sur Windows l'icône voyage dedans dès
+            # que cmd/gw/rsrc_windows_amd64.syso existe : « go build » le lie
+            # sans qu'on ait à le demander (voir la cible windows du Makefile).
+            if [ -n "$ext" ]; then
+              (cd dist && zip -q "${name}.zip" "gw${ext}" && rm "gw${ext}")
+            else
+              (cd dist && tar czf "${name}.tar.gz" gw && rm gw)
+            fi
+          }
+          build linux   amd64 linux
+          build linux   arm64 linux
+          build darwin  amd64 macos
+          build darwin  arm64 macos
+          build windows amd64 windows .exe
+          (cd dist && sha256sum * > SHA256SUMS)
+          ls -la dist
+
+      - name: Publier la release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          set -euo pipefail
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            echo "La release $VERSION existe déjà ; ajout des fichiers manquants." >&2
+            gh release upload "$VERSION" dist/* --clobber
+          else
+            gh release create "$VERSION" dist/* \
+              --title "Golden Waterfall $VERSION" \
+              --generate-notes
+          fi
