@@ -108,7 +108,13 @@ jobs:
             echo "La release $VERSION existe déjà ; ajout des fichiers manquants." >&2
             gh release upload "$VERSION" dist/* --clobber
           else
+            # --target épingle le tag au commit EXACTEMENT vérifié et
+            # compilé ci-dessus. Sans lui, gh crée le tag à la pointe de
+            # la branche par défaut : un commit qui n'est pas forcément
+            # celui qu'on vient de tester, et des binaires qui ne
+            # correspondraient alors pas à la version publiée.
             gh release create "$VERSION" dist/* \
+              --target "$GITHUB_SHA" \
               --title "Golden Waterfall $VERSION" \
               --generate-notes
           fi
