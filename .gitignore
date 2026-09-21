@@ -1,0 +1,23 @@
+# Binaires compilés
+/gw
+/gw.exe
+/dist/
+
+# Ressources Windows générées (icône embarquée)
+*.syso
+
+# Couverture de tests
+coverage.out
+coverage.html
+
+# Données locales — elles vivent normalement dans le dossier utilisateur
+# (cf. `gw paths`), mais une installation portable peut les placer ici.
+/data/
+/logs/
+/config.yaml
+
+# Éditeurs et systèmes
+.vscode/
+.idea/
+*.swp
+.DS_Store

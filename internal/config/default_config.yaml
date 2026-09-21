@@ -1,0 +1,154 @@
+# ---------------------------------------------------------------------------
+# Golden Waterfall — configuration fonctionnelle
+#
+# Ce fichier est créé automatiquement au premier lancement. Il ne contient
+# QUE du fonctionnel : rien de secret, il peut être versionné tel quel.
+#
+# Règle de validation : une valeur absurde fait ÉCHOUER le démarrage avec un
+# message explicite. Aucun réglage n'est corrigé en silence.
+#
+# Les variables d'environnement GW_* ont le dernier mot (GW_BROKER, GW_MODE,
+# GW_STRATEGY, GW_STRATEGY_ENABLED, GW_LOG_LEVEL, GW_THEME, GW_TIMEFRAME,
+# GW_SEED, GW_BROKER_HOST, GW_BROKER_PORT).
+# ---------------------------------------------------------------------------
+
+broker:
+  # Gateway active. Doit correspondre à une clé du registre.
+  #   replay             — rejoue l'historique local comme un flux live.
+  #                        Marqué REJEU partout dans l'interface : aucune
+  #                        donnée de compte n'est présentée comme réelle.
+  #   interactive_brokers — TWS / IB Gateway (à brancher, cf. docs).
+  name: "replay"
+  # "paper" ou "live". Passer en réel ne demande QUE ce changement.
+  mode: "paper"
+  host: "127.0.0.1"
+  port: 7497
+  # Paires suivies en live. Vide = celles de history.instruments.
+  symbols: []
+  # Unité de temps des bougies agrégées en live. Doit être celle sur
+  # laquelle le modèle a été entraîné, sinon les features n'ont pas le
+  # même sens qu'à l'entraînement.
+  timeframe: "H4"
+  # Passerelle "replay" uniquement : bougies M1 rejouées par seconde.
+  # 120 ≈ deux heures de marché par seconde réelle. Sans effet sur une
+  # passerelle réelle, dont la cadence est celle du marché.
+  replay_speed: 120
+
+strategy:
+  # Moteur de décision actif (clé du registre de stratégies).
+  name: "colibri_v1_1"
+  # Kill-switch GLOBAL. Le trading par paire se règle depuis la TUI et est
+  # persisté : une paire ne trade que si CE drapeau ET son interrupteur
+  # sont actifs.
+  enabled: false
+
+risk:
+  # Taille d'une entrée, en UNITÉS de devise de base :
+  #   1 000   = micro-lot     10 000 = mini-lot     100 000 = lot standard
+  # Avec 10 000 unités d'EURUSD et un levier de 30, une entrée immobilise
+  # environ 370 unités de compte. Une taille de 1 est possible, mais tous
+  # les P&L affichés deviennent alors des poussières illisibles.
+  max_position_size: 10000
+  # Deux plafonds DISTINCTS. Par symbole : empêche d'empiler des entrées
+  # sur la même paire. Sur le compte : borne l'exposition totale.
+  max_positions_per_symbol: 1
+  max_open_positions: 4
+  # Perte journalière maximale, en % de l'équité de DÉBUT DE JOURNÉE UTC
+  # (repère persisté : un redémarrage ne remet pas le compteur à zéro).
+  # Au-delà, plus aucune ENTRÉE ; les sorties restent toujours possibles.
+  # 0 = désactivée.
+  # ⚠ Garde LIVE uniquement : elle exige l'équité réelle du broker. Le
+  # backtest ne la modélise pas — il est donc, sur ce seul point, un peu
+  # optimiste face au live. C'est assumé et documenté, pas simulé de travers.
+  max_daily_loss_pct: 2.0
+
+costs:
+  # Le SPREAD n'est PAS réglé ici : il est MESURÉ dans les données (médiane
+  # de ask_close - bid_close), donc réaliste selon la paire et la période.
+  # Un aller-retour paie exactement un spread. Sans côté ask dans
+  # l'historique, aucun spread n'est modélisé et l'interface le SIGNALE.
+  #
+  # Commission du courtier, par côté et par unité tradée, en unités de PRIX.
+  # 0 = courtier « spread only », le plus courant en forex retail.
+  commission_per_unit: 0.0
+
+backtest:
+  # Capital de départ du compte simulé. La courbe d'équité est la VALEUR DU
+  # COMPTE : elle part de ce capital.
+  initial_capital: 10000.0
+  # Devise du compte simulé. Elle décide de la conversion du notionnel et
+  # du P&L de chaque paire : avec un compte en USD, EURUSD est converti
+  # exactement (cotation = USD) et USDJPY aussi (base = USD). Une croisée
+  # comme EURGBP exigerait un taux tiers : son résultat reste alors exprimé
+  # en devise de cotation, et l'interface le signale au lieu de l'agréger
+  # en silence.
+  account_currency: "USD"
+  # Effet de levier : une entrée immobilise notionnel / levier, comme chez
+  # un vrai courtier forex. Sans levier, les entrées longues trop grosses
+  # sont refusées alors que les ventes passent — un biais directionnel
+  # invisible. 30 = plafond retail ESMA ; 1 = compte cash strict.
+  leverage: 30.0
+
+history:
+  # Données M1 Dukascopy. Elles vivent dans le dossier de données de
+  # l'utilisateur (`gw paths` l'affiche), jamais à côté du binaire.
+  start_year: 2010
+  # Téléchargements simultanés. Au-delà de 3-4, Dukascopy répond 429.
+  concurrency: 3
+  instruments:
+    # Majeures
+    - EURUSD
+    - GBPUSD
+    - USDJPY
+    - USDCHF
+    - USDCAD
+    - AUDUSD
+    - NZDUSD
+    # Croisées EUR
+    - EURGBP
+    - EURJPY
+    - EURCHF
+    - EURAUD
+    - EURCAD
+    - EURNZD
+    # Croisées GBP
+    - GBPJPY
+    - GBPCHF
+    - GBPAUD
+    - GBPCAD
+    - GBPNZD
+    # Autres croisées
+    - AUDJPY
+    - AUDCHF
+    - AUDCAD
+    - AUDNZD
+    - NZDJPY
+    - NZDCHF
+    - NZDCAD
+    - CADJPY
+    - CADCHF
+    - CHFJPY
+    # Métaux & indices
+    - XAUUSD
+    - XAGUSD
+    - US500
+
+training:
+  # Nombre de blocs de test consécutifs du walk-forward.
+  folds: 5
+  # Unité de temps de travail (entraînement ET backtest).
+  timeframe: "H4"
+  # Plis évalués en parallèle. 0 = un par cœur disponible.
+  workers: 0
+  # Graine du modèle : fixée, l'entraînement est REPRODUCTIBLE. Elle est
+  # archivée avec chaque run.
+  seed: 42
+
+ui:
+  theme: "dark"
+  refresh_millis: 500
+  chart_timeframe: "H1"
+
+logging:
+  level: "info"
+  buffer_size: 1000

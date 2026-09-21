@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests et analyse
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      # Le format est une règle du projet, pas une préférence : un diff de
+      # mise en forme noie les vrais changements dans les revues.
+      - name: Format
+        run: |
+          unformatted=$(gofmt -l cmd internal)
+          if [ -n "$unformatted" ]; then
+            echo "Fichiers non formatés :"; echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Analyse statique
+        run: go vet ./...
+
+      # Le détecteur de concurrence est obligatoire : le moteur live, le
+      # bus et les jobs de fond tournent tous en goroutines.
+      - name: Tests (avec détecteur de concurrence)
+        run: go test -race ./...
+
+  build:
+    name: Compilation croisée
+    runs-on: ubuntu-latest
+    needs: test
+    strategy:
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: darwin, goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      # CGO_ENABLED=0 n'est pas une optimisation : c'est la garantie que le
+      # binaire n'a AUCUNE dépendance native, ce qui est la promesse
+      # centrale du projet.
+      - name: Compiler ${{ matrix.goos }}/${{ matrix.goarch }}
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build -ldflags "-s -w" -o /tmp/gw ./cmd/gw
