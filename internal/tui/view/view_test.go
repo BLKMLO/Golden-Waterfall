@@ -153,3 +153,20 @@ func TestLiveShowsDashesWithoutAccount(t *testing.T) {
 		t.Fatal("un solde à zéro est affiché alors qu'aucun compte n'est connu")
 	}
 }
+
+// TestBacktestSizeCardTellsWhichRegimeIsActive : « Taille 10000 » devient
+// un mensonge dès que le dimensionnement au risque est actif — la taille
+// varie alors d'un trade à l'autre et ce nombre n'est plus qu'un plafond.
+func TestBacktestSizeCardTellsWhichRegimeIsActive(t *testing.T) {
+	fixed := sizeCard(config.RiskConfig{MaxPositionSize: 10000})
+	if fixed.Label != "Taille" || fixed.Note != "fixe" {
+		t.Fatalf("à risque désactivé, la carte annonce la taille fixe : %+v", fixed)
+	}
+	sized := sizeCard(config.RiskConfig{MaxPositionSize: 10000, RiskPerTradePct: 1})
+	if sized.Label == "Taille" {
+		t.Fatalf("dimensionnement au risque actif : la carte ne doit plus annoncer UNE taille (%+v)", sized)
+	}
+	if !strings.Contains(sized.Note, "plafond") {
+		t.Fatalf("max_position_size devient un plafond, et cela doit se lire : %+v", sized)
+	}
+}

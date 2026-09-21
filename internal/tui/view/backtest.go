@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/BLKMLO/Golden-Waterfall/internal/backtest"
+	"github.com/BLKMLO/Golden-Waterfall/internal/config"
 	"github.com/BLKMLO/Golden-Waterfall/internal/data"
 	"github.com/BLKMLO/Golden-Waterfall/internal/feature"
 	"github.com/BLKMLO/Golden-Waterfall/internal/strategy"
@@ -216,7 +217,7 @@ func (v *Backtest) Render(width, height int) string {
 		{Label: "Stratégie", Value: v.deps.App.Config.Strategy.Name},
 		{Label: "Capital", Value: component.Num(v.deps.App.Config.Backtest.InitialCapital, 0)},
 		{Label: "Levier", Value: component.Num(v.deps.App.Config.Backtest.Leverage, 0) + "×"},
-		{Label: "Taille", Value: component.Num(v.deps.App.Config.Risk.MaxPositionSize, 2)},
+		sizeCard(v.deps.App.Config.Risk),
 	}, width-4)
 	sb.WriteString(component.Panel(th, "Paramètres", params, width))
 	sb.WriteString("\n")
@@ -256,6 +257,28 @@ func (v *Backtest) Render(width, height int) string {
 		v.renderEquity(result, leftWidth, chartHeight),
 		v.renderTrades(result, width-leftWidth, chartHeight)))
 	return sb.String()
+}
+
+// sizeCard dit la VÉRITÉ sur la taille des entrées.
+//
+// Dès que `risk_per_trade_pct` est actif, la taille varie d'un trade à
+// l'autre (elle est calculée pour que la distance jusqu'au stop coûte ce
+// pourcentage de l'équité) et `max_position_size` n'est plus qu'un
+// plafond. Afficher ce plafond comme « la taille » annoncerait une
+// quantité que le moteur ne prendra presque jamais.
+func sizeCard(cfg config.RiskConfig) component.StatCard {
+	if cfg.RiskPerTradePct > 0 {
+		return component.StatCard{
+			Label: "Risque / trade",
+			Value: component.Num(cfg.RiskPerTradePct, 2) + " %",
+			Note:  "plafond " + component.Num(cfg.MaxPositionSize, 0),
+		}
+	}
+	return component.StatCard{
+		Label: "Taille",
+		Value: component.Num(cfg.MaxPositionSize, 2),
+		Note:  "fixe",
+	}
 }
 
 func (v *Backtest) renderStats(res *backtest.Result, took time.Duration, width int) string {
