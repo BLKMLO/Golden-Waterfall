@@ -305,3 +305,13 @@ Un expert advisor peut perdre de l'argent, et un bon backtest n'est pas une
 promesse. Le seul chiffre à regarder est l'agrégat **out-of-sample** du
 walk-forward — jamais le rejeu in-sample, que le modèle de production connaît
 déjà par cœur.
+
+## Licence
+
+[MIT](LICENSE) — utilisation, modification et redistribution libres, y compris
+commerciales, à condition de conserver la mention de copyright.
+
+Cette licence fournit le logiciel **sans aucune garantie**. Ce n'est pas une
+formule de style ici : le programme peut passer des ordres sur un compte réel,
+et la responsabilité de ce qu'il y fait reste entièrement celle de qui le
+lance.

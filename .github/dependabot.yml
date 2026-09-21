@@ -1,0 +1,30 @@
+# Mises à jour de dépendances surveillées automatiquement.
+#
+# Le projet tient à CINQ dépendances directes et à aucune dépendance
+# native : c'est peu, donc chaque mise à jour se relit vraiment. Le rythme
+# est hebdomadaire — quotidien noierait un dépôt de cette taille sous des
+# pull requests qu'on finirait par fusionner sans les lire.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+    groups:
+      # Les paquets charmbracelet/x/* sont interdépendants : leur
+      # compatibilité mutuelle est précisément ce qui a imposé Go 1.25.
+      # Les mettre à jour séparément produit des états qui ne compilent
+      # pas.
+      charmbracelet:
+        patterns:
+          - "github.com/charmbracelet/*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "ci"
