@@ -33,6 +33,37 @@ const (
 	MaxHoldDays    = 5
 )
 
+// Horizon est la durée de la barrière VERTICALE.
+func Horizon() time.Duration { return time.Duration(MaxHoldDays) * 24 * time.Hour }
+
+// Deadline renvoie l'échéance de la barrière verticale d'une entrée.
+func Deadline(entry time.Time) time.Time { return entry.Add(Horizon()) }
+
+// Expired : la bougie qui COMMENCE à `barTime` est-elle la dernière à
+// commencer avant l'échéance ?
+//
+// Cette fonction vit ICI, avec les constantes de définition du modèle,
+// parce que les DEUX exécuteurs l'appellent — le moteur de backtest et le
+// moteur live. Une règle de barrière écrite deux fois finit par diverger,
+// et c'est précisément la divergence que tout le projet cherche à
+// empêcher.
+//
+// Formulée sur la bougie courante et la cadence du flux, elle désigne la
+// même bougie que la fenêtre (t, t+horizon] de l'étiquetage, tout en
+// restant calculable en direct : le live ne connaît pas l'horodatage de la
+// bougie suivante. Sans cadence exploitable (unité de temps absente), on
+// se rabat sur le dépassement strict — une bougie de retard, jamais une
+// bougie d'avance.
+func Expired(barTime time.Time, barDuration time.Duration, deadline time.Time) bool {
+	if deadline.IsZero() {
+		return false
+	}
+	if barDuration <= 0 {
+		return barTime.After(deadline)
+	}
+	return barTime.Add(barDuration).After(deadline)
+}
+
 // Barrier nomme la barrière touchée en premier (diagnostic).
 type Barrier string
 

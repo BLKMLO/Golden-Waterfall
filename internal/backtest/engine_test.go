@@ -549,3 +549,151 @@ func TestAggregateFlagsMixedCurrencies(t *testing.T) {
 		t.Fatal("un seul actif non convertible rend l'agrégat approximatif : il faut le dire")
 	}
 }
+
+func TestStopFillsAtGapOpenNotAtBarrier(t *testing.T) {
+	cfg := testConfig()
+	// La bougie 2 OUVRE à 95, très en dessous du stop à 98 : aucun
+	// courtier n'aurait servi 98. Le remplissage doit être 95.
+	series := makeBars([][4]float64{
+		{100, 100, 100, 100},
+		{100, 100, 100, 100}, // entrée au close = 100, SL 98, TP 102
+		{95, 96, 94, 95},     // gap SOUS le stop
+		{95, 95, 95, 95},
+	}, 0)
+	strat := &scriptedStrategy{script: map[int]core.Signal{
+		1: {Action: core.EnterLong, TakeProfit: 102, StopLoss: 98},
+	}}
+	res, err := newEngine(cfg).Run(context.Background(), Request{
+		Symbol: "TEST", Series: series, From: 0, Strategy: strat, Timeframe: data.H1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Trades) != 1 || res.Trades[0].ExitReason != "sl" {
+		t.Fatalf("un stop touché est attendu : %+v", res.Trades)
+	}
+	if got := res.Trades[0].ExitPrice; got != 95 {
+		t.Fatalf("stop rempli à %v : un gap se paie à l'OUVERTURE (95), pas au prix demandé (98)", got)
+	}
+}
+
+func TestShortStopFillsAtGapOpen(t *testing.T) {
+	cfg := testConfig()
+	series := makeBars([][4]float64{
+		{100, 100, 100, 100},
+		{100, 100, 100, 100}, // entrée short au close = 100, SL 102, TP 98
+		{105, 106, 104, 105}, // gap AU-DESSUS du stop
+		{105, 105, 105, 105},
+	}, 0)
+	strat := &scriptedStrategy{script: map[int]core.Signal{
+		1: {Action: core.EnterShort, TakeProfit: 98, StopLoss: 102},
+	}}
+	res, err := newEngine(cfg).Run(context.Background(), Request{
+		Symbol: "TEST", Series: series, From: 0, Strategy: strat, Timeframe: data.H1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Trades) != 1 || res.Trades[0].ExitPrice != 105 {
+		t.Fatalf("stop d'un short rempli à l'ouverture (105) attendu : %+v", res.Trades)
+	}
+}
+
+func TestTakeProfitNeverBenefitsFromGap(t *testing.T) {
+	cfg := testConfig()
+	// La bougie 2 ouvre BIEN AU-DESSUS de la limite : un ordre à cours
+	// limité se remplit à son prix, jamais mieux — on ne s'attribue pas
+	// une exécution qu'on ne peut pas prouver.
+	series := makeBars([][4]float64{
+		{100, 100, 100, 100},
+		{100, 100, 100, 100}, // entrée au close = 100, TP 102, SL 98
+		{110, 111, 109, 110}, // gap AU-DESSUS de la limite
+		{110, 110, 110, 110},
+	}, 0)
+	strat := &scriptedStrategy{script: map[int]core.Signal{
+		1: {Action: core.EnterLong, TakeProfit: 102, StopLoss: 98},
+	}}
+	res, err := newEngine(cfg).Run(context.Background(), Request{
+		Symbol: "TEST", Series: series, From: 0, Strategy: strat, Timeframe: data.H1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Trades) != 1 || res.Trades[0].ExitPrice != 102 {
+		t.Fatalf("limite remplie à son prix exact (102) attendue : %+v", res.Trades)
+	}
+}
+
+func TestVerticalBarrierClosesAtHorizon(t *testing.T) {
+	cfg := testConfig()
+	// Bougies JOURNALIÈRES à partir du lundi 1er janvier 2024, week-end
+	// inclus : la série est synthétique, ce qui permet d'atteindre
+	// l'horizon de 5 jours sans que la clôture de fin de semaine ISO
+	// (dimanche 7) ne s'interpose.
+	start := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	var series core.Series
+	for i := 0; i < 8; i++ {
+		series = append(series, core.Bar{
+			Time:    start.AddDate(0, 0, i),
+			BidOpen: 100, BidHigh: 100.2, BidLow: 99.8, BidClose: 100,
+		})
+	}
+	// Barrières très larges : ni le stop ni la limite ne peuvent être
+	// touchés, seule la barrière verticale peut fermer la position.
+	strat := &scriptedStrategy{script: map[int]core.Signal{
+		0: {Action: core.EnterLong, TakeProfit: 500, StopLoss: 1},
+	}}
+	res, err := newEngine(cfg).Run(context.Background(), Request{
+		Symbol: "TEST", Series: series, From: 0, Strategy: strat, Timeframe: data.D1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Trades) == 0 {
+		t.Fatal("aucun trade : la barrière verticale n'a pas liquidé la position")
+	}
+	tr := res.Trades[0]
+	if tr.ExitReason != "time" {
+		t.Fatalf("motif de sortie %q, « time » attendu", tr.ExitReason)
+	}
+	// Entrée au close du 1er janvier, horizon de 5 jours calendaires : la
+	// dernière bougie COMMENCÉE dans la fenêtre est celle du 6 janvier.
+	if want := start.AddDate(0, 0, 5); !tr.ExitTime.Equal(want) {
+		t.Fatalf("liquidation à %s, %s attendu (entrée + MaxHoldDays)", tr.ExitTime, want)
+	}
+}
+
+func TestRejectionCountsAreScopedToOneRun(t *testing.T) {
+	cfg := testConfig()
+	series := makeBars([][4]float64{
+		{100, 100, 100, 100},
+		{100, 100, 100, 100},
+		{100, 100, 100, 100},
+		{100, 100, 100, 100},
+	}, 0)
+	// Aucun signal : chaque bougie évaluée produit un rejet « neutre ».
+	strat := &scriptedStrategy{script: map[int]core.Signal{}}
+	engine := newEngine(cfg)
+	req := Request{Symbol: "TEST", Series: series, From: 0, Strategy: strat, Timeframe: data.H1}
+
+	first, err := engine.Run(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := engine.Run(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Le MÊME moteur — donc le même gestionnaire de risque — rejoue la
+	// même série : les compteurs doivent décrire CE run, pas le cumul
+	// depuis le démarrage du programme.
+	for reason, got := range second.Stats.Rejections {
+		if want := first.Stats.Rejections[reason]; got != want {
+			t.Fatalf("motif %q : %d rejets au second run, %d au premier — les compteurs cumulent",
+				reason, got, want)
+		}
+	}
+	if len(second.Stats.Rejections) == 0 {
+		t.Fatal("aucun rejet compté : le test ne prouve rien")
+	}
+}

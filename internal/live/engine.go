@@ -11,6 +11,7 @@ import (
 	"github.com/BLKMLO/Golden-Waterfall/internal/core"
 	"github.com/BLKMLO/Golden-Waterfall/internal/data"
 	"github.com/BLKMLO/Golden-Waterfall/internal/feature"
+	"github.com/BLKMLO/Golden-Waterfall/internal/label"
 	"github.com/BLKMLO/Golden-Waterfall/internal/risk"
 	"github.com/BLKMLO/Golden-Waterfall/internal/storage"
 	"github.com/BLKMLO/Golden-Waterfall/internal/strategy"
@@ -175,12 +176,29 @@ func (e *Engine) onBarClosed(ctx context.Context, symbol string, bar core.Bar) {
 	e.stats.LastBar = bar.Time
 	enabled := e.enabled
 	blocked := e.inFlight[symbol]
+	leg := e.openLeg[symbol]
 	e.mu.Unlock()
 
+	// Barrière VERTICALE : la position a-t-elle dépassé l'horizon sur
+	// lequel le modèle a été entraîné ? La règle est celle du paquet
+	// `label`, la même qu'au backtest et qu'à l'étiquetage.
+	overdue := leg != nil && label.Expired(bar.Time, e.tf.Duration(), label.Deadline(leg.time))
+
 	if !enabled {
+		// Le kill-switch veut dire « ne touche plus à mon compte » : on ne
+		// ferme donc rien de force. Mais une position au-delà de son
+		// horizon ne doit pas devenir silencieuse pour autant.
+		if overdue {
+			e.logger.Warn("position au-delà de son horizon et NON fermée : kill-switch désarmé",
+				"symbole", symbol, "entree", leg.time)
+		}
 		return
 	}
 	if !e.store.Trading(symbol) {
+		if overdue {
+			e.logger.Warn("position au-delà de son horizon et NON fermée : paire désarmée",
+				"symbole", symbol, "entree", leg.time)
+		}
 		return
 	}
 	if !e.gateway.Connected() {
@@ -193,15 +211,33 @@ func (e *Engine) onBarClosed(ctx context.Context, symbol string, bar core.Bar) {
 		e.logger.Debug("bougie ignorée : ordre en vol", "symbole", symbol, "ordre", blocked)
 		return
 	}
-	if ready, reason := e.strategy.Ready(); !ready {
-		e.logger.Debug("bougie ignorée : stratégie non prête", "symbole", symbol, "raison", reason)
-		return
-	}
 
-	sig, err := e.strategy.OnBar(ctx, symbol, buf, len(buf)-1)
-	if err != nil {
-		e.logger.Error("stratégie en échec sur une bougie", "symbole", symbol, "erreur", err)
-		return
+	var sig core.Signal
+	if overdue {
+		// Une sortie d'horizon ne demande l'avis de personne : elle ne
+		// dépend d'aucun modèle, seulement de la date d'entrée rapportée
+		// par le courtier. Elle passe AVANT le test de disponibilité de
+		// la stratégie — un modèle absent ou périmé ne doit pas laisser
+		// une position courir au-delà de ce qui a été appris d'elle.
+		sig = core.Signal{
+			Strategy: e.strategy.Describe().Name,
+			Symbol:   symbol,
+			Action:   core.Exit,
+			Time:     bar.Time,
+		}
+		e.logger.Info("horizon atteint : sortie demandée",
+			"symbole", symbol, "entree", leg.time, "horizon", label.Horizon())
+	} else {
+		if ready, reason := e.strategy.Ready(); !ready {
+			e.logger.Debug("bougie ignorée : stratégie non prête", "symbole", symbol, "raison", reason)
+			return
+		}
+		var err error
+		sig, err = e.strategy.OnBar(ctx, symbol, buf, len(buf)-1)
+		if err != nil {
+			e.logger.Error("stratégie en échec sur une bougie", "symbole", symbol, "erreur", err)
+			return
+		}
 	}
 	e.mu.Lock()
 	e.lastSig[symbol] = sig

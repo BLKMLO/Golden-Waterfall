@@ -12,10 +12,20 @@
 //
 //   - ENTRÉE au CLOSE de la bougie de décision. La stratégie décide à ce
 //     close, l'ordre est rempli à ce même close.
-//   - TRIPLE BARRIÈRE : stop et limite sont liés en OCO et remplis au PRIX
-//     EXACT de la barrière dès que le high/low d'une bougie SUIVANTE la
-//     franchit. Si les deux sont franchies dans la MÊME bougie, le STOP
-//     l'emporte — l'ordre intrabar réel est inconnu, on se pénalise.
+//   - TRIPLE BARRIÈRE : stop et limite sont liés en OCO dès qu'une bougie
+//     SUIVANTE franchit le high/low. Si les deux sont franchies dans la
+//     MÊME bougie, le STOP l'emporte — l'ordre intrabar réel est inconnu,
+//     on se pénalise.
+//   - GAP : un stop est un ordre AU MARCHÉ une fois déclenché. Quand la
+//     bougie OUVRE déjà au-delà du stop, il est rempli à l'ouverture, pas
+//     au prix demandé, qu'aucun courtier n'aurait servi. La limite, elle,
+//     est toujours remplie à son prix exact : un ordre à cours limité ne
+//     s'exécute jamais moins bien, et lui accorder le gap serait
+//     s'attribuer une chance qu'on ne peut pas prouver.
+//   - BARRIÈRE VERTICALE : la position est liquidée au close de la
+//     DERNIÈRE bougie commencée dans l'horizon `label.MaxHoldDays`. C'est
+//     la troisième barrière de l'étiquetage : sans elle, le moteur tenait
+//     des positions que la cible d'apprentissage avait déjà clôturées.
 //   - CLÔTURE DE FIN DE SEMAINE ISO et LIQUIDATION FINALE au close : aucun
 //     portage de week-end, aucune position résiduelle fantôme.
 //   - COÛTS : le spread est MESURÉ dans les données (médiane de
@@ -41,6 +51,7 @@ import (
 	"github.com/BLKMLO/Golden-Waterfall/internal/core"
 	"github.com/BLKMLO/Golden-Waterfall/internal/data"
 	"github.com/BLKMLO/Golden-Waterfall/internal/indicator"
+	"github.com/BLKMLO/Golden-Waterfall/internal/label"
 	"github.com/BLKMLO/Golden-Waterfall/internal/risk"
 	"github.com/BLKMLO/Golden-Waterfall/internal/strategy"
 )
@@ -166,6 +177,10 @@ type position struct {
 	stopLoss   float64
 	takeProfit float64
 	entryCost  float64
+	// deadline : instant au-delà duquel la barrière VERTICALE liquide la
+	// position, calculé comme à l'étiquetage (entrée + MaxHoldDays jours
+	// calendaires).
+	deadline time.Time
 }
 
 func (p *position) unrealized(price float64) float64 {
@@ -214,6 +229,15 @@ func (e *Engine) Run(ctx context.Context, req Request) (*Result, error) {
 		costPerUnitPerSide += spread / 2
 	}
 
+	// Compteurs de rejet PROPRES à ce run : le Manager câblé dans app.New
+	// est partagé par tous les backtests et par le live (cf. Fork).
+	rm := e.risk.Fork()
+
+	// Durée nominale d'une bougie : elle sert à reconnaître la DERNIÈRE
+	// bougie commencée dans l'horizon, sans jamais lire l'horodatage de la
+	// bougie suivante — le moteur live ne l'aurait pas.
+	barDuration := req.Timeframe.Duration()
+
 	weekEnd := lastBarsOfWeek(series)
 	cash := e.cfg.Backtest.InitialCapital
 	leverage := e.cfg.Backtest.Leverage
@@ -246,8 +270,20 @@ func (e *Engine) Run(ctx context.Context, req Request) (*Result, error) {
 			}
 		}
 
+		// 2. Barrière VERTICALE — testée APRÈS les horizontales, comme à
+		// l'étiquetage : sur la bougie d'échéance, un stop ou une limite
+		// touchés l'emportent encore.
+		if pos != nil && i > pos.entryIndex && label.Expired(bar.Time, barDuration, pos.deadline) {
+			tr, cost := closePosition(pos, req.Symbol, bar.Close(), bar.Time, "time", costPerUnitPerSide, conv)
+			cash += tr.PnL
+			totalCosts += cost
+			trades = append(trades, tr)
+			exitReasons["time"]++
+			pos = nil
+		}
+
 		forcedExit := false
-		// 2. Clôture de fin de semaine ISO et liquidation finale, au close.
+		// 3. Clôture de fin de semaine ISO et liquidation finale, au close.
 		if pos != nil && (weekEnd[i] || i == len(series)-1) {
 			reason := "weekend"
 			if i == len(series)-1 {
@@ -262,7 +298,7 @@ func (e *Engine) Run(ctx context.Context, req Request) (*Result, error) {
 			forcedExit = true
 		}
 
-		// 3. Décision. Une bougie de clôture forcée ne rouvre RIEN : ce
+		// 4. Décision. Une bougie de clôture forcée ne rouvre RIEN : ce
 		// serait reprendre immédiatement le risque qu'on vient de couper.
 		if !forcedExit && i < len(series)-1 {
 			sig, err := req.Strategy.OnBar(ctx, req.Symbol, series, i)
@@ -272,7 +308,7 @@ func (e *Engine) Run(ctx context.Context, req Request) (*Result, error) {
 			open := currentPositions(pos, req.Symbol)
 			// account = nil : le backtest ne modélise PAS la limite de
 			// perte journalière (elle exige l'équité réelle du broker).
-			dec := e.risk.Evaluate(sig, open, nil)
+			dec := rm.Evaluate(sig, open, nil)
 			if dec.Accepted() && pos == nil {
 				entryPrice := bar.Close()
 				notional := dec.Order.Quantity * conv.NotionalPerUnit(entryPrice)
@@ -294,6 +330,7 @@ func (e *Engine) Run(ctx context.Context, req Request) (*Result, error) {
 						stopLoss:   dec.Order.StopLoss,
 						takeProfit: dec.Order.TakeProfit,
 						entryCost:  cost,
+						deadline:   label.Deadline(bar.Time),
 					}
 				}
 			}
@@ -307,7 +344,7 @@ func (e *Engine) Run(ctx context.Context, req Request) (*Result, error) {
 	}
 
 	stats := computeStats(req, trades, equity, e.cfg.Backtest.InitialCapital,
-		totalCosts, spread, costsModelled, rejectedOrders, exitReasons, e.risk.Rejections())
+		totalCosts, spread, costsModelled, rejectedOrders, exitReasons, rm.Rejections())
 	stats.Currency, stats.CurrencyExact = conv.AccountCurrency, conv.Exact
 	if !conv.Exact {
 		// Non convertible : on n'invente pas un taux, on dit dans quelle
@@ -336,10 +373,13 @@ func currentPositions(pos *position, symbol string) []core.Position {
 // C'est aussi exactement la convention du labeling, si bien que le modèle
 // apprend la cible que l'exécution délivre.
 func checkBarriers(pos *position, bar core.Bar) (price float64, reason string, hit bool) {
-	high, low := bar.High(), bar.Low()
+	high, low, open := bar.High(), bar.Low(), bar.Open()
 	if pos.side == core.Buy {
 		if pos.stopLoss > 0 && low <= pos.stopLoss {
-			return pos.stopLoss, "sl", true
+			// Gap : le marché a ouvert SOUS le stop. Le déclenchement
+			// donne un ordre au marché, servi à l'ouverture — pas au prix
+			// demandé, que personne n'offrait plus.
+			return math.Min(pos.stopLoss, open), "sl", true
 		}
 		if pos.takeProfit > 0 && high >= pos.takeProfit {
 			return pos.takeProfit, "tp", true
@@ -347,7 +387,7 @@ func checkBarriers(pos *position, bar core.Bar) (price float64, reason string, h
 		return 0, "", false
 	}
 	if pos.stopLoss > 0 && high >= pos.stopLoss {
-		return pos.stopLoss, "sl", true
+		return math.Max(pos.stopLoss, open), "sl", true
 	}
 	if pos.takeProfit > 0 && low <= pos.takeProfit {
 		return pos.takeProfit, "tp", true

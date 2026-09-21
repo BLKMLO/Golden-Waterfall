@@ -73,9 +73,35 @@ func New(cfg config.RiskConfig, logger *slog.Logger) *Manager {
 	}
 }
 
-// MaxPositionSize : taille nominale d'une entrée (le moteur de backtest la
-// lit pour mettre son P&L à l'échelle).
+// MaxPositionSize : PLAFOND nominal d'une entrée, en unités de devise de
+// base.
 func (m *Manager) MaxPositionSize() float64 { return m.maxPositionSize }
+
+// Fork renvoie un gestionnaire aux MÊMES limites, avec des compteurs de
+// rejet NEUFS.
+//
+// Les compteurs disent « pourquoi ce backtest n'a presque pas tradé » :
+// c'est une phrase sur UN run. Partagés entre les runs — un seul Manager
+// est câblé dans app.New pour tout le programme — ils cumulaient depuis le
+// démarrage, et `AggregateStats` additionnait ensuite ces cumuls
+// chevauchants pli par pli. Le nombre publié dans run.json ne mesurait
+// alors plus rien et changeait d'une exécution à l'autre au gré de
+// l'ordonnancement des plis parallèles.
+//
+// Les LIMITES, elles, restent celles de la configuration : un signal
+// rejeté dans un run forké l'aurait été en live.
+// Les champs sont recopiés un à un : un `*m` global copierait le verrou,
+// ce que `go vet` refuse à juste titre.
+func (m *Manager) Fork() *Manager {
+	return &Manager{
+		maxPositionSize:       m.maxPositionSize,
+		maxPositionsPerSymbol: m.maxPositionsPerSymbol,
+		maxOpenPositions:      m.maxOpenPositions,
+		maxDailyLossPct:       m.maxDailyLossPct,
+		logger:                m.logger,
+		counts:                map[string]int{},
+	}
+}
 
 // Rejections renvoie une copie des compteurs de rejet par motif.
 func (m *Manager) Rejections() map[string]int {
