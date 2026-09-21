@@ -457,7 +457,7 @@ func (r *Runtime) Snapshot() Snapshot {
 		snap.Stats = engine.Stats()
 		inFlight = engine.InFlight()
 	} else {
-		snap.EngineStatus = "moteur arrêté"
+		snap.EngineStatus = "arrêté"
 	}
 
 	sort.Strings(symbols)

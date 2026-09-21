@@ -164,12 +164,100 @@ func TestProgressBarBounds(t *testing.T) {
 func TestTableRendersHeaderAndEmptyState(t *testing.T) {
 	th := theme.Dark()
 	cols := []Column{{Title: "Paire", Width: 8}, {Title: "Prix", Width: 8, Right: true}}
-	empty := Table(th, cols, nil, -1, 5)
+	empty := Table(th, cols, nil, -1, 5, 40)
 	if !strings.Contains(empty, "aucune donnée") {
 		t.Fatalf("un tableau vide doit le DIRE : %q", empty)
 	}
-	filled := Table(th, cols, [][]string{{"EURUSD", "1.10"}}, 0, 5)
+	filled := Table(th, cols, [][]string{{"EURUSD", "1.10"}}, 0, 5, 40)
 	if !strings.Contains(filled, "EURUSD") || !strings.Contains(filled, "Paire") {
 		t.Fatalf("tableau incomplet : %q", filled)
+	}
+}
+
+// TestTableNeverWraps : une ligne plus large que la place disponible
+// s'enroulait sur deux lignes, et chaque enregistrement occupait deux
+// lignes à l'écran. Un tableau enroulé n'est plus un tableau.
+func TestTableNeverWraps(t *testing.T) {
+	th := theme.Dark()
+	cols := []Column{
+		{Title: "Paire", Width: 8},
+		{Title: "Bid", Width: 10, Right: true, Priority: 2},
+		{Title: "Var.", Width: 8, Right: true, Priority: 3},
+		{Title: "État", Width: 9},
+		{Title: "Signal", Width: 12, Flex: true, Min: 6, Priority: 1},
+	}
+	rows := [][]string{{"EURUSD", "1.10512", "+0.42 %", "armée", "LONG 0.78"}}
+	for _, width := range []int{20, 30, 42, 60, 100} {
+		out := Table(th, cols, rows, 0, 5, width)
+		for _, line := range strings.Split(out, "\n") {
+			if w := lipgloss.Width(line); w > width {
+				t.Fatalf("largeur %d : une ligne en occupe %d (%q)", width, w, line)
+			}
+		}
+		// La paire reste lisible quoi qu'il arrive : c'est ce qui donne
+		// son sens à la ligne.
+		if !strings.Contains(out, "EURUSD") {
+			t.Fatalf("largeur %d : la colonne essentielle a disparu\n%s", width, out)
+		}
+	}
+}
+
+// TestTableSaysWhenColumnsAreDropped : une colonne retirée faute de place
+// ne doit pas passer pour une colonne inexistante.
+func TestTableSaysWhenColumnsAreDropped(t *testing.T) {
+	th := theme.Dark()
+	cols := []Column{
+		{Title: "Paire", Width: 8},
+		{Title: "Bid", Width: 10, Priority: 2},
+		{Title: "Var.", Width: 8, Priority: 3},
+	}
+	out := Table(th, cols, [][]string{{"EURUSD", "1.10", "+1 %"}}, -1, 5, 16)
+	if !strings.Contains(out, "+") {
+		t.Fatalf("les colonnes retirées doivent être annoncées :\n%s", out)
+	}
+}
+
+// TestStatRowKeepsEveryCard : les cartes qui ne tenaient pas étaient
+// retirées en silence, ce qui rendait une valeur manquante
+// indistinguable d'une valeur sans objet.
+func TestStatRowKeepsEveryCard(t *testing.T) {
+	th := theme.Dark()
+	cards := []StatCard{
+		{Label: "Équité", Value: "1000"}, {Label: "Marge", Value: "10"},
+		{Label: "Perte", Value: "0"}, {Label: "Ticks", Value: "42"},
+		{Label: "Bougies", Value: "7"}, {Label: "Ordres", Value: "3"},
+	}
+	out := StatRow(th, cards, 60) // 4 cartes par rangée au plus
+	for _, c := range cards {
+		if !strings.Contains(out, c.Label) {
+			t.Fatalf("carte « %s » perdue :\n%s", c.Label, out)
+		}
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if w := lipgloss.Width(line); w > 60 {
+			t.Fatalf("rangée de %d colonnes pour 60 disponibles", w)
+		}
+	}
+}
+
+// TestTableKeepsCellsWithTheirColumn : quand une colonne est retirée
+// faute de place, les cellules suivantes ne doivent PAS glisser d'un cran
+// — sinon le tableau affiche un prix sous l'entête « État », ce qui est
+// pire que de ne rien afficher.
+func TestTableKeepsCellsWithTheirColumn(t *testing.T) {
+	th := theme.Dark()
+	cols := []Column{
+		{Title: "Paire", Width: 8},
+		{Title: "Bid", Width: 10, Priority: 2},
+		{Title: "Var.", Width: 8, Priority: 3},
+		{Title: "État", Width: 9},
+	}
+	rows := [][]string{{"EURUSD", "1.10512", "+0.42", "armée"}}
+	out := Table(th, cols, rows, -1, 5, 20) // Bid et Var. ne tiennent pas
+	if !strings.Contains(out, "armée") {
+		t.Fatalf("la valeur de la colonne conservée a disparu :\n%s", out)
+	}
+	if strings.Contains(out, "1.10512") || strings.Contains(out, "+0.42") {
+		t.Fatalf("une valeur de colonne RETIRÉE est affichée dans une autre colonne :\n%s", out)
 	}
 }

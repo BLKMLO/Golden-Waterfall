@@ -172,7 +172,13 @@ func (v *Live) Render(width, height int) string {
 
 	account := v.renderAccount(width)
 	positions := v.renderPositions(width, positionsHeight(len(snap.Positions)))
-	status := th.Muted.Render("moteur : " + snap.EngineStatus)
+	// « moteur : moteur arrêté » disait deux fois le même mot, et la
+	// ligne restait vide tant que le runtime n'avait pas d'instance.
+	engine := snap.EngineStatus
+	if engine == "" {
+		engine = "au repos — aucune passerelle ouverte"
+	}
+	status := th.Muted.Render("Moteur : " + engine)
 
 	// La bande centrale prend TOUT ce qui reste : watchlist et graphique
 	// partagent exactement la même hauteur, quelles que soient leurs
@@ -233,7 +239,7 @@ func (v *Live) renderAccount(width int) string {
 		{Label: "Ordres", Value: component.Count(int(snap.Stats.Orders)),
 			Note: fmt.Sprintf("%d exécutés", snap.Stats.Fills)},
 	}
-	body := component.StatRow(th, cards, width-4)
+	body := component.StatRow(th, cards, component.PanelContent(width))
 	if snap.AccountErr != "" {
 		body += "\n" + th.Warning.Render("⚠ "+component.Truncate(snap.AccountErr, width-8))
 	} else if !snap.HasAccount {
@@ -259,11 +265,18 @@ func positionsHeight(n int) int {
 func (v *Live) renderWatchlist(width, height int) string {
 	th := v.deps.Theme
 	cols := []component.Column{
+		// Priorités : la paire et son état sont le sens de la ligne ; le
+		// signal se comprime, la variation puis le prix s'effacent si le
+		// panneau est étroit.
 		{Title: "Paire", Width: 8},
-		{Title: "Bid", Width: 10, Right: true},
-		{Title: "Var.", Width: 8, Right: true},
+		{Title: "Bid", Width: 10, Right: true, Priority: 2},
+		{Title: "Var.", Width: 8, Right: true, Priority: 3},
 		{Title: "État", Width: 9},
-		{Title: "Signal", Width: 12},
+		// Largeur calée sur la plus longue valeur possible
+		// (« pas de modèle ») : une colonne qui explique un silence n'a
+		// aucun intérêt à moitié coupée. Ce sont le prix et la variation
+		// qui cèdent la place.
+		{Title: "Signal", Width: 13, Flex: true, Min: 8, Priority: 1},
 	}
 	rows := make([][]string, 0, len(v.snapshot.Symbols))
 	for _, s := range v.snapshot.Symbols {
@@ -300,7 +313,7 @@ func (v *Live) renderWatchlist(width, height int) string {
 			s.Symbol, component.Price(s.Symbol, s.Bid), change, state, signal,
 		})
 	}
-	body := component.Table(th, cols, rows, v.cursor, height-4)
+	body := component.Table(th, cols, rows, v.cursor, height-4, component.PanelContent(width))
 	return component.PanelH(th, "Paires suivies", body, width, height)
 }
 
@@ -357,8 +370,8 @@ func (v *Live) renderPositions(width, height int) string {
 	cols := []component.Column{
 		{Title: "Paire", Width: 8},
 		{Title: "Sens", Width: 6},
-		{Title: "Quantité", Width: 10, Right: true},
-		{Title: "Prix moyen", Width: 12, Right: true},
+		{Title: "Quantité", Width: 10, Right: true, Priority: 2},
+		{Title: "Prix moyen", Width: 12, Right: true, Priority: 3},
 		{Title: "P&L latent", Width: 12, Right: true},
 	}
 	rows := make([][]string, 0, len(v.snapshot.Positions))
@@ -379,5 +392,5 @@ func (v *Live) renderPositions(width, height int) string {
 		})
 	}
 	return component.PanelH(th, "Positions ouvertes (rapportées par la passerelle)",
-		component.Table(th, cols, rows, -1, height-4), width, height)
+		component.Table(th, cols, rows, -1, height-4, component.PanelContent(width)), width, height)
 }

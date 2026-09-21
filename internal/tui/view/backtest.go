@@ -218,7 +218,7 @@ func (v *Backtest) Render(width, height int) string {
 		{Label: "Capital", Value: component.Num(v.deps.App.Config.Backtest.InitialCapital, 0)},
 		{Label: "Levier", Value: component.Num(v.deps.App.Config.Backtest.Leverage, 0) + "×"},
 		sizeCard(v.deps.App.Config.Risk),
-	}, width-4)
+	}, component.PanelContent(width))
 	sb.WriteString(component.Panel(th, "Paramètres", params, width))
 	sb.WriteString("\n")
 
@@ -306,7 +306,7 @@ func (v *Backtest) renderStats(res *backtest.Result, took time.Duration, width i
 		{Label: "SQN", Value: component.Ratio(s.SQN)},
 		{Label: "Coûts", Value: component.Num(s.Costs, 2), Style: costStyle, Note: costNote},
 	}
-	body := component.StatRow(th, cards, width-4)
+	body := component.StatRow(th, cards, component.PanelContent(width))
 	extra := fmt.Sprintf("%s → %s · %s bougies · calcul %s",
 		component.Time(s.Start), component.Time(s.End), component.Count(s.Bars),
 		component.Duration(took))
@@ -358,8 +358,8 @@ func (v *Backtest) renderEquity(res *backtest.Result, width, height int) string 
 func (v *Backtest) renderTrades(res *backtest.Result, width, height int) string {
 	th := v.deps.Theme
 	cols := []component.Column{
-		{Title: "Entrée", Width: 16},
-		{Title: "Sens", Width: 6},
+		{Title: "Entrée", Width: 16, Flex: true, Min: 10, Priority: 2},
+		{Title: "Sens", Width: 6, Priority: 1},
 		{Title: "P&L", Width: 11, Right: true},
 		{Title: "Sortie", Width: 8},
 	}
@@ -380,7 +380,7 @@ func (v *Backtest) renderTrades(res *backtest.Result, width, height int) string 
 		rows = append(rows, []string{component.Time(t.EntryTime), side, pnl, t.ExitReason})
 	}
 	return component.PanelH(th, fmt.Sprintf("Trades (%d)", len(res.Trades)),
-		component.Table(th, cols, rows, -1, height-4), width, height)
+		component.Table(th, cols, rows, -1, height-4, component.PanelContent(width)), width, height)
 }
 
 // wrap coupe un texte long à la largeur donnée.

@@ -224,10 +224,10 @@ func (v *Data) Render(width, height int) string {
 
 	cols := []component.Column{
 		{Title: "Paire", Width: 9},
-		{Title: "Classe", Width: 9},
-		{Title: "Années", Width: 14},
-		{Title: "Bougies M1", Width: 14, Right: true},
-		{Title: "Manquant", Width: 26},
+		{Title: "Classe", Width: 9, Priority: 3},
+		{Title: "Années", Width: 14, Priority: 2},
+		{Title: "Bougies M1", Width: 14, Right: true, Priority: 1},
+		{Title: "Manquant", Width: 26, Flex: true, Min: 10},
 	}
 	endYear := time.Now().UTC().Year()
 	startYear := v.deps.App.Config.History.StartYear
@@ -252,7 +252,7 @@ func (v *Data) Render(width, height int) string {
 		}
 		rows = append(rows, []string{inv.Symbol, class, years, bars, style.Render(missing)})
 	}
-	sb.WriteString(component.Panel(th, "Historique local", component.Table(th, cols, rows, v.cursor, height-10), width))
+	sb.WriteString(component.Panel(th, "Historique local", component.Table(th, cols, rows, v.cursor, height-10, component.PanelContent(width)), width))
 
 	// Tronqué : hors panneau, rien ne borne cette ligne, et un chemin long
 	// débordait la largeur du terminal — ce qui décale toute la mise en

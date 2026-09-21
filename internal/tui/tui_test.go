@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/BLKMLO/Golden-Waterfall/internal/app"
 	"github.com/BLKMLO/Golden-Waterfall/internal/config"
@@ -125,5 +126,44 @@ func TestQuitBlockedWhileBusy(t *testing.T) {
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
 	if cmd == nil || !updated.(*Model).quitting {
 		t.Fatal("« q » doit quitter quand rien ne tourne")
+	}
+}
+
+// TestBadgesNeverDisappear : l'entête supprimait TOUS les badges dès que
+// la largeur manquait — dont « LIVE — ARGENT RÉEL » et l'état du
+// kill-switch. Ce sont précisément les informations qu'on ne peut pas se
+// permettre de perdre en réduisant une fenêtre.
+func TestBadgesNeverDisappear(t *testing.T) {
+	m := New(newTestApp(t))
+	for _, width := range []int{60, 70, 80, 100, 140, 200} {
+		m.Update(tea.WindowSizeMsg{Width: width, Height: 30})
+		header := m.renderHeader()
+		if !strings.Contains(header, "REJEU") {
+			t.Errorf("largeur %d : le bandeau de mode a disparu de l'entête\n%s", width, header)
+		}
+		if !strings.Contains(header, "k-s") && !strings.Contains(header, "kill-switch") {
+			t.Errorf("largeur %d : l'état du kill-switch a disparu de l'entête", width)
+		}
+		for _, line := range strings.Split(header, "\n") {
+			if w := lipgloss.Width(line); w > width {
+				t.Errorf("largeur %d : l'entête en occupe %d", width, w)
+			}
+		}
+	}
+}
+
+// TestFooterAlwaysOffersTheWayOut : les touches globales étaient en fin de
+// liste, donc les premières rognées. Un utilisateur perdait « q quitter »
+// avant tout le reste.
+func TestFooterAlwaysOffersTheWayOut(t *testing.T) {
+	m := New(newTestApp(t))
+	for _, width := range []int{60, 80, 120} {
+		m.Update(tea.WindowSizeMsg{Width: width, Height: 30})
+		footer := m.renderFooter()
+		for _, key := range []string{"aide", "quitter"} {
+			if !strings.Contains(footer, key) {
+				t.Errorf("largeur %d : « %s » absent de la barre de raccourcis\n%s", width, key, footer)
+			}
+		}
 	}
 }

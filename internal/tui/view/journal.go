@@ -215,13 +215,13 @@ func (v *Journal) renderTrades(width, height int) string {
 	trades := v.trades
 
 	cols := []component.Column{
-		{Title: "#", Width: 6, Right: true},
+		{Title: "#", Width: 6, Right: true, Priority: 4},
 		{Title: "Paire", Width: 8},
-		{Title: "Sens", Width: 6},
-		{Title: "Entrée", Width: 17},
+		{Title: "Sens", Width: 6, Priority: 3},
+		{Title: "Entrée", Width: 17, Priority: 2},
 		{Title: "Sortie", Width: 17},
 		{Title: "P&L", Width: 12, Right: true},
-		{Title: "Motif", Width: 20},
+		{Title: "Motif", Width: 20, Flex: true, Min: 8, Priority: 1},
 	}
 	rows := make([][]string, 0, len(trades))
 	for _, t := range trades {
@@ -243,7 +243,7 @@ func (v *Journal) renderTrades(width, height int) string {
 			pnl, component.Truncate(t.ExitReason, 20),
 		})
 	}
-	body := component.Table(th, cols, rows, -1, height-5)
+	body := component.Table(th, cols, rows, -1, height-5, component.PanelContent(width))
 	body += "\n" + th.Muted.Render(
 		"Ce journal ne contient QUE des exécutions rapportées par une passerelle. "+
 			"Aucun trade simulé n'y figure.")
