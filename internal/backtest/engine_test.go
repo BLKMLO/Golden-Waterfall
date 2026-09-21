@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -727,5 +728,42 @@ func TestRiskSizingFlowsThroughTheEngine(t *testing.T) {
 	// quantité = plancher(budget / distance) = plancher(100 / 2) = 50.
 	if got := res.Trades[0].Quantity; got != 50 {
 		t.Fatalf("%g unités, 50 attendues (budget 100 USD, stop à 2)", got)
+	}
+}
+
+// TestAggregateDoesNotInventADrawdown : drawdown et Sharpe exigent une
+// courbe de valeur. Plusieurs actifs rejoués chacun sur son propre compte
+// n'en forment pas une — et zéro se lirait « aucun drawdown » au lieu de
+// « non mesuré ».
+func TestAggregateDoesNotInventADrawdown(t *testing.T) {
+	res := []*Result{{Stats: Stats{
+		Symbol: "EURUSD", Trades: 2, Wins: 1, Losses: 1, NetPnL: 10,
+		MaxDrawdownPct: 12.5, Sharpe: 1.4, CostsModelled: true, CurrencyExact: true,
+		Currency: "USD",
+	}, Trades: []core.Trade{{PnL: 30}, {PnL: -20}}}}
+
+	agg := AggregateStats(res, 10000)
+	if !math.IsNaN(agg.MaxDrawdownPct) {
+		t.Fatalf("drawdown agrégé = %v : il doit valoir NaN (non mesuré)", agg.MaxDrawdownPct)
+	}
+	if !math.IsNaN(agg.Sharpe) {
+		t.Fatalf("Sharpe agrégé = %v : il doit valoir NaN (non mesuré)", agg.Sharpe)
+	}
+
+	// Et run.json doit rester écrivable : c'est exactement ce que le
+	// MarshalJSON dédié garantit.
+	raw, err := json.Marshal(agg)
+	if err != nil {
+		t.Fatalf("agrégat non sérialisable : %v", err)
+	}
+	if !strings.Contains(string(raw), `"max_drawdown_pct":null`) {
+		t.Fatalf("un drawdown non mesuré doit s'écrire null :\n%s", raw)
+	}
+	var back Stats
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatal(err)
+	}
+	if !math.IsNaN(back.MaxDrawdownPct) {
+		t.Fatal("la relecture doit rétablir NaN, pas zéro")
 	}
 }

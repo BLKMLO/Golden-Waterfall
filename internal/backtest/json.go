@@ -5,12 +5,14 @@ import (
 	"math"
 )
 
-// Le JSON standard ne sait pas représenter NaN ni ±Inf. Or trois
+// Le JSON standard ne sait pas représenter NaN ni ±Inf. Or quatre
 // métriques du projet peuvent légitimement valoir l'un ou l'autre :
 //
 //   - profit factor INFINI  : un jeu de trades sans aucune perte ;
 //   - profit factor NaN     : aucun trade du tout ;
-//   - Sharpe / SQN NaN      : variance nulle ou trop peu d'observations.
+//   - Sharpe / SQN NaN      : variance nulle ou trop peu d'observations ;
+//   - drawdown NaN          : agrégat de plusieurs actifs, dont la courbe
+//     de valeur commune n'existe pas (cf. AggregateStats).
 //
 // Les écraser en zéro serait un mensonge (zéro est une mesure, pas une
 // absence de mesure), et les refuser ferait échouer l'écriture de run.json.
@@ -56,24 +58,26 @@ func (f *jsonFloat) UnmarshalJSON(raw []byte) error {
 // porte pas les méthodes de l'original.
 type statsAlias Stats
 
-// statsJSON réexpose les trois champs sensibles à une profondeur plus
+// statsJSON réexpose les champs sensibles à une profondeur plus
 // faible que ceux de la structure embarquée ; encoding/json donne la
 // priorité au champ le moins profond, donc c'est celui-ci qui est écrit.
 type statsJSON struct {
 	statsAlias
-	ProfitFactor jsonFloat `json:"profit_factor"`
-	Sharpe       jsonFloat `json:"sharpe"`
-	SQN          jsonFloat `json:"sqn"`
+	ProfitFactor   jsonFloat `json:"profit_factor"`
+	Sharpe         jsonFloat `json:"sharpe"`
+	SQN            jsonFloat `json:"sqn"`
+	MaxDrawdownPct jsonFloat `json:"max_drawdown_pct"`
 }
 
 // MarshalJSON sérialise les statistiques sans perdre les valeurs non
 // finies.
 func (s Stats) MarshalJSON() ([]byte, error) {
 	return json.Marshal(statsJSON{
-		statsAlias:   statsAlias(s),
-		ProfitFactor: jsonFloat(s.ProfitFactor),
-		Sharpe:       jsonFloat(s.Sharpe),
-		SQN:          jsonFloat(s.SQN),
+		statsAlias:     statsAlias(s),
+		ProfitFactor:   jsonFloat(s.ProfitFactor),
+		Sharpe:         jsonFloat(s.Sharpe),
+		SQN:            jsonFloat(s.SQN),
+		MaxDrawdownPct: jsonFloat(s.MaxDrawdownPct),
 	})
 }
 
@@ -87,5 +91,6 @@ func (s *Stats) UnmarshalJSON(raw []byte) error {
 	s.ProfitFactor = float64(tmp.ProfitFactor)
 	s.Sharpe = float64(tmp.Sharpe)
 	s.SQN = float64(tmp.SQN)
+	s.MaxDrawdownPct = float64(tmp.MaxDrawdownPct)
 	return nil
 }

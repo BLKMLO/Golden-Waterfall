@@ -78,6 +78,10 @@ cessait d'être vraie.
 | Avertissement IN-SAMPLE | backtest (TUI + CLI) | Lire un rejeu comme une performance |
 | `ExecutionReport` obligatoire | live | Inventer un trade que le broker n'a pas fait |
 | `sameColumns` au chargement | strategy | Appliquer un modèle à des colonnes décalées |
+| `Info.SupportsBracket` + `Stats.UnprotectedRefused` | broker, live | Ouvrir une position nue en affichant un stop qui n'existe nulle part |
+| `Rejections` par run (`risk.Manager.Fork`) | backtest | Publier un cumul de tous les runs comme s'il décrivait celui-ci |
+| `MaxDrawdownPct`/`Sharpe` à NaN dans l'agrégat | backtest | Lire « 0 % de drawdown » là où la vérité est « non mesuré » |
+| Refus de dimensionnement (4 motifs) | risk | Risquer, faute de mesure, un montant que personne n'a choisi |
 
 ## Conventions
 
@@ -109,6 +113,24 @@ cessait d'être vraie.
   le désactiver.
 - **Labeling** : deux barrières dans la même bougie → **la basse**, comme
   l'exécution. Fenêtre avant incomplète → **pas de label**.
+- **La barrière VERTICALE vit dans `label`** (`Horizon`, `Deadline`,
+  `Expired`) et les DEUX moteurs l'appellent. Écrite deux fois, une règle
+  de barrière finit par diverger — c'est exactement ce que le projet
+  cherche à empêcher. `Expired` est formulée sur la bougie courante et la
+  cadence du flux, jamais sur l'horodatage de la bougie suivante : le live
+  ne l'aurait pas.
+- **Divergence connue entre cible et exécution** : l'étiquetage accorde
+  cinq jours calendaires, la clôture de fin de semaine ISO plafonne la
+  détention à moins de cinq jours (lundi → vendredi). La barrière
+  verticale ne se déclenche donc jamais sur des données forex réelles ;
+  elle protège le live, qui n'a pas de règle de week-end. Aligner
+  vraiment les deux suppose de modéliser le week-end DANS l'étiquetage,
+  donc une nouvelle révision (`colibri_v1_1`) — jamais une retouche du
+  modèle publié.
+- **Stops et gaps** : un stop déclenché est un ordre AU MARCHÉ, rempli au
+  pire de la barrière et de l'ouverture. Une limite, elle, garde son prix
+  exact : un ordre à cours limité ne s'exécute jamais moins bien, et lui
+  accorder le gap serait s'attribuer une chance invérifiable.
 - **Le balayage avant du labeling n'a pas de pire cas pathologique** : les
   barrières sont dimensionnées par l'ATR, donc elles se resserrent quand le
   marché se calme. Mesuré : zéro barrière temporelle sur un marché agité
@@ -134,6 +156,14 @@ cessait d'être vraie.
 directes, **aucune native**. `CGO_ENABLED=0` partout : c'est la garantie
 de la promesse « un seul binaire ».
 
+CI : format, `go vet`, tests `-race`, **govulncheck** (vulnérabilités
+réellement atteignables) et compilation croisée des quatre cibles.
+Dependabot surveille modules et actions chaque semaine, les paquets
+`charmbracelet/x/*` étant GROUPÉS — les mettre à jour séparément produit
+des états qui ne compilent pas.
+
+Licence **MIT** (`LICENSE`), choisie par le propriétaire du projet.
+
 ⚠ `go.mod` exige **Go 1.25** (imposé par `bbolt` v1.5 et `x/sys` v0.45).
 Une tentative de repli sur 1.24 casse la compatibilité entre les paquets
 `charmbracelet/x/*` — ne pas la refaire.
@@ -147,8 +177,18 @@ Une tentative de repli sur 1.24 casse la compatibilité entre les paquets
 
 ## État du projet (21 septembre 2026)
 
-**Complet de bout en bout, ~13 000 lignes de code + ~4 300 de tests,
+**Complet de bout en bout, ~13 300 lignes de code + ~5 400 de tests,
 20 paquets, suite verte avec `-race`.**
+
+Couverture par paquet (la plus basse d'abord) : `cmd/gw` 14 %,
+`tui/view` 29 %, `data` 55 %, `config` 59 %, `core` 62 %, `tui` 65 %,
+`tui/component` 69 %, `training` 75 %, `broker` 75 %, `indicator` 77 %,
+`app` 78 %, `storage` 79 %, `feature` 79 %, `live` 80 %, `strategy` 81 %,
+`ml/gbdt` 81 %, `backtest` 85 %, `risk` 88 %, `label` 95 %. Les chiffres
+bas ne sont pas tous des trous : dans `data` et `config`, le non-couvert
+est surtout la branche réseau Dukascopy et les erreurs d'E/S ; tous les
+invariants annoncés, eux, ont un test qui échoue s'ils cessent d'être
+vrais.
 
 Validé réellement :
 
@@ -166,13 +206,28 @@ réel (le bac à sable de dev est limité à 429).
 
 1. **Brancher Interactive Brokers** — seul élément manquant pour que le
    live soit autre chose qu'un rejeu. Feuille de route détaillée dans
-   `docs/brokers.md`.
-2. **Icône Windows** dans l'exécutable : cible `make windows`, méthode
-   `goversioninfo` → `.syso`, commande déjà écrite en commentaire. Le
-   workflow de release la ramasse automatiquement si le `.syso` existe.
+   `docs/brokers.md`. Tant que `placeOrder` ne soumet pas un vrai bracket
+   OCA, `Info.SupportsBracket` reste à `false` et le moteur REFUSE les
+   entrées : basculer ce drapeau sans le code revient à mentir au moteur.
+   ⚠ Ne pas écrire ce protocole « à l'aveugle » : du code non éprouvé
+   contre un vrai TWS, sur le chemin qui envoie des ordres réels, est
+   précisément ce que les règles du projet interdisent.
+2. **Icône Windows** : toute la mécanique est en place et automatique —
+   `make windows` et le workflow de release détectent `build/icon.ico`,
+   génèrent le `.syso` et le lient, ou DISENT ce qui manque. Il ne reste
+   qu'à déposer l'icône elle-même (256×256), qui est une décision de
+   design, pas de code.
 3. **Exposition croisée inter-actifs** dans le walk-forward : chaque actif
    a son propre moteur, donc les plafonds s'appliquent par actif. Limite
-   documentée, pas masquée.
+   documentée, pas masquée — et depuis peu, plus masquée non plus dans les
+   chiffres : l'agrégat renvoie NaN pour le drawdown et le Sharpe, qui
+   exigeraient une courbe de valeur commune inexistante. Les calculer pour
+   de bon suppose de trancher comment le capital se partage entre actifs :
+   c'est une décision de conception, pas un calcul.
+4. **Mesurer `risk_per_trade_pct`** : le dimensionnement au risque existe
+   et est testé, mais il est à 0 (désactivé) par défaut. Avant de
+   l'activer, un walk-forward avant/après — il déplace drawdown, profit
+   factor et SQN.
 
 ## Journal de décisions
 
@@ -199,6 +254,19 @@ réel (le bac à sable de dev est limité à 429).
 - **Taille de position par défaut : 10 000 unités** (mini-lot). À 1 unité,
   tous les P&L affichés étaient des poussières illisibles.
 - **Avertissement IN-SAMPLE permanent** sur l'écran Backtest.
+- **Dimensionnement au risque OPTIONNEL** (`risk_per_trade_pct`, 0 par
+  défaut). À taille fixe, la perte au stop suit l'ATR : elle double quand
+  la volatilité double, sans que personne ne l'ait décidé. Le réglage
+  inverse la dépendance — c'est la taille qui bouge, la perte qui reste
+  constante. Laissé à 0 parce qu'une taille variable change le SYSTÈME
+  (drawdown, profit factor, SQN) : cela se mesure, cela ne se décide pas à
+  la place de l'utilisateur. Ce qui manque (équité, stop, conversion)
+  REFUSE l'entrée au lieu de replier sur la taille maximale.
+- **Une passerelle déclare ses capacités** (`Info.SupportsBracket`)
+  plutôt que le moteur ne les suppose. Le contraire ouvrait des positions
+  nues avec un stop affiché à l'écran et nulle part ailleurs.
+- **Licence MIT.** Sans fichier `LICENSE`, un dépôt public reste « tous
+  droits réservés » sans que rien ne le dise.
 
 ### Bugs corrigés (et pourquoi ils comptaient)
 
@@ -221,6 +289,29 @@ réel (le bac à sable de dev est limité à 429).
   porte maintenant le nombre de jours en échec.
 - **Métriques GBDT calculées sur tous les arbres** au lieu de s'arrêter à
   `BestIteration` — elles décrivaient un modèle qui ne prédira jamais.
+- **Compteurs de rejet publiés comme des mesures alors qu'ils
+  cumulaient** : un seul `risk.Manager` sert tout le programme, donc
+  `Stats.Rejections` portait le cumul depuis le démarrage, et
+  `AggregateStats` additionnait ensuite ces cumuls chevauchants pli par
+  pli. Le nombre de `run.json` ne mesurait rien et changeait d'une
+  exécution à l'autre selon l'ordonnancement des plis parallèles.
+  `Fork()` donne des compteurs propres à chaque run.
+- **Stops remplis au prix exact malgré un gap** : la seule hypothèse du
+  backtest qui jouait en faveur du résultat. Un stop déclenché est un
+  ordre au marché, servi à l'ouverture quand la bougie ouvre au-delà.
+- **Barrière verticale absente de l'exécution** : l'étiquetage pose trois
+  barrières, les moteurs n'en tenaient que deux. Une position pouvait
+  courir au-delà de l'horizon sur lequel le modèle a été entraîné — sans
+  conséquence en backtest (le week-end plafonne déjà), mais bien réelle en
+  live.
+- **Drawdown et Sharpe agrégés affichés à zéro** : ils n'étaient jamais
+  calculés faute de courbe de valeur commune. Zéro se lit « aucun
+  drawdown » ; la vérité était « non mesuré ». Désormais NaN, donc `null`
+  dans `run.json` et « — » à l'écran.
+- **Chemin d'historique débordant la largeur du terminal** : écrit hors
+  de tout panneau, sans troncature. Un débordement décale la mise en page
+  de TOUS les écrans, Bubbletea composant des chaînes sans les découper.
+  Attrapé par le premier test de rendu des écrans.
 - **Compteurs de rejet du risque écrits sans verrou** : un SEUL
   `risk.Manager` est câblé dans `app.New` et partagé par le backtest, le
   walk-forward (plis parallèles) et le moteur live (une goroutine de rejeu

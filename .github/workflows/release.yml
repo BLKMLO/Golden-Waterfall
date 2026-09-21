@@ -68,6 +68,22 @@ jobs:
       # CGO_ENABLED=0 n'est pas une optimisation, c'est la garantie que le
       # binaire publié n'a AUCUNE dépendance native — la promesse centrale
       # du projet.
+      # Le .syso est un fichier GÉNÉRÉ, donc gitignoré : sans cette étape,
+      # il n'existerait jamais dans un checkout de CI et l'icône ne
+      # pourrait pas voyager dans la release, quoi qu'en dise le Makefile.
+      # La source, elle, est build/icon.ico, qui est versionnée.
+      - name: Icône Windows (si build/icon.ico existe)
+        run: |
+          set -euo pipefail
+          if [ -f build/icon.ico ]; then
+            go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@v1.5.0
+            "$(go env GOPATH)/bin/goversioninfo" -icon=build/icon.ico \
+              -o cmd/gw/resource_windows_amd64.syso
+            echo "Icône embarquée."
+          else
+            echo "build/icon.ico absent : le binaire Windows sortira sans icône."
+          fi
+
       - name: Compiler les binaires
         env:
           VERSION: ${{ steps.version.outputs.value }}
@@ -82,8 +98,8 @@ jobs:
               -trimpath -ldflags "-s -w -X main.Version=${VERSION}" \
               -o "dist/gw${ext}" ./cmd/gw
             # Une archive, un fichier. Sur Windows l'icône voyage dedans dès
-            # que cmd/gw/rsrc_windows_amd64.syso existe : « go build » le lie
-            # sans qu'on ait à le demander (voir la cible windows du Makefile).
+            # que cmd/gw/resource_windows_amd64.syso existe : « go build » le
+            # lie sans qu'on ait à le demander (étape précédente).
             if [ -n "$ext" ]; then
               (cd dist && zip -q "${name}.zip" "gw${ext}" && rm "gw${ext}")
             else

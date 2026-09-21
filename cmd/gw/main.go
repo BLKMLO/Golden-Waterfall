@@ -325,8 +325,8 @@ func runBacktest(args []string) error {
 		fmt.Printf("⚠ Montants en %s, NON convertis vers %s : cette paire exigerait un taux tiers.\n",
 			s.Currency, a.Config.Backtest.AccountCurrency)
 	}
-	fmt.Printf("Profit factor %s · Sharpe %s · SQN %s · drawdown max %.2f %%\n",
-		ratio(s.ProfitFactor), ratio(s.Sharpe), ratio(s.SQN), s.MaxDrawdownPct)
+	fmt.Printf("Profit factor %s · Sharpe %s · SQN %s · drawdown max %s %%\n",
+		ratio(s.ProfitFactor), ratio(s.Sharpe), ratio(s.SQN), ratio(s.MaxDrawdownPct))
 	if s.CostsModelled {
 		fmt.Printf("Coûts %.2f (spread médian mesuré %.6f)\n", s.Costs, s.Spread)
 	} else {
