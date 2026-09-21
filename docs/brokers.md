@@ -80,6 +80,12 @@ parlé, une erreur nette vaut mieux qu'un écran rempli de chiffres inventés.
 4. **`placeOrder` en BRACKET** : parent marché + stop + limite liés en OCA.
    Les barrières doivent vivre **chez le courtier**, pas dans le
    programme : elles survivent alors à un arrêt de Golden Waterfall.
+   Tant que ce point n'est pas écrit, `Info.SupportsBracket` reste à
+   `false` et le moteur **refuse toute entrée** portant un stop ou une
+   limite : une entrée dont les barrières ne seraient pas transmises
+   partirait nue, avec un stop affiché à l'écran qui n'existerait nulle
+   part. Passer ce drapeau à `true` sans le code du bracket revient à
+   mentir au moteur.
 5. **`execDetails` / `orderStatus`** → `core.ExecutionReport`. Sans cette
    étape, aucun trade ne sera jamais journalisé — c'est la plus importante.
 6. **`reqMktData`** → `core.Tick`.
@@ -92,7 +98,7 @@ parent part seul.
 
 ## Écrire une nouvelle passerelle
 
-Cinq points de vigilance, tirés de ce qui a mal tourné ailleurs :
+Six points de vigilance, tirés de ce qui a mal tourné ailleurs :
 
 1. **Ne jamais se déclarer connecté par optimisme.** `Connected()` doit
    refléter l'état réel du socket, pas l'intention.
@@ -101,8 +107,14 @@ Cinq points de vigilance, tirés de ce qui a mal tourné ailleurs :
 3. **Rapporter les REFUS**, pas seulement les exécutions. Un ordre rejeté
    en silence bloque son symbole pour toujours (l'ordre en vol n'est
    jamais libéré).
-4. **Les trois statuts sont TERMINAUX** (`FILLED`, `CANCELLED`,
+4. **Déclarer `SupportsBracket` honnêtement.** Le moteur s'appuie dessus
+   pour décider si une entrée protégée peut partir. Une passerelle qui
+   accepte l'`OrderRequest` mais laisse tomber `StopLoss` / `TakeProfit`
+   doit déclarer `false` : l'entête affiche alors « SANS BARRIÈRES » et
+   les entrées sont refusées et comptées (`Stats.UnprotectedRefused`),
+   plutôt que d'ouvrir des positions sans protection.
+5. **Les trois statuts sont TERMINAUX** (`FILLED`, `CANCELLED`,
    `REJECTED`) : un ordre qui en reçoit un ne bougera plus.
-5. **Ne jamais bloquer la boucle de flux.** Les callbacks sont appelés
+6. **Ne jamais bloquer la boucle de flux.** Les callbacks sont appelés
    depuis les goroutines de la passerelle ; le bus d'événements est conçu
    pour ne jamais les faire attendre.

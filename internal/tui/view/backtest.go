@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/BLKMLO/Golden-Waterfall/internal/backtest"
+	"github.com/BLKMLO/Golden-Waterfall/internal/config"
 	"github.com/BLKMLO/Golden-Waterfall/internal/data"
 	"github.com/BLKMLO/Golden-Waterfall/internal/feature"
 	"github.com/BLKMLO/Golden-Waterfall/internal/strategy"
@@ -216,8 +217,8 @@ func (v *Backtest) Render(width, height int) string {
 		{Label: "Stratégie", Value: v.deps.App.Config.Strategy.Name},
 		{Label: "Capital", Value: component.Num(v.deps.App.Config.Backtest.InitialCapital, 0)},
 		{Label: "Levier", Value: component.Num(v.deps.App.Config.Backtest.Leverage, 0) + "×"},
-		{Label: "Taille", Value: component.Num(v.deps.App.Config.Risk.MaxPositionSize, 2)},
-	}, width-4)
+		sizeCard(v.deps.App.Config.Risk),
+	}, component.PanelContent(width))
 	sb.WriteString(component.Panel(th, "Paramètres", params, width))
 	sb.WriteString("\n")
 
@@ -258,6 +259,28 @@ func (v *Backtest) Render(width, height int) string {
 	return sb.String()
 }
 
+// sizeCard dit la VÉRITÉ sur la taille des entrées.
+//
+// Dès que `risk_per_trade_pct` est actif, la taille varie d'un trade à
+// l'autre (elle est calculée pour que la distance jusqu'au stop coûte ce
+// pourcentage de l'équité) et `max_position_size` n'est plus qu'un
+// plafond. Afficher ce plafond comme « la taille » annoncerait une
+// quantité que le moteur ne prendra presque jamais.
+func sizeCard(cfg config.RiskConfig) component.StatCard {
+	if cfg.RiskPerTradePct > 0 {
+		return component.StatCard{
+			Label: "Risque / trade",
+			Value: component.Num(cfg.RiskPerTradePct, 2) + " %",
+			Note:  "plafond " + component.Num(cfg.MaxPositionSize, 0),
+		}
+	}
+	return component.StatCard{
+		Label: "Taille",
+		Value: component.Num(cfg.MaxPositionSize, 2),
+		Note:  "fixe",
+	}
+}
+
 func (v *Backtest) renderStats(res *backtest.Result, took time.Duration, width int) string {
 	th := v.deps.Theme
 	s := res.Stats
@@ -283,7 +306,7 @@ func (v *Backtest) renderStats(res *backtest.Result, took time.Duration, width i
 		{Label: "SQN", Value: component.Ratio(s.SQN)},
 		{Label: "Coûts", Value: component.Num(s.Costs, 2), Style: costStyle, Note: costNote},
 	}
-	body := component.StatRow(th, cards, width-4)
+	body := component.StatRow(th, cards, component.PanelContent(width))
 	extra := fmt.Sprintf("%s → %s · %s bougies · calcul %s",
 		component.Time(s.Start), component.Time(s.End), component.Count(s.Bars),
 		component.Duration(took))
@@ -335,8 +358,8 @@ func (v *Backtest) renderEquity(res *backtest.Result, width, height int) string 
 func (v *Backtest) renderTrades(res *backtest.Result, width, height int) string {
 	th := v.deps.Theme
 	cols := []component.Column{
-		{Title: "Entrée", Width: 16},
-		{Title: "Sens", Width: 6},
+		{Title: "Entrée", Width: 16, Flex: true, Min: 10, Priority: 2},
+		{Title: "Sens", Width: 6, Priority: 1},
 		{Title: "P&L", Width: 11, Right: true},
 		{Title: "Sortie", Width: 8},
 	}
@@ -357,7 +380,7 @@ func (v *Backtest) renderTrades(res *backtest.Result, width, height int) string 
 		rows = append(rows, []string{component.Time(t.EntryTime), side, pnl, t.ExitReason})
 	}
 	return component.PanelH(th, fmt.Sprintf("Trades (%d)", len(res.Trades)),
-		component.Table(th, cols, rows, -1, height-4), width, height)
+		component.Table(th, cols, rows, -1, height-4, component.PanelContent(width)), width, height)
 }
 
 // wrap coupe un texte long à la largeur donnée.

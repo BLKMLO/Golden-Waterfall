@@ -36,6 +36,10 @@ func init() {
 		Label:       "Interactive Brokers",
 		Description: "TWS / IB Gateway. Point d'ancrage présent, protocole non encore implémenté.",
 		Simulated:   false,
+		// Passera à true le jour où placeOrder soumettra un BRACKET
+		// (parent marché + stop + limite liés en OCA) — pas avant : c'est
+		// cette ligne qui autorise le moteur à envoyer des entrées.
+		SupportsBracket: false,
 		Requirements: "TWS ou IB Gateway lancé et connecté, API activée, port autorisé. " +
 			"NON FONCTIONNEL à ce stade : la passerelle refuse la connexion plutôt que de la simuler.",
 	}, func(opts Options) (Gateway, error) {

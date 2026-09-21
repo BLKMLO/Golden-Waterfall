@@ -11,9 +11,13 @@ package risk
 import (
 	"fmt"
 	"log/slog"
+	"math"
+	"strings"
+	"sync"
 
 	"github.com/BLKMLO/Golden-Waterfall/internal/config"
 	"github.com/BLKMLO/Golden-Waterfall/internal/core"
+	"github.com/BLKMLO/Golden-Waterfall/internal/data"
 )
 
 // Decision explique ce que le risque a fait d'un signal. L'explication est
@@ -36,6 +40,14 @@ const (
 	ReasonAccountFull    = "plafond de positions sur le compte atteint"
 	ReasonDailyLoss      = "perte journalière maximale atteinte"
 	ReasonInvalidSize    = "taille de position invalide"
+	// Motifs propres au dimensionnement au RISQUE (risk_per_trade_pct > 0).
+	// Chacun dit ce qui manque : aucune de ces situations ne doit se
+	// résoudre en repliant sur une taille arbitraire, qui risquerait un
+	// montant que personne n'a choisi.
+	ReasonNoEquity        = "équité inconnue : dimensionnement au risque impossible"
+	ReasonNoStop          = "signal sans stop exploitable : dimensionnement au risque impossible"
+	ReasonUnconvertible   = "devise non convertible : dimensionnement au risque impossible"
+	ReasonRiskBudgetSmall = "budget de risque insuffisant pour une seule unité"
 )
 
 // Manager applique les limites de la section `risk` de la configuration.
@@ -44,31 +56,82 @@ type Manager struct {
 	maxPositionsPerSymbol int
 	maxOpenPositions      int
 	maxDailyLossPct       float64
+	riskPerTradePct       float64
+	accountCurrency       string
 	logger                *slog.Logger
 
 	// Compteurs de rejets, pour que l'interface puisse expliquer un
 	// silence prolongé sans obliger à lire les journaux.
+	//
+	// Le verrou n'est PAS décoratif : une seule instance de Manager est
+	// câblée dans app.New et servie simultanément aux plis du
+	// walk-forward (qui tournent en parallèle) et au moteur live (une
+	// goroutine de rejeu par symbole). Sans lui, deux `counts[motif]++`
+	// simultanés font tomber le programme sur « fatal error: concurrent
+	// map writes » — une panique du runtime, irrattrapable, au beau
+	// milieu d'un entraînement ou d'une séance.
+	mu     sync.Mutex
 	counts map[string]int
+	// currencyWarned : l'avertissement de devise divergente n'est donné
+	// qu'UNE fois. Répété à chaque bougie, il noierait le journal.
+	currencyWarned bool
 }
 
 // New construit un gestionnaire depuis la configuration validée.
-func New(cfg config.RiskConfig, logger *slog.Logger) *Manager {
+//
+// `accountCurrency` est la devise dans laquelle le budget de risque est
+// exprimé. Elle ne sert qu'au dimensionnement au risque ; sans lui, une
+// distance de stop mesurée en yens serait comparée à une équité en
+// dollars.
+func New(cfg config.RiskConfig, accountCurrency string, logger *slog.Logger) *Manager {
 	return &Manager{
 		maxPositionSize:       cfg.MaxPositionSize,
 		maxPositionsPerSymbol: cfg.MaxPositionsPerSymbol,
 		maxOpenPositions:      cfg.MaxOpenPositions,
 		maxDailyLossPct:       cfg.MaxDailyLossPct,
+		riskPerTradePct:       cfg.RiskPerTradePct,
+		accountCurrency:       accountCurrency,
 		logger:                logger,
 		counts:                map[string]int{},
 	}
 }
 
-// MaxPositionSize : taille nominale d'une entrée (le moteur de backtest la
-// lit pour mettre son P&L à l'échelle).
+// MaxPositionSize : PLAFOND nominal d'une entrée, en unités de devise de
+// base.
 func (m *Manager) MaxPositionSize() float64 { return m.maxPositionSize }
+
+// Fork renvoie un gestionnaire aux MÊMES limites, avec des compteurs de
+// rejet NEUFS.
+//
+// Les compteurs disent « pourquoi ce backtest n'a presque pas tradé » :
+// c'est une phrase sur UN run. Partagés entre les runs — un seul Manager
+// est câblé dans app.New pour tout le programme — ils cumulaient depuis le
+// démarrage, et `AggregateStats` additionnait ensuite ces cumuls
+// chevauchants pli par pli. Le nombre publié dans run.json ne mesurait
+// alors plus rien et changeait d'une exécution à l'autre au gré de
+// l'ordonnancement des plis parallèles.
+//
+// Les LIMITES, elles, restent celles de la configuration : un signal
+// rejeté dans un run forké l'aurait été en live.
+// Les champs sont recopiés un à un : un `*m` global copierait le verrou,
+// ce que `go vet` refuse à juste titre.
+func (m *Manager) Fork() *Manager {
+	return &Manager{
+		maxPositionSize:       m.maxPositionSize,
+		maxPositionsPerSymbol: m.maxPositionsPerSymbol,
+		maxOpenPositions:      m.maxOpenPositions,
+		maxDailyLossPct:       m.maxDailyLossPct,
+		riskPerTradePct:       m.riskPerTradePct,
+		accountCurrency:       m.accountCurrency,
+		logger:                m.logger,
+		counts:                map[string]int{},
+	}
+}
 
 // Rejections renvoie une copie des compteurs de rejet par motif.
 func (m *Manager) Rejections() map[string]int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	out := make(map[string]int, len(m.counts))
 	for k, v := range m.counts {
 		out[k] = v
@@ -112,6 +175,15 @@ func (m *Manager) Evaluate(sig core.Signal, open []core.Position, account *core.
 		return m.reject(reason)
 	}
 
+	quantity := m.maxPositionSize
+	if m.riskPerTradePct > 0 {
+		sized, reason := m.sizeByRisk(sig, account)
+		if reason != "" {
+			return m.reject(reason)
+		}
+		quantity = sized
+	}
+
 	side := core.Buy
 	if sig.Action == core.EnterShort {
 		side = core.Sell
@@ -122,15 +194,90 @@ func (m *Manager) Evaluate(sig core.Signal, open []core.Position, account *core.
 	return Decision{Order: &core.OrderRequest{
 		Symbol:     sig.Symbol,
 		Side:       side,
-		Quantity:   m.maxPositionSize,
+		Quantity:   quantity,
 		Type:       core.Market,
 		StopLoss:   sig.StopLoss,
 		TakeProfit: sig.TakeProfit,
 	}}
 }
 
+// sizeByRisk calcule la taille pour que la distance jusqu'au stop coûte
+// exactement `riskPerTradePct` % de l'équité :
+//
+//	budget   = équité × riskPerTradePct / 100          (devise du compte)
+//	unitaire = |prix − stop| converti en devise du compte
+//	quantité = plancher(budget / unitaire), plafonnée par maxPositionSize
+//
+// À taille fixe, la perte au stop suit l'ATR : elle double quand la
+// volatilité double, sans que personne ne l'ait décidé. Ici c'est la
+// taille qui bouge et la perte qui reste constante.
+//
+// Toute donnée manquante REFUSE l'entrée au lieu de se rabattre sur la
+// taille maximale : un repli silencieux risquerait un montant que
+// l'utilisateur n'a pas choisi, précisément le jour où la mesure a
+// échoué.
+func (m *Manager) sizeByRisk(sig core.Signal, account *core.AccountState) (float64, string) {
+	if account == nil || account.Equity <= 0 {
+		return 0, ReasonNoEquity
+	}
+	if sig.Price <= 0 || sig.StopLoss <= 0 {
+		return 0, ReasonNoStop
+	}
+	distance := math.Abs(sig.Price - sig.StopLoss)
+	if distance <= 0 {
+		return 0, ReasonNoStop
+	}
+	// La distance naît dans la devise de COTATION de la paire ; le budget
+	// vit dans celle du compte. Sans taux tiers, on ne convertit pas et on
+	// ne devine pas.
+	m.warnCurrencyMismatch(account.Currency)
+	conv := data.ConversionFor(sig.Symbol, m.accountCurrency)
+	if !conv.Exact {
+		return 0, ReasonUnconvertible
+	}
+	perUnit := conv.ToAccount(distance, sig.Price)
+	if perUnit <= 0 {
+		return 0, ReasonUnconvertible
+	}
+	// Plancher — jamais plus que le budget — après absorption de l'erreur
+	// de représentation binaire : 1,1000 − 1,0900 vaut en flottant
+	// 0,010000000000000009, ce qui ferait tomber 10 000 unités exactes à
+	// 9 999. La tolérance est relative et minuscule (1e-9) : elle rattrape
+	// l'arrondi de la machine, jamais un vrai dépassement de budget.
+	raw := account.Equity * m.riskPerTradePct / 100 / perUnit
+	quantity := math.Floor(raw * (1 + 1e-9))
+	if quantity < 1 {
+		return 0, ReasonRiskBudgetSmall
+	}
+	// maxPositionSize redevient ce que son nom dit : un PLAFOND.
+	return math.Min(quantity, m.maxPositionSize), ""
+}
+
+// warnCurrencyMismatch : le courtier annonce-t-il la devise que la
+// configuration prétend ?
+//
+// Le budget de risque est calculé dans la devise CONFIGURÉE
+// (`backtest.account_currency`). Si le compte réel est libellé autrement,
+// le montant risqué n'est pas celui qu'on croit — et rien d'autre ne le
+// dirait.
+func (m *Manager) warnCurrencyMismatch(broker string) {
+	if broker == "" || strings.EqualFold(broker, m.accountCurrency) {
+		return
+	}
+	m.mu.Lock()
+	first := !m.currencyWarned
+	m.currencyWarned = true
+	m.mu.Unlock()
+	if first && m.logger != nil {
+		m.logger.Warn("DEVISE DIVERGENTE : le dimensionnement au risque utilise la devise configurée",
+			"courtier", broker, "configuree", m.accountCurrency)
+	}
+}
+
 func (m *Manager) reject(reason string) Decision {
+	m.mu.Lock()
 	m.counts[reason]++
+	m.mu.Unlock()
 	return Decision{Reason: reason}
 }
 

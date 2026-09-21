@@ -65,7 +65,7 @@ func testSetup(t *testing.T) (config.Config, *Runner) {
 	cfg.Risk.MaxPositionSize = 1000
 	cfg.Risk.MaxOpenPositions = 2
 	cfg.Backtest.InitialCapital = 10000
-	rm := risk.New(cfg.Risk, slog.New(slog.DiscardHandler))
+	rm := risk.New(cfg.Risk, cfg.Backtest.AccountCurrency, slog.New(slog.DiscardHandler))
 	return cfg, NewRunner(cfg, rm)
 }
 

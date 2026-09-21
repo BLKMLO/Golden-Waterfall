@@ -325,7 +325,7 @@ func (v *Training) renderAggregate(res *training.Result, took time.Duration, wid
 		{Label: "Coûts", Value: component.Num(s.Costs, 2)},
 		{Label: "Durée", Value: component.Duration(took)},
 	}
-	body := component.StatRow(th, cards, width-4)
+	body := component.StatRow(th, cards, component.PanelContent(width))
 	note := fmt.Sprintf("run %s · %d plis · graine %d", res.RunID, len(res.Folds), res.Seed)
 	if res.FinalDir != "" {
 		note += " · modèle de production écrit"
@@ -354,8 +354,8 @@ func (v *Training) renderFolds(res *training.Result, width, height int) string {
 	th := v.deps.Theme
 	cols := []component.Column{
 		{Title: "Pli", Width: 4, Right: true},
-		{Title: "Test depuis", Width: 12},
-		{Title: "Trades", Width: 7, Right: true},
+		{Title: "Test depuis", Width: 12, Priority: 2},
+		{Title: "Trades", Width: 7, Right: true, Priority: 1},
 		{Title: "P&L", Width: 11, Right: true},
 		{Title: "AUC", Width: 7, Right: true},
 	}
@@ -380,7 +380,8 @@ func (v *Training) renderFolds(res *training.Result, width, height int) string {
 			component.Count(f.Stats.Trades), pnl, auc,
 		})
 	}
-	return component.PanelH(th, "Plis", component.Table(th, cols, rows, -1, height-4), width, height)
+	return component.PanelH(th, "Plis",
+		component.Table(th, cols, rows, -1, height-4, component.PanelContent(width)), width, height)
 }
 
 func (v *Training) renderEquity(res *training.Result, width, height int) string {
@@ -404,13 +405,13 @@ func (v *Training) renderRuns(width, height int) string {
 	th := v.deps.Theme
 	cols := []component.Column{
 		{Title: "Run", Width: 16},
-		{Title: "Stratégie", Width: 16},
-		{Title: "TF", Width: 4},
-		{Title: "Paires", Width: 7, Right: true},
-		{Title: "Trades", Width: 8, Right: true},
+		{Title: "Stratégie", Width: 16, Flex: true, Min: 8, Priority: 4},
+		{Title: "TF", Width: 4, Priority: 5},
+		{Title: "Paires", Width: 7, Right: true, Priority: 3},
+		{Title: "Trades", Width: 8, Right: true, Priority: 2},
 		{Title: "AUC OOS", Width: 9, Right: true},
 		{Title: "P&L", Width: 12, Right: true},
-		{Title: "Modèle", Width: 9},
+		{Title: "Modèle", Width: 9, Priority: 1},
 	}
 	rows := make([][]string, 0, len(v.runs))
 	for _, r := range v.runs {
@@ -433,7 +434,7 @@ func (v *Training) renderRuns(width, height int) string {
 			component.Count(r.Trades), auc, pnl, model,
 		})
 	}
-	body := component.Table(th, cols, rows, v.cursor, height-5)
+	body := component.Table(th, cols, rows, v.cursor, height-5, component.PanelContent(width))
 	body += "\n" + th.Muted.Render("o revient au résultat courant · suppr efface le run sélectionné")
 	return component.PanelH(th, "Entraînements archivés", body, width, height)
 }

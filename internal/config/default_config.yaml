@@ -49,6 +49,24 @@ risk:
   # environ 370 unités de compte. Une taille de 1 est possible, mais tous
   # les P&L affichés deviennent alors des poussières illisibles.
   max_position_size: 10000
+  # Part de l'ÉQUITÉ risquée par entrée, en %. 0 = DÉSACTIVÉ : la taille
+  # vaut exactement max_position_size, quelle que soit la volatilité.
+  #
+  # Au-dessus de 0, la taille est calculée pour que la distance jusqu'au
+  # stop coûte ce pourcentage :
+  #
+  #   quantité = (équité × risk_per_trade_pct / 100) / distance_au_stop
+  #
+  # où la distance au stop est celle proposée par la stratégie (Colibri :
+  # 1,5 × ATR) convertie dans la devise du compte. max_position_size
+  # redevient alors ce que son nom dit : un PLAFOND.
+  #
+  # ⚠ Ce réglage change le SYSTÈME, pas seulement son échelle : drawdown,
+  # profit factor et SQN bougent tous. À mesurer en walk-forward avant et
+  # après, jamais à supposer. Si l'équité, le stop ou la conversion de
+  # devise manquent, l'entrée est REFUSÉE avec son motif — jamais
+  # dimensionnée au jugé.
+  risk_per_trade_pct: 0
   # Deux plafonds DISTINCTS. Par symbole : empêche d'empiler des entrées
   # sur la même paire. Sur le compte : borne l'exposition totale.
   max_positions_per_symbol: 1

@@ -55,8 +55,13 @@ type Snapshot struct {
 	GatewayLabel string
 	Simulated    bool
 	Connected    bool
-	Mode         string
-	Message      string
+	// SupportsBracket : la passerelle porte-t-elle stop et limite chez le
+	// courtier ? À false, le moteur refuse les entrées — et l'entête le
+	// dit, sans quoi l'absence d'ordre passerait pour de la prudence du
+	// modèle.
+	SupportsBracket bool
+	Mode            string
+	Message         string
 
 	StrategyName  string
 	StrategyReady bool
@@ -429,12 +434,14 @@ func (r *Runtime) Snapshot() Snapshot {
 		info := gw.Info()
 		snap.GatewayName, snap.GatewayLabel = info.Name, info.Label
 		snap.Simulated = info.Simulated
+		snap.SupportsBracket = info.SupportsBracket
 		snap.Connected = gw.Connected()
 	} else {
 		snap.GatewayName = r.cfg.Broker.Name
 		for _, i := range broker.List() {
 			if i.Name == snap.GatewayName {
 				snap.GatewayLabel, snap.Simulated = i.Label, i.Simulated
+				snap.SupportsBracket = i.SupportsBracket
 			}
 		}
 	}
@@ -450,7 +457,7 @@ func (r *Runtime) Snapshot() Snapshot {
 		snap.Stats = engine.Stats()
 		inFlight = engine.InFlight()
 	} else {
-		snap.EngineStatus = "moteur arrêté"
+		snap.EngineStatus = "arrêté"
 	}
 
 	sort.Strings(symbols)

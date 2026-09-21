@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/BLKMLO/Golden-Waterfall/internal/app"
+	"github.com/BLKMLO/Golden-Waterfall/internal/live"
 	"github.com/BLKMLO/Golden-Waterfall/internal/tui/component"
 	"github.com/BLKMLO/Golden-Waterfall/internal/tui/theme"
 	"github.com/BLKMLO/Golden-Waterfall/internal/tui/view"
@@ -78,6 +79,7 @@ func New(a *app.App) *Model {
 		view.NewBacktest(m.deps),
 		view.NewTraining(m.deps),
 		view.NewJournal(m.deps),
+		view.NewSettings(m.deps),
 	}
 	return m
 }
@@ -175,10 +177,16 @@ func isWorkerMsg(msg tea.Msg) bool {
 }
 
 func (m *Model) globalKey(msg tea.KeyMsg) (tea.Cmd, bool) {
-	switch msg.String() {
-	case "ctrl+c":
+	if msg.String() == "ctrl+c" {
 		m.quitting = true
 		return tea.Quit, true
+	}
+	// Un écran en SAISIE garde toutes ses touches : un chiffre tapé dans
+	// un champ ne doit pas changer d'onglet.
+	if c, ok := m.views[m.active].(view.KeyCapturer); ok && c.CapturesKeys() {
+		return nil, false
+	}
+	switch msg.String() {
 	case "q":
 		// « q » ne quitte que si aucun écran ne travaille : interrompre un
 		// entraînement de vingt minutes sur une frappe malheureuse serait
@@ -193,13 +201,17 @@ func (m *Model) globalKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 	case "?":
 		m.showHelp = !m.showHelp
 		return nil, true
-	case "tab", "right", "l":
+	case "tab":
 		m.active = (m.active + 1) % len(m.views)
 		return nil, true
-	case "shift+tab", "left", "h":
+	case "shift+tab":
 		m.active = (m.active - 1 + len(m.views)) % len(m.views)
 		return nil, true
 	}
+	// ← et → ne changent PLUS d'onglet : ce sont les touches naturelles
+	// pour régler une valeur, et aucun écran ne pouvait s'en servir tant
+	// que le routeur les interceptait. tab, ⇧tab et les chiffres suffisent
+	// à circuler.
 	if len(msg.String()) == 1 && msg.String() >= "1" && msg.String() <= "9" {
 		idx := int(msg.String()[0] - '1')
 		if idx < len(m.views) {
@@ -254,48 +266,106 @@ func (m *Model) View() string {
 func (m *Model) renderHeader() string {
 	snap := m.app.Live.Snapshot()
 
-	title := m.th.Title.Render("◆ Golden Waterfall")
-	tabs := make([]string, len(m.views))
+	badges := m.badges(snap, false)
+	right := lipgloss.JoinHorizontal(lipgloss.Top, badges...)
+
+	// Les badges d'état ne se négocient PAS.
+	//
+	// Ils disaient « LIVE — ARGENT RÉEL », « passerelle connectée »,
+	// « kill-switch armé » — et ils étaient les premiers supprimés quand
+	// la largeur manquait, dès 100 colonnes. On rogne donc dans l'autre
+	// sens : d'abord les libellés d'onglets (leur numéro suffit à les
+	// atteindre), ensuite les badges eux-mêmes en version courte, jamais
+	// l'avertissement de mode.
+	for _, attempt := range []struct {
+		compactTabs, compactBadges bool
+	}{{false, false}, {true, false}, {true, true}} {
+		if attempt.compactBadges {
+			badges = m.badges(snap, true)
+			right = lipgloss.JoinHorizontal(lipgloss.Top, badges...)
+		}
+		left := m.headerLeft(attempt.compactTabs)
+		gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
+		if gap >= 1 {
+			return left + strings.Repeat(" ", gap) + right + "\n" + m.rule()
+		}
+	}
+	// Terminal vraiment étroit : les badges passent sur leur propre ligne
+	// plutôt que de disparaître.
+	return component.Clip(m.headerLeft(true), m.width) + "\n" +
+		component.Clip(right, m.width) + "\n" + m.rule()
+}
+
+// headerLeft dessine le titre et les onglets, en version longue ou
+// compacte.
+func (m *Model) headerLeft(compact bool) string {
+	parts := []string{}
+	if !compact {
+		parts = append(parts, m.th.Title.Render("◆ Golden Waterfall"), " ")
+	}
 	for i, v := range m.views {
 		label := fmt.Sprintf(" %d %s ", i+1, v.Title())
+		if compact {
+			label = fmt.Sprintf(" %d ", i+1)
+		}
 		if v.Busy() {
-			label = fmt.Sprintf(" %d %s ⣿", i+1, v.Title())
+			label += "⣿"
 		}
 		if i == m.active {
-			tabs[i] = m.th.TabActive.Render(label)
+			parts = append(parts, m.th.TabActive.Render(label))
 		} else {
-			tabs[i] = m.th.Tab.Render(label)
+			parts = append(parts, m.th.Tab.Render(label))
 		}
 	}
+	return lipgloss.JoinHorizontal(lipgloss.Top, parts...)
+}
 
-	badges := []string{}
-	if snap.Simulated {
-		badges = append(badges, m.th.BadgeSim.Render("REJEU — COMPTE SIMULÉ"))
-	} else if snap.Mode == "live" {
-		badges = append(badges, m.th.BadgeWarn.Render("LIVE — ARGENT RÉEL"))
-	} else {
-		badges = append(badges, m.th.BadgeOff.Render("PAPER"))
+// badges construit les pastilles d'état. En version courte, les libellés
+// raccourcissent mais AUCUNE pastille ne disparaît.
+func (m *Model) badges(snap live.Snapshot, compact bool) []string {
+	pick := func(long, short string) string {
+		if compact {
+			return short
+		}
+		return long
 	}
-	badges = append(badges, component.Badge(m.th, snap.GatewayName, snap.Connected))
-	badges = append(badges, component.Badge(m.th, "kill-switch", snap.KillSwitch))
-	badges = append(badges, m.th.BadgeOff.Render(snap.StrategyName))
+	out := []string{}
+	switch {
+	case snap.Simulated:
+		out = append(out, m.th.BadgeSim.Render(pick("REJEU — COMPTE SIMULÉ", "REJEU")))
+	case snap.Mode == "live":
+		out = append(out, m.th.BadgeWarn.Render(pick("LIVE — ARGENT RÉEL", "LIVE €")))
+	default:
+		out = append(out, m.th.BadgeOff.Render("PAPER"))
+	}
+	out = append(out, component.Badge(m.th, snap.GatewayName, snap.Connected))
+	if !snap.SupportsBracket {
+		// Le moteur refusera toute entrée : mieux vaut le lire dans
+		// l'entête que le déduire d'une heure sans ordre.
+		out = append(out, m.th.BadgeWarn.Render(pick("SANS BARRIÈRES", "SANS SL")))
+	}
+	out = append(out, component.Badge(m.th, pick("kill-switch", "k-s"), snap.KillSwitch))
+	if !compact {
+		// Le nom de la stratégie est la seule pastille informative plutôt
+		// que protectrice : c'est elle qui cède en dernier recours.
+		out = append(out, m.th.BadgeOff.Render(snap.StrategyName))
+	}
+	return out
+}
 
-	left := lipgloss.JoinHorizontal(lipgloss.Top, append([]string{title, " "}, tabs...)...)
-	right := lipgloss.JoinHorizontal(lipgloss.Top, badges...)
-	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
-	if gap < 1 {
-		gap = 1
-		right = ""
-	}
-	line := left + strings.Repeat(" ", gap) + right
-	rule := m.th.Muted.Render(strings.Repeat("─", m.width))
-	return line + "\n" + rule
+// rule dessine le filet de séparation, à la largeur EXACTE des panneaux
+// — que component.Panel fait désormais tenir dans la largeur demandée.
+func (m *Model) rule() string {
+	return m.th.Muted.Render(strings.Repeat("─", m.width))
 }
 
 func (m *Model) renderFooter() string {
-	keys := m.views[m.active].Keys()
+	// Les touches GLOBALES d'abord : elles étaient en fin de liste, donc
+	// les premières rognées par le Clip final. Un utilisateur se
+	// retrouvait sans « ? aide » ni « q quitter » à l'écran, c'est-à-dire
+	// sans moyen d'apprendre comment sortir.
 	global := [][2]string{{"tab", "écran"}, {"?", "aide"}, {"q", "quitter"}}
-	hints := component.KeyHints(m.th, append(keys, global...)...)
+	hints := component.KeyHints(m.th, append(global, m.views[m.active].Keys()...)...)
 
 	// La ligne d'état est TOUJOURS réservée, même vide.
 	//
@@ -307,8 +377,7 @@ func (m *Model) renderFooter() string {
 	if m.status != "" && time.Since(m.statusAt) < statusLifetime {
 		status = m.th.Info.Render(" " + component.Truncate(m.status, m.width-2))
 	}
-	rule := m.th.Muted.Render(strings.Repeat("─", m.width))
-	return rule + "\n" + status + "\n" + component.Clip(hints, m.width)
+	return m.rule() + "\n" + status + "\n" + component.Clip(hints, m.width)
 }
 
 func (m *Model) renderHelp(height int) string {
@@ -316,7 +385,7 @@ func (m *Model) renderHelp(height int) string {
 	sb.WriteString(m.th.Title.Render("Aide") + "\n\n")
 	sb.WriteString(m.th.Subtitle.Render("Navigation") + "\n")
 	for _, p := range [][2]string{
-		{"1…5 / tab / ⇧tab", "changer d'écran"},
+		{"1…6 / tab / ⇧tab", "changer d'écran"},
 		{"?", "afficher ou masquer cette aide"},
 		{"q", "quitter (refusé pendant un travail de fond)"},
 		{"ctrl+c", "quitter immédiatement"},

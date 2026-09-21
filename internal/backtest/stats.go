@@ -241,6 +241,20 @@ func AggregateStats(results []*Result, initialCapital float64) Stats {
 		agg.ProfitFactor = math.NaN()
 	}
 	agg.SQN = sqn(allPnL)
+	// Drawdown et Sharpe exigent une COURBE DE VALEUR ; un agrégat
+	// d'actifs n'en a pas.
+	//
+	// Chaque actif a été rejoué sur son propre compte, avec ses propres
+	// plafonds de positions : il n'existe aucun portefeuille dont ces
+	// courbes seraient les composantes, et les concaténer en fabriquerait
+	// un qui n'a jamais existé. Les laisser à zéro était pire encore —
+	// zéro se lit « aucun drawdown » alors que la vérité est « non
+	// mesuré ». NaN, donc `null` dans run.json et « — » à l'écran.
+	//
+	// Les calculer pour de bon suppose de trancher l'exposition croisée
+	// inter-actifs : c'est une décision de conception, pas un calcul.
+	agg.MaxDrawdownPct = math.NaN()
+	agg.Sharpe = math.NaN()
 	agg.FinalEquity = initialCapital + agg.NetPnL
 	agg.ReturnPct = (agg.FinalEquity/initialCapital - 1) * 100
 	agg.ExitReasons = exitReasons

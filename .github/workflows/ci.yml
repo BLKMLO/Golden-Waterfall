@@ -38,6 +38,31 @@ jobs:
       - name: Tests (avec détecteur de concurrence)
         run: go test -race ./...
 
+  vuln:
+    name: Vulnérabilités des dépendances
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      # Un binaire qui parle à un courtier ne devrait pas apprendre une
+      # faille connue par la rumeur. govulncheck ne signale que les
+      # vulnérabilités RÉELLEMENT ATTEIGNABLES depuis le code appelé : pas
+      # de bruit sur une fonction vulnérable que le projet n'appelle
+      # jamais.
+      #
+      # Version épinglée pour que la CI ne casse pas le jour d'une
+      # publication amont ; la base de vulnérabilités, elle, est
+      # téléchargée à chaque exécution et reste donc à jour. L'outil exige
+      # un toolchain plus récent que le projet : GOTOOLCHAIN=auto (défaut)
+      # le récupère sans changer la version qui COMPILE le binaire.
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+
   build:
     name: Compilation croisée
     runs-on: ubuntu-latest

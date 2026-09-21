@@ -69,7 +69,19 @@ type RiskConfig struct {
 	// (1 lot standard = 100 000, 1 mini-lot = 10 000, 1 micro-lot = 1 000).
 	// L'unité compte : à 1, tous les P&L affichés deviennent des
 	// poussières illisibles qu'on prend pour du bruit.
-	MaxPositionSize       float64 `yaml:"max_position_size"`
+	MaxPositionSize float64 `yaml:"max_position_size"`
+	// RiskPerTradePct : part de l'ÉQUITÉ risquée par entrée, en %.
+	//
+	// 0 = désactivé : la taille vaut alors `max_position_size`, quels que
+	// soient la paire et le régime de volatilité. Au-dessus de 0, la
+	// taille est calculée pour que la distance jusqu'au stop coûte
+	// exactement ce pourcentage, et `max_position_size` redevient ce que
+	// son nom dit : un PLAFOND.
+	//
+	// Changer ce réglage change le système, pas seulement son échelle :
+	// une taille variable modifie les drawdowns, le profit factor et le
+	// SQN. À mesurer en walk-forward avant/après, jamais à supposer.
+	RiskPerTradePct       float64 `yaml:"risk_per_trade_pct"`
 	MaxPositionsPerSymbol int     `yaml:"max_positions_per_symbol"`
 	MaxOpenPositions      int     `yaml:"max_open_positions"`
 	// MaxDailyLossPct : au-delà, plus aucune ENTRÉE. Les sorties restent
@@ -213,30 +225,56 @@ func Load(paths Paths) (Config, error) {
 	return cfg, nil
 }
 
+// envBinding associe une variable d'environnement à la CLÉ de
+// configuration qu'elle écrase.
+//
+// Le chemin (« broker.mode ») n'est pas décoratif : l'écran Paramètres
+// s'en sert pour dire qu'un réglage est forcé depuis l'extérieur. Sans
+// lui, l'interface proposerait de modifier une valeur que l'environnement
+// réécrirait au démarrage suivant — exactement le piège que la règle
+// « l'environnement a le dernier mot » est censée rendre visible.
+type envBinding struct {
+	key   string
+	path  string
+	apply func(*Config, string) error
+}
+
+func envBindings() []envBinding {
+	return []envBinding{
+		{"GW_BROKER", "broker.name", func(c *Config, v string) error { c.Broker.Name = v; return nil }},
+		{"GW_MODE", "broker.mode", func(c *Config, v string) error { c.Broker.Mode = v; return nil }},
+		{"GW_BROKER_HOST", "broker.host", func(c *Config, v string) error { c.Broker.Host = v; return nil }},
+		{"GW_BROKER_PORT", "broker.port", func(c *Config, v string) error { return setInt(v, &c.Broker.Port) }},
+		{"GW_STRATEGY", "strategy.name", func(c *Config, v string) error { c.Strategy.Name = v; return nil }},
+		{"GW_STRATEGY_ENABLED", "strategy.enabled", func(c *Config, v string) error { return setBool(v, &c.Strategy.Enabled) }},
+		{"GW_LOG_LEVEL", "logging.level", func(c *Config, v string) error { c.Logging.Level = v; return nil }},
+		{"GW_THEME", "ui.theme", func(c *Config, v string) error { c.UI.Theme = v; return nil }},
+		{"GW_TIMEFRAME", "training.timeframe", func(c *Config, v string) error { c.Training.Timeframe = v; return nil }},
+		{"GW_SEED", "training.seed", func(c *Config, v string) error { return setInt64(v, &c.Training.Seed) }},
+	}
+}
+
+// EnvOverrides renvoie, pour chaque clé de configuration actuellement
+// FORCÉE par l'environnement, le nom de la variable responsable.
+func EnvOverrides() map[string]string {
+	out := map[string]string{}
+	for _, b := range envBindings() {
+		if v, ok := os.LookupEnv(b.key); ok && v != "" {
+			out[b.path] = b.key
+		}
+	}
+	return out
+}
+
 // applyEnv applique les surcharges GW_* (dernier mot).
 func applyEnv(cfg *Config) error {
-	type binding struct {
-		key   string
-		apply func(string) error
-	}
-	bindings := []binding{
-		{"GW_BROKER", func(v string) error { cfg.Broker.Name = v; return nil }},
-		{"GW_MODE", func(v string) error { cfg.Broker.Mode = v; return nil }},
-		{"GW_BROKER_HOST", func(v string) error { cfg.Broker.Host = v; return nil }},
-		{"GW_BROKER_PORT", func(v string) error { return setInt(v, &cfg.Broker.Port) }},
-		{"GW_STRATEGY", func(v string) error { cfg.Strategy.Name = v; return nil }},
-		{"GW_STRATEGY_ENABLED", func(v string) error { return setBool(v, &cfg.Strategy.Enabled) }},
-		{"GW_LOG_LEVEL", func(v string) error { cfg.Logging.Level = v; return nil }},
-		{"GW_THEME", func(v string) error { cfg.UI.Theme = v; return nil }},
-		{"GW_TIMEFRAME", func(v string) error { cfg.Training.Timeframe = v; return nil }},
-		{"GW_SEED", func(v string) error { return setInt64(v, &cfg.Training.Seed) }},
-	}
+	bindings := envBindings()
 	for _, b := range bindings {
 		v, ok := os.LookupEnv(b.key)
 		if !ok || v == "" {
 			continue
 		}
-		if err := b.apply(v); err != nil {
+		if err := b.apply(cfg, v); err != nil {
 			return fmt.Errorf("variable %s : %w", b.key, err)
 		}
 	}
@@ -315,6 +353,9 @@ func (c Config) Validate() error {
 	}
 	if c.Risk.MaxDailyLossPct < 0 || c.Risk.MaxDailyLossPct > 100 {
 		add("risk.max_daily_loss_pct doit être dans [0, 100] (reçu %g)", c.Risk.MaxDailyLossPct)
+	}
+	if c.Risk.RiskPerTradePct < 0 || c.Risk.RiskPerTradePct > 100 {
+		add("risk.risk_per_trade_pct doit être dans [0, 100] (reçu %g)", c.Risk.RiskPerTradePct)
 	}
 	if c.Costs.CommissionPerUnit < 0 {
 		add("costs.commission_per_unit ne peut pas être négatif")

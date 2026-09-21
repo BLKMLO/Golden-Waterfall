@@ -58,7 +58,7 @@ func setupRuntime(t *testing.T) (*Runtime, config.Config, *storage.Store) {
 	t.Cleanup(func() { store.Close() })
 
 	logger := slog.New(slog.DiscardHandler)
-	rt := NewRuntime(cfg, core.NewBus(), logger, store, risk.New(cfg.Risk, logger))
+	rt := NewRuntime(cfg, core.NewBus(), logger, store, risk.New(cfg.Risk, cfg.Backtest.AccountCurrency, logger))
 	t.Cleanup(rt.Disconnect)
 	return rt, cfg, store
 }
@@ -191,7 +191,7 @@ func TestUnknownGatewayIsReported(t *testing.T) {
 	rt, cfg, store := setupRuntime(t)
 	cfg.Broker.Name = "inexistante"
 	logger := slog.New(slog.DiscardHandler)
-	rt = NewRuntime(cfg, core.NewBus(), logger, store, risk.New(cfg.Risk, logger))
+	rt = NewRuntime(cfg, core.NewBus(), logger, store, risk.New(cfg.Risk, cfg.Backtest.AccountCurrency, logger))
 	if err := rt.Connect(context.Background()); err == nil {
 		t.Fatal("une passerelle inconnue doit faire échouer la connexion, clairement")
 	}

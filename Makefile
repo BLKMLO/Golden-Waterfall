@@ -41,7 +41,7 @@ fmt: ## Reformate le code
 lint: fmt vet ## Reformate puis analyse
 
 clean: ## Supprime les artefacts de compilation
-	rm -rf $(BINARY) $(BINARY).exe $(DIST) coverage.out coverage.html
+	rm -rf $(BINARY) $(BINARY).exe $(DIST) coverage.out coverage.html $(SYSO)
 
 # --- Publication ----------------------------------------------------------
 
@@ -63,15 +63,27 @@ macos: ## Binaire macOS (Intel + Apple Silicon)
 # de compilation ramasse AUTOMATIQUEMENT s'il est présent à la racine du
 # paquet main.
 #
-#   go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@latest
-#   goversioninfo -icon=build/icon.ico -o cmd/gw/resource_windows_amd64.syso
-#   make windows
+# Il n'y a donc RIEN à décommenter : déposer build/icon.ico (256×256
+# recommandé) suffit. La cible le détecte, et dit clairement ce qui manque
+# plutôt que de produire un binaire sans icône en silence.
 #
-# Déposer build/icon.ico (256×256 recommandé) et décommenter la ligne
-# ci-dessous une fois l'outil installé.
-windows: ## Binaire Windows (amd64)
+#   go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@latest
+ICON  := build/icon.ico
+SYSO  := cmd/gw/resource_windows_amd64.syso
+
+windows: $(SYSO) ## Binaire Windows (amd64, icône si build/icon.ico existe)
 	@mkdir -p $(DIST)
-	# goversioninfo -icon=build/icon.ico -o cmd/gw/resource_windows_amd64.syso
 	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o $(DIST)/$(BINARY)-windows-amd64.exe $(PKG)
+
+.PHONY: $(SYSO)
+$(SYSO):
+	@if [ ! -f $(ICON) ]; then \
+		echo "Icône : $(ICON) absent — binaire Windows SANS icône (c'est normal tant qu'aucune icône n'existe)."; \
+	elif ! command -v goversioninfo >/dev/null 2>&1; then \
+		echo "Icône : $(ICON) présent mais goversioninfo introuvable — binaire SANS icône."; \
+		echo "  go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@latest"; \
+	else \
+		goversioninfo -icon=$(ICON) -o $(SYSO) && echo "Icône embarquée depuis $(ICON)."; \
+	fi
 
 all: lint race dist ## Tout : format, analyse, tests, binaires
