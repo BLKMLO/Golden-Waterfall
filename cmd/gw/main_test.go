@@ -124,3 +124,43 @@ func TestBacktestWithoutPairIsRefused(t *testing.T) {
 		t.Fatal("gw backtest sans paire doit échouer clairement")
 	}
 }
+
+// TestPartitionArgsKeepsFlagsAfterPairs : « gw download EURUSD --year 2019 »
+// doit limiter la période. Le paquet flag s'arrêtant au premier argument
+// positionnel, une option placée APRÈS la paire serait sinon ignorée en
+// silence — et le programme téléchargerait vingt ans au lieu d'un.
+func TestPartitionArgsKeepsFlagsAfterPairs(t *testing.T) {
+	takes := map[string]bool{"from": true, "to": true, "year": true}
+	cases := []struct {
+		args      []string
+		wantFlags []string
+		wantRest  []string
+	}{
+		{[]string{"EURUSD", "--year", "2019"}, []string{"--year", "2019"}, []string{"EURUSD"}},
+		{[]string{"--year", "2019", "EURUSD"}, []string{"--year", "2019"}, []string{"EURUSD"}},
+		{[]string{"EURUSD", "--from=2019", "--to=2020"}, []string{"--from=2019", "--to=2020"}, []string{"EURUSD"}},
+		{[]string{"EURUSD", "GBPUSD"}, nil, []string{"EURUSD", "GBPUSD"}},
+	}
+	for _, c := range cases {
+		flags, rest := partitionArgs(c.args, takes)
+		if strings.Join(flags, " ") != strings.Join(c.wantFlags, " ") {
+			t.Errorf("%v : options %v, %v attendues", c.args, flags, c.wantFlags)
+		}
+		if strings.Join(rest, " ") != strings.Join(c.wantRest, " ") {
+			t.Errorf("%v : paires %v, %v attendues", c.args, rest, c.wantRest)
+		}
+	}
+}
+
+func TestHelpMentionsPartialDownload(t *testing.T) {
+	isolate(t)
+	out, err := capture(t, func() error { return run([]string{"help"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"--year", "--from", "--to"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("l'aide ne documente pas %s", want)
+		}
+	}
+}

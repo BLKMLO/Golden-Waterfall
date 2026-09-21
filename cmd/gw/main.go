@@ -7,6 +7,7 @@
 //
 //	gw                      interface terminal
 //	gw download [PAIRE…]    historique M1 (toutes les paires si aucune)
+//	                        --year / --from / --to limitent la période
 //	gw train                walk-forward complet
 //	gw backtest PAIRE       rejeu d'une paire avec le modèle de production
 //	gw runs                 entraînements archivés
@@ -81,6 +82,8 @@ func printUsage() {
 
   gw                      interface terminal (par défaut)
   gw download [PAIRE…]    télécharge l'historique M1 Dukascopy
+     --year A             une seule année        (ex. gw download EURUSD --year 2019)
+     --from A --to B      une période            (bornes comprises)
   gw train                lance un walk-forward complet
   gw backtest PAIRE       rejoue une paire avec le modèle de production
   gw runs                 liste les entraînements archivés
@@ -154,7 +157,39 @@ func runConfig(args []string) error {
 	return nil
 }
 
+// partitionArgs sépare les options des paires.
+//
+// Le paquet `flag` s'arrête au premier argument positionnel :
+// « gw download EURUSD --from 2019 » lui ferait ignorer les deux options
+// en silence, et téléchargerait vingt ans d'historique à la place de
+// l'année demandée. On les remet donc devant.
+func partitionArgs(args []string, takesValue map[string]bool) (flags, rest []string) {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if !strings.HasPrefix(a, "-") {
+			rest = append(rest, a)
+			continue
+		}
+		flags = append(flags, a)
+		name := strings.TrimLeft(strings.SplitN(a, "=", 2)[0], "-")
+		if takesValue[name] && !strings.Contains(a, "=") && i+1 < len(args) {
+			i++
+			flags = append(flags, args[i])
+		}
+	}
+	return flags, rest
+}
+
 func runDownload(args []string) error {
+	fs := flag.NewFlagSet("download", flag.ContinueOnError)
+	from := fs.Int("from", 0, "première année à télécharger (défaut : history.start_year)")
+	to := fs.Int("to", 0, "dernière année à télécharger (défaut : année courante)")
+	year := fs.Int("year", 0, "une seule année (raccourci pour --from A --to A)")
+	flags, symbols := partitionArgs(args, map[string]bool{"from": true, "to": true, "year": true})
+	if err := fs.Parse(flags); err != nil {
+		return err
+	}
+
 	a, ctx, cancel, err := open()
 	if err != nil {
 		return err
@@ -162,15 +197,28 @@ func runDownload(args []string) error {
 	defer cancel()
 	defer a.Close()
 
-	symbols := args
 	if len(symbols) == 0 {
 		symbols = a.Config.History.Instruments
 	}
+	span := data.FullRange(a.Config.History.StartYear)
+	if *year > 0 {
+		span = data.YearRange{From: *year, To: *year}.Normalize()
+	} else {
+		if *from > 0 {
+			span.From = *from
+		}
+		if *to > 0 {
+			span.To = *to
+		}
+		span = span.Normalize()
+	}
+	fmt.Printf("Période : %s · %d paire(s)\n", span, len(symbols))
+
 	dl := data.NewDownloader(a.Config.Paths.HistoryDir(), a.Config.History.Concurrency, a.Logger)
 	endYear := time.Now().UTC().Year()
 	total := 0
 	for _, sym := range symbols {
-		for year := a.Config.History.StartYear; year <= endYear; year++ {
+		for _, year := range span.Years() {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}

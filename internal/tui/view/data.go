@@ -34,6 +34,12 @@ type Data struct {
 	cursor  int
 	loading bool
 
+	// span : période demandée au prochain téléchargement. Télécharger
+	// vingt ans pour éprouver une idée sur un mois n'a aucun sens, et
+	// c'est pourtant tout ce que l'écran savait faire.
+	span     data.YearRange
+	spanEdge int // 0 = borne de début sélectionnée, 1 = borne de fin
+
 	mu        sync.Mutex
 	active    bool
 	progress  data.DownloadProgress
@@ -43,7 +49,9 @@ type Data struct {
 }
 
 // NewData construit l'écran des données.
-func NewData(deps Deps) Model { return &Data{deps: deps} }
+func NewData(deps Deps) Model {
+	return &Data{deps: deps, span: data.FullRange(deps.App.Config.History.StartYear)}
+}
 
 func (v *Data) Title() string { return "Données" }
 
@@ -62,9 +70,22 @@ func (v *Data) Keys() [][2]string {
 	return [][2]string{
 		{"d", "télécharger la paire"},
 		{"D", "télécharger tout"},
+		{"←→", "borne d'année"},
+		{"p", "début / fin"},
+		{"a", "tout l'historique"},
 		{"x", "interrompre"},
-		{"r", "rafraîchir l'inventaire"},
+		{"r", "rafraîchir"},
 	}
+}
+
+// moveSpan déplace la borne sélectionnée d'une année.
+func (v *Data) moveSpan(delta int) {
+	if v.spanEdge == 0 {
+		v.span.From += delta
+	} else {
+		v.span.To += delta
+	}
+	v.span = v.span.Normalize()
 }
 
 func (v *Data) refresh() {
@@ -125,6 +146,15 @@ func (v *Data) Update(msg tea.Msg) (Model, tea.Cmd) {
 			v.move(-1)
 		case "down", "J":
 			v.move(1)
+		case "left", "h":
+			v.moveSpan(-1)
+		case "right", "l":
+			v.moveSpan(1)
+		case "p":
+			v.spanEdge = 1 - v.spanEdge
+		case "a":
+			v.span = data.FullRange(v.deps.App.Config.History.StartYear)
+			v.deps.Status("période remise à l'historique complet")
 		case "r":
 			v.refresh()
 			v.deps.Status("inventaire rafraîchi")
@@ -177,6 +207,7 @@ func (v *Data) startDownload(all bool) tea.Cmd {
 	cfg := v.deps.App.Config
 	logger := v.deps.App.Logger
 	emit := v.deps.Emit
+	span := v.span.Normalize()
 
 	return func() tea.Msg {
 		dl := data.NewDownloader(cfg.Paths.HistoryDir(), cfg.History.Concurrency, logger)
@@ -187,7 +218,7 @@ func (v *Data) startDownload(all bool) tea.Cmd {
 	loop:
 		for _, sym := range symbols {
 			lastSymbol = sym
-			for year := cfg.History.StartYear; year <= endYear; year++ {
+			for _, year := range span.Years() {
 				select {
 				case <-ctx.Done():
 					lastErr = ctx.Err()
@@ -269,12 +300,13 @@ func (v *Data) renderHeader(width int) string {
 	v.mu.Unlock()
 
 	if !active {
-		body := th.Muted.Render(
-			"Aucun téléchargement en cours.\n" +
-				"Source : Dukascopy (M1 bid ET ask — c'est le côté ask qui permet de MESURER le spread).\n" +
+		// Une seule phrase par ligne, sans coupure manuelle : le panneau
+		// habille le texte à la largeur réelle.
+		body := v.renderSpan(width) + "\n" + th.Muted.Render(
+			"Source : Dukascopy (M1 bid ET ask — c'est le côté ask qui permet de MESURER le spread). "+
 				"Concurrence basse volontaire : au-delà de 3-4 requêtes simultanées, Dukascopy répond 429.")
 		if lastErr != "" {
-			body += "\n" + th.Negative.Render("⚠ "+component.Truncate(lastErr, width-8))
+			body += "\n" + th.Negative.Render("⚠ "+component.Truncate(lastErr, component.PanelContent(width)))
 		}
 		return component.Panel(th, "Téléchargement", body, width)
 	}
@@ -286,11 +318,36 @@ func (v *Data) renderHeader(width int) string {
 	bar := component.ProgressBar(ratio, width-28, th)
 	line := fmt.Sprintf("%s %s %d/%d jours", bar, th.Accent.Render(fmt.Sprintf("%3.0f %%", ratio*100)),
 		p.DaysDone, p.DaysTotal)
-	detail := fmt.Sprintf("%s %d · %s · %s bougies · %d jours sans donnée · %d échecs · %s",
-		p.Symbol, p.Year, p.CurrentStep, component.Count(p.Bars), p.Skipped, p.Failures,
+	detail := fmt.Sprintf("%s %d sur %s · %s · %s bougies · %d jours sans donnée · %d échecs · %s",
+		p.Symbol, p.Year, v.span, p.CurrentStep, component.Count(p.Bars), p.Skipped, p.Failures,
 		component.Duration(time.Since(started)))
 	return component.Panel(th, "Téléchargement en cours",
-		line+"\n"+th.Muted.Render(component.Truncate(detail, width-6)), width)
+		line+"\n"+th.Muted.Render(component.Truncate(detail, component.PanelContent(width))), width)
+}
+
+// renderSpan montre la période demandée, borne sélectionnée mise en
+// évidence.
+//
+// La période est affichée même quand elle vaut l'historique complet :
+// c'est elle qui décide de ce que « d » va chercher, et un réglage
+// invisible est un réglage qu'on oublie avoir changé.
+func (v *Data) renderSpan(width int) string {
+	th := v.deps.Theme
+	from, to := fmt.Sprintf("%d", v.span.From), fmt.Sprintf("%d", v.span.To)
+	if v.spanEdge == 0 {
+		from = th.Accent.Bold(true).Render("[" + from + "]")
+		to = th.Text.Render(" " + to + " ")
+	} else {
+		from = th.Text.Render(" " + from + " ")
+		to = th.Accent.Bold(true).Render("[" + to + "]")
+	}
+	note := "période partielle — seules ces années seront demandées"
+	style := th.Warning
+	if v.span.Covers(data.FullRange(v.deps.App.Config.History.StartYear)) {
+		note, style = "historique complet", th.Muted
+	}
+	return th.Muted.Render("Période : ") + from + th.Muted.Render(" → ") + to +
+		"  " + style.Render(component.Truncate(note, component.PanelContent(width)-28))
 }
 
 // missingSummary résume ce qu'il reste à télécharger, sans tout énumérer.
