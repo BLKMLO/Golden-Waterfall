@@ -33,6 +33,15 @@ make dist       # les cinq binaires (Linux ×2, macOS ×2, Windows)
 Sous-commandes non interactives : `download`, `train`, `backtest PAIRE`,
 `runs`, `paths`, `config [--default]`, `version`.
 
+`download` accepte `--year A` ou `--from A --to B` pour ne prendre qu'une
+partie de l'historique. Les options sont remises devant les paires avant
+d'être parsées (`partitionArgs`) : le paquet `flag` s'arrête au premier
+argument positionnel et ignorerait sinon `gw download EURUSD --year 2019`
+en silence.
+
+Six écrans : **Live**, **Données**, **Backtest**, **Entraînement**,
+**Journal**, **Paramètres**.
+
 Configuration : `config.yaml` dans le dossier de config de l'utilisateur,
 créé au premier lancement depuis le modèle commenté **embarqué dans le
 binaire**. Priorité : défauts → YAML → variables `GW_*` (l'environnement a
@@ -82,6 +91,12 @@ cessait d'être vraie.
 | `Rejections` par run (`risk.Manager.Fork`) | backtest | Publier un cumul de tous les runs comme s'il décrivait celui-ci |
 | `MaxDrawdownPct`/`Sharpe` à NaN dans l'agrégat | backtest | Lire « 0 % de drawdown » là où la vérité est « non mesuré » |
 | Refus de dimensionnement (4 motifs) | risk | Risquer, faute de mesure, un montant que personne n'a choisi |
+| Brouillon + « prend effet au démarrage » | TUI Paramètres | Croire qu'un réglage modifié s'applique à la séance en cours |
+| Réglage forcé par `GW_*`, non modifiable | TUI Paramètres | Éditer une valeur que l'environnement réécrira |
+| `Validate()` avant écriture | TUI Paramètres | Transformer un réglage maladroit en démarrage impossible |
+| `Table` : colonne retirée annoncée (`+N col.`) | TUI | Prendre une information absente pour une information inexistante |
+| Badges d'état jamais supprimés | TUI | Perdre « LIVE — ARGENT RÉEL » en réduisant la fenêtre |
+| Période de téléchargement toujours affichée | TUI Données | Croire télécharger tout l'historique |
 
 ## Conventions
 
@@ -91,6 +106,13 @@ cessait d'être vraie.
   (`risk/manager.go`, pas `risk/risk_manager.go`).
 - **Tests en miroir** : `internal/<paquet>/<fichier>_test.go`.
 - **Aucune couleur littérale hors de `internal/tui/theme`.**
+- **Largeurs TUI** : `component.PanelContent(width)` donne la largeur
+  intérieure d'un panneau ; aucune vue ne la recalcule de tête. `Table`
+  reçoit cette largeur et arbitre ses colonnes (`Flex`/`Min` pour
+  comprimer, `Priority` pour sacrifier, priorité 0 = jamais retirée).
+- **Touches** : ← et → appartiennent aux ÉCRANS, pas au routeur. Un écran
+  qui saisit du texte l'annonce par `view.KeyCapturer` ; seul Ctrl+C reste
+  global.
 - **Aucun `panic` sur une donnée** ; seulement sur une incohérence de code.
 - Nouvelle stratégie / nouvelle passerelle : `Register()` dans un `init()`,
   aucun autre fichier à modifier.
@@ -177,12 +199,12 @@ Une tentative de repli sur 1.24 casse la compatibilité entre les paquets
 
 ## État du projet (21 septembre 2026)
 
-**Complet de bout en bout, ~13 300 lignes de code + ~5 400 de tests,
+**Complet de bout en bout, ~14 500 lignes de code + ~5 900 de tests,
 20 paquets, suite verte avec `-race`.**
 
-Couverture par paquet (la plus basse d'abord) : `cmd/gw` 14 %,
-`tui/view` 29 %, `data` 55 %, `config` 59 %, `core` 62 %, `tui` 65 %,
-`tui/component` 69 %, `training` 75 %, `broker` 75 %, `indicator` 77 %,
+Couverture par paquet (la plus basse d'abord) : `cmd/gw` 18 %,
+`tui/view` 41 %, `data` 57 %, `config` 57 %, `core` 62 %, `tui` 68 %,
+`training` 75 %, `indicator` 77 %, `tui/component` 77 %, `broker` 78 %,
 `app` 78 %, `storage` 79 %, `feature` 79 %, `live` 80 %, `strategy` 81 %,
 `ml/gbdt` 81 %, `backtest` 85 %, `risk` 88 %, `label` 95 %. Les chiffres
 bas ne sont pas tous des trous : dans `data` et `config`, le non-couvert
@@ -197,7 +219,11 @@ Validé réellement :
 - backtest CLI et TUI, courbe d'équité braille, tableau des trades ;
 - passerelle `replay` en TUI : connexion, flux, agrégation H4, signaux,
   ordres, exécutions, positions, journal des trades ;
-- rendu de la TUI vérifié sous tmux à plusieurs tailles.
+- rendu de la TUI vérifié sous tmux à plusieurs tailles, puis CONTRÔLÉ
+  par test : chaque écran est dessiné de 60 à 200 colonnes et aucune
+  ligne ne dépasse la largeur demandée. C'est ce contrôle qui a révélé
+  les tableaux enroulés et les badges supprimés — la relecture de code
+  ne les voyait pas.
 
 **Reste à valider chez l'utilisateur** : premier téléchargement Dukascopy
 réel (le bac à sable de dev est limité à 429).
@@ -224,7 +250,13 @@ réel (le bac à sable de dev est limité à 429).
    exigeraient une courbe de valeur commune inexistante. Les calculer pour
    de bon suppose de trancher comment le capital se partage entre actifs :
    c'est une décision de conception, pas un calcul.
-4. **Mesurer `risk_per_trade_pct`** : le dimensionnement au risque existe
+4. **`ui.theme` ne force rien.** `Light()` renvoie `Dark()` et rien
+   n'appelle `lipgloss.SetHasDarkBackground` : les couleurs sont
+   adaptatives et la détection décide seule. La clé existe, l'écran
+   Paramètres l'expose, et elle n'a aucun effet — c'est le piège que la
+   règle « une variable exportée doit agir » interdit. Soit on force
+   réellement le mode, soit on retire la clé.
+5. **Mesurer `risk_per_trade_pct`** : le dimensionnement au risque existe
    et est testé, mais il est à 0 (désactivé) par défaut. Avant de
    l'activer, un walk-forward avant/après — il déplace drawdown, profit
    factor et SQN.
@@ -267,6 +299,15 @@ réel (le bac à sable de dev est limité à 429).
   nues avec un stop affiché à l'écran et nulle part ailleurs.
 - **Licence MIT.** Sans fichier `LICENSE`, un dépôt public reste « tous
   droits réservés » sans que rien ne le dise.
+- **L'écran Paramètres travaille sur un BROUILLON.** Le risque, le moteur
+  live et le moteur de backtest reçoivent leur configuration au démarrage
+  et ne la relisent pas. Appliquer un réglage à chaud donnerait un
+  programme dont la moitié des composants obéit à une configuration et
+  l'autre moitié à une autre. L'écran écrit `config.yaml` et répète que
+  cela prend effet au prochain démarrage.
+- **README abrégé, détail dans `docs/`.** Les tableaux de garanties et de
+  pannes vivent dans `docs/depannage.md` : un lecteur qui découvre le
+  projet n'en a pas besoin avant d'avoir lancé le binaire.
 
 ### Bugs corrigés (et pourquoi ils comptaient)
 
@@ -308,6 +349,24 @@ réel (le bac à sable de dev est limité à 429).
   calculés faute de courbe de valeur commune. Zéro se lit « aucun
   drawdown » ; la vérité était « non mesuré ». Désormais NaN, donc `null`
   dans `run.json` et « — » à l'écran.
+- **Tableaux enroulés sur deux lignes par enregistrement** : les largeurs
+  de colonnes étaient fixes et dépassaient le panneau dès 100 colonnes,
+  sur l'écran Live. La cause profonde était un écart de deux colonnes
+  entre la largeur qu'un panneau OCCUPE et celle qu'il offre à son
+  contenu, que chaque vue recalculait de tête. Un tableau enroulé n'est
+  plus un tableau.
+- **Badges d'état supprimés en premier** quand la largeur manquait — dont
+  « LIVE — ARGENT RÉEL » et l'état du kill-switch. Ce sont les dernières
+  informations qu'on peut se permettre de perdre.
+- **Barre de raccourcis rognée sur les touches globales** : `? aide` et
+  `q quitter` étaient en fin de liste, donc coupées les premières.
+- **Cartes de statistiques abandonnées en silence** : le panneau Compte
+  perdait « Bougies » et « Ordres » à 70 colonnes.
+- **`PanelH` comptait les lignes AVANT enroulement**, donc dépassait sa
+  hauteur promise et désalignait le panneau voisin.
+- **Cellules décalées d'une colonne** après retrait d'une colonne : le
+  prix s'affichait sous l'entête « État ». Attrapé par le test écrit dans
+  la foulée du correctif.
 - **Chemin d'historique débordant la largeur du terminal** : écrit hors
   de tout panneau, sans troncature. Un débordement décale la mise en page
   de TOUS les écrans, Bubbletea composant des chaînes sans les découper.
