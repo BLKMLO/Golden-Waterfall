@@ -225,30 +225,56 @@ func Load(paths Paths) (Config, error) {
 	return cfg, nil
 }
 
+// envBinding associe une variable d'environnement à la CLÉ de
+// configuration qu'elle écrase.
+//
+// Le chemin (« broker.mode ») n'est pas décoratif : l'écran Paramètres
+// s'en sert pour dire qu'un réglage est forcé depuis l'extérieur. Sans
+// lui, l'interface proposerait de modifier une valeur que l'environnement
+// réécrirait au démarrage suivant — exactement le piège que la règle
+// « l'environnement a le dernier mot » est censée rendre visible.
+type envBinding struct {
+	key   string
+	path  string
+	apply func(*Config, string) error
+}
+
+func envBindings() []envBinding {
+	return []envBinding{
+		{"GW_BROKER", "broker.name", func(c *Config, v string) error { c.Broker.Name = v; return nil }},
+		{"GW_MODE", "broker.mode", func(c *Config, v string) error { c.Broker.Mode = v; return nil }},
+		{"GW_BROKER_HOST", "broker.host", func(c *Config, v string) error { c.Broker.Host = v; return nil }},
+		{"GW_BROKER_PORT", "broker.port", func(c *Config, v string) error { return setInt(v, &c.Broker.Port) }},
+		{"GW_STRATEGY", "strategy.name", func(c *Config, v string) error { c.Strategy.Name = v; return nil }},
+		{"GW_STRATEGY_ENABLED", "strategy.enabled", func(c *Config, v string) error { return setBool(v, &c.Strategy.Enabled) }},
+		{"GW_LOG_LEVEL", "logging.level", func(c *Config, v string) error { c.Logging.Level = v; return nil }},
+		{"GW_THEME", "ui.theme", func(c *Config, v string) error { c.UI.Theme = v; return nil }},
+		{"GW_TIMEFRAME", "training.timeframe", func(c *Config, v string) error { c.Training.Timeframe = v; return nil }},
+		{"GW_SEED", "training.seed", func(c *Config, v string) error { return setInt64(v, &c.Training.Seed) }},
+	}
+}
+
+// EnvOverrides renvoie, pour chaque clé de configuration actuellement
+// FORCÉE par l'environnement, le nom de la variable responsable.
+func EnvOverrides() map[string]string {
+	out := map[string]string{}
+	for _, b := range envBindings() {
+		if v, ok := os.LookupEnv(b.key); ok && v != "" {
+			out[b.path] = b.key
+		}
+	}
+	return out
+}
+
 // applyEnv applique les surcharges GW_* (dernier mot).
 func applyEnv(cfg *Config) error {
-	type binding struct {
-		key   string
-		apply func(string) error
-	}
-	bindings := []binding{
-		{"GW_BROKER", func(v string) error { cfg.Broker.Name = v; return nil }},
-		{"GW_MODE", func(v string) error { cfg.Broker.Mode = v; return nil }},
-		{"GW_BROKER_HOST", func(v string) error { cfg.Broker.Host = v; return nil }},
-		{"GW_BROKER_PORT", func(v string) error { return setInt(v, &cfg.Broker.Port) }},
-		{"GW_STRATEGY", func(v string) error { cfg.Strategy.Name = v; return nil }},
-		{"GW_STRATEGY_ENABLED", func(v string) error { return setBool(v, &cfg.Strategy.Enabled) }},
-		{"GW_LOG_LEVEL", func(v string) error { cfg.Logging.Level = v; return nil }},
-		{"GW_THEME", func(v string) error { cfg.UI.Theme = v; return nil }},
-		{"GW_TIMEFRAME", func(v string) error { cfg.Training.Timeframe = v; return nil }},
-		{"GW_SEED", func(v string) error { return setInt64(v, &cfg.Training.Seed) }},
-	}
+	bindings := envBindings()
 	for _, b := range bindings {
 		v, ok := os.LookupEnv(b.key)
 		if !ok || v == "" {
 			continue
 		}
-		if err := b.apply(v); err != nil {
+		if err := b.apply(cfg, v); err != nil {
 			return fmt.Errorf("variable %s : %w", b.key, err)
 		}
 	}

@@ -40,6 +40,17 @@ type Model interface {
 	Busy() bool
 }
 
+// KeyCapturer : un écran qui, dans certains états, a besoin des touches
+// que le routeur intercepte normalement.
+//
+// Sans ce contrat, saisir « 3 » dans un champ de l'écran Paramètres
+// basculerait sur le troisième onglet, et « q » quitterait le programme au
+// milieu d'une saisie. Seul Ctrl+C reste toujours global : il doit rester
+// possible de sortir quoi qu'il arrive.
+type KeyCapturer interface {
+	CapturesKeys() bool
+}
+
 // JobDone signale la fin d'un travail de fond lancé par un écran.
 type JobDone struct {
 	View string

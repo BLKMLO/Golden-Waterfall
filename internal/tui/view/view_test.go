@@ -45,6 +45,7 @@ func allViews(deps Deps) map[string]Model {
 		"backtest":     NewBacktest(deps),
 		"entraînement": NewTraining(deps),
 		"journal":      NewJournal(deps),
+		"paramètres":   NewSettings(deps),
 	}
 }
 

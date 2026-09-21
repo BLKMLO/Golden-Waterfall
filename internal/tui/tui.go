@@ -79,6 +79,7 @@ func New(a *app.App) *Model {
 		view.NewBacktest(m.deps),
 		view.NewTraining(m.deps),
 		view.NewJournal(m.deps),
+		view.NewSettings(m.deps),
 	}
 	return m
 }
@@ -176,10 +177,16 @@ func isWorkerMsg(msg tea.Msg) bool {
 }
 
 func (m *Model) globalKey(msg tea.KeyMsg) (tea.Cmd, bool) {
-	switch msg.String() {
-	case "ctrl+c":
+	if msg.String() == "ctrl+c" {
 		m.quitting = true
 		return tea.Quit, true
+	}
+	// Un écran en SAISIE garde toutes ses touches : un chiffre tapé dans
+	// un champ ne doit pas changer d'onglet.
+	if c, ok := m.views[m.active].(view.KeyCapturer); ok && c.CapturesKeys() {
+		return nil, false
+	}
+	switch msg.String() {
 	case "q":
 		// « q » ne quitte que si aucun écran ne travaille : interrompre un
 		// entraînement de vingt minutes sur une frappe malheureuse serait
@@ -194,13 +201,17 @@ func (m *Model) globalKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 	case "?":
 		m.showHelp = !m.showHelp
 		return nil, true
-	case "tab", "right", "l":
+	case "tab":
 		m.active = (m.active + 1) % len(m.views)
 		return nil, true
-	case "shift+tab", "left", "h":
+	case "shift+tab":
 		m.active = (m.active - 1 + len(m.views)) % len(m.views)
 		return nil, true
 	}
+	// ← et → ne changent PLUS d'onglet : ce sont les touches naturelles
+	// pour régler une valeur, et aucun écran ne pouvait s'en servir tant
+	// que le routeur les interceptait. tab, ⇧tab et les chiffres suffisent
+	// à circuler.
 	if len(msg.String()) == 1 && msg.String() >= "1" && msg.String() <= "9" {
 		idx := int(msg.String()[0] - '1')
 		if idx < len(m.views) {
@@ -374,7 +385,7 @@ func (m *Model) renderHelp(height int) string {
 	sb.WriteString(m.th.Title.Render("Aide") + "\n\n")
 	sb.WriteString(m.th.Subtitle.Render("Navigation") + "\n")
 	for _, p := range [][2]string{
-		{"1…5 / tab / ⇧tab", "changer d'écran"},
+		{"1…6 / tab / ⇧tab", "changer d'écran"},
 		{"?", "afficher ou masquer cette aide"},
 		{"q", "quitter (refusé pendant un travail de fond)"},
 		{"ctrl+c", "quitter immédiatement"},
