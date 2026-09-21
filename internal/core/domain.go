@@ -64,6 +64,11 @@ type Signal struct {
 	Symbol     string
 	Action     SignalAction
 	Confidence float64 // Probabilité brute du modèle, 0 si non applicable.
+	// Price : prix de RÉFÉRENCE de la décision (le close de la bougie
+	// décidée). Sans lui, le risque ne peut pas mesurer la distance
+	// jusqu'au stop, donc pas dimensionner une position au risque : un
+	// stop seul ne dit rien tant qu'on ignore d'où l'on part.
+	Price      float64
 	StopLoss   float64
 	TakeProfit float64
 	Time       time.Time

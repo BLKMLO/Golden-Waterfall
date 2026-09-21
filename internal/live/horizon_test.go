@@ -76,7 +76,7 @@ func newHorizonEngine(t *testing.T, entry time.Time) (*Engine, *recordingGateway
 	cfg := config.Default()
 	// muteStrategy n'est JAMAIS prête : si une sortie part quand même,
 	// c'est bien que l'horizon ne dépend pas du modèle.
-	eng := NewEngine(gw, muteStrategy{}, risk.New(cfg.Risk, logger),
+	eng := NewEngine(gw, muteStrategy{}, risk.New(cfg.Risk, cfg.Backtest.AccountCurrency, logger),
 		store, core.NewBus(), logger, data.H4)
 	eng.SetEnabled(true)
 
@@ -174,7 +174,7 @@ func newEntryEngine(t *testing.T, supports bool) (*Engine, *recordingGateway) {
 	logger := slog.New(slog.DiscardHandler)
 	cfg := config.Default()
 	eng := NewEngine(bracketGateway{recordingGateway: rec, supports: supports},
-		entryStrategy{}, risk.New(cfg.Risk, logger), store, core.NewBus(), logger, data.H4)
+		entryStrategy{}, risk.New(cfg.Risk, cfg.Backtest.AccountCurrency, logger), store, core.NewBus(), logger, data.H4)
 	eng.SetEnabled(true)
 	return eng, rec
 }

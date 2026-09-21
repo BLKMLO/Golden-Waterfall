@@ -51,7 +51,7 @@ func testConfig() config.Config {
 }
 
 func newEngine(cfg config.Config) *Engine {
-	return NewEngine(cfg, risk.New(cfg.Risk, slog.New(slog.DiscardHandler)))
+	return NewEngine(cfg, risk.New(cfg.Risk, cfg.Backtest.AccountCurrency, slog.New(slog.DiscardHandler)))
 }
 
 // makeBars construit une série horaire depuis un lundi, sans côté ask
@@ -695,5 +695,37 @@ func TestRejectionCountsAreScopedToOneRun(t *testing.T) {
 	}
 	if len(second.Stats.Rejections) == 0 {
 		t.Fatal("aucun rejet compté : le test ne prouve rien")
+	}
+}
+
+// TestRiskSizingFlowsThroughTheEngine : le moteur doit FOURNIR l'équité au
+// risque, sinon le dimensionnement marcherait en live et pas en backtest —
+// exactement la divergence que l'architecture interdit.
+func TestRiskSizingFlowsThroughTheEngine(t *testing.T) {
+	cfg := testConfig()
+	cfg.Backtest.InitialCapital = 10000
+	cfg.Risk.MaxPositionSize = 1_000_000 // plafond hors de portée
+	cfg.Risk.RiskPerTradePct = 1         // 1 % de 10 000 = 100 USD
+	series := makeBars([][4]float64{
+		{100, 100, 100, 100},
+		{100, 100, 100, 100}, // entrée au close = 100, stop 98 → distance 2
+		{100, 103, 99, 101},
+		{101, 101, 101, 101},
+	}, 0)
+	strat := &scriptedStrategy{script: map[int]core.Signal{
+		1: {Action: core.EnterLong, Price: 100, TakeProfit: 102, StopLoss: 98},
+	}}
+	res, err := newEngine(cfg).Run(context.Background(), Request{
+		Symbol: "EURUSD", Series: series, From: 0, Strategy: strat, Timeframe: data.H1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Trades) != 1 {
+		t.Fatalf("%d trade(s), 1 attendu", len(res.Trades))
+	}
+	// quantité = plancher(budget / distance) = plancher(100 / 2) = 50.
+	if got := res.Trades[0].Quantity; got != 50 {
+		t.Fatalf("%g unités, 50 attendues (budget 100 USD, stop à 2)", got)
 	}
 }

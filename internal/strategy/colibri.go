@@ -408,6 +408,7 @@ func (c *colibri) OnBar(ctx context.Context, symbol string, series core.Series, 
 		Strategy:   c.spec.name,
 		Symbol:     symbol,
 		Confidence: prob,
+		Price:      bar.Close(),
 		Time:       bar.Time,
 		Action:     core.Hold,
 	}

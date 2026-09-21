@@ -51,7 +51,7 @@ func newExecutionHarness(t *testing.T) *executionHarness {
 
 	logger := slog.New(slog.DiscardHandler)
 	cfg := config.Default()
-	engine := NewEngine(stubGateway{}, muteStrategy{}, risk.New(cfg.Risk, logger),
+	engine := NewEngine(stubGateway{}, muteStrategy{}, risk.New(cfg.Risk, cfg.Backtest.AccountCurrency, logger),
 		store, core.NewBus(), logger, data.H4)
 	return &executionHarness{engine: engine, store: store}
 }

@@ -78,7 +78,7 @@ func New(paths config.Paths) (*App, error) {
 		return nil, err
 	}
 
-	rm := risk.New(cfg.Risk, logger)
+	rm := risk.New(cfg.Risk, cfg.Backtest.AccountCurrency, logger)
 	a := &App{
 		Config:   cfg,
 		Logger:   logger,

@@ -306,9 +306,18 @@ func (e *Engine) Run(ctx context.Context, req Request) (*Result, error) {
 				return nil, fmt.Errorf("stratégie sur %s à %s : %w", req.Symbol, bar.Time, err)
 			}
 			open := currentPositions(pos, req.Symbol)
-			// account = nil : le backtest ne modélise PAS la limite de
-			// perte journalière (elle exige l'équité réelle du broker).
-			dec := rm.Evaluate(sig, open, nil)
+			// L'équité courante est fournie pour que le dimensionnement au
+			// risque marche IDENTIQUEMENT ici et en live. DayStartEquity
+			// reste à zéro : la limite de perte journalière exige l'équité
+			// réelle du courtier et n'est donc pas modélisée — c'est dit,
+			// jamais simulé de travers.
+			equity := cash
+			if pos != nil {
+				equity += conv.ToAccount(pos.unrealized(bar.Close()), bar.Close())
+			}
+			dec := rm.Evaluate(sig, open, &core.AccountState{
+				Equity: equity, Currency: conv.AccountCurrency,
+			})
 			if dec.Accepted() && pos == nil {
 				entryPrice := bar.Close()
 				notional := dec.Order.Quantity * conv.NotionalPerUnit(entryPrice)
