@@ -11,6 +11,7 @@ package risk
 import (
 	"fmt"
 	"log/slog"
+	"sync"
 
 	"github.com/BLKMLO/Golden-Waterfall/internal/config"
 	"github.com/BLKMLO/Golden-Waterfall/internal/core"
@@ -48,6 +49,15 @@ type Manager struct {
 
 	// Compteurs de rejets, pour que l'interface puisse expliquer un
 	// silence prolongé sans obliger à lire les journaux.
+	//
+	// Le verrou n'est PAS décoratif : une seule instance de Manager est
+	// câblée dans app.New et servie simultanément aux plis du
+	// walk-forward (qui tournent en parallèle) et au moteur live (une
+	// goroutine de rejeu par symbole). Sans lui, deux `counts[motif]++`
+	// simultanés font tomber le programme sur « fatal error: concurrent
+	// map writes » — une panique du runtime, irrattrapable, au beau
+	// milieu d'un entraînement ou d'une séance.
+	mu     sync.Mutex
 	counts map[string]int
 }
 
@@ -69,6 +79,8 @@ func (m *Manager) MaxPositionSize() float64 { return m.maxPositionSize }
 
 // Rejections renvoie une copie des compteurs de rejet par motif.
 func (m *Manager) Rejections() map[string]int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	out := make(map[string]int, len(m.counts))
 	for k, v := range m.counts {
 		out[k] = v
@@ -130,7 +142,9 @@ func (m *Manager) Evaluate(sig core.Signal, open []core.Position, account *core.
 }
 
 func (m *Manager) reject(reason string) Decision {
+	m.mu.Lock()
 	m.counts[reason]++
+	m.mu.Unlock()
 	return Decision{Reason: reason}
 }
 

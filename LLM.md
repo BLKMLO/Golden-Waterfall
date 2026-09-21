@@ -221,6 +221,14 @@ réel (le bac à sable de dev est limité à 429).
   porte maintenant le nombre de jours en échec.
 - **Métriques GBDT calculées sur tous les arbres** au lieu de s'arrêter à
   `BestIteration` — elles décrivaient un modèle qui ne prédira jamais.
+- **Compteurs de rejet du risque écrits sans verrou** : un SEUL
+  `risk.Manager` est câblé dans `app.New` et partagé par le backtest, le
+  walk-forward (plis parallèles) et le moteur live (une goroutine de rejeu
+  par symbole). `counts[motif]++` sur une map non protégée : course
+  confirmée au détecteur, et risque de `fatal error: concurrent map
+  writes` — une panique du runtime, irrattrapable, au milieu d'un
+  entraînement ou d'une séance. Corrigé par un `sync.Mutex`. Test de
+  régression : `TestConcurrentEvaluateIsSafe`.
 - **Recentrage de `RollingStd` jamais établi sur une série courte** : bug
   introduit pendant l'optimisation et attrapé par la comparaison avec
   l'implémentation naïve. C'est précisément à ça qu'elle sert.

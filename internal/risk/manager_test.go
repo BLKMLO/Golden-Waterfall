@@ -2,6 +2,7 @@ package risk
 
 import (
 	"log/slog"
+	"sync"
 	"testing"
 
 	"github.com/BLKMLO/Golden-Waterfall/internal/config"
@@ -164,5 +165,35 @@ func TestRejectionsAreCounted(t *testing.T) {
 	}
 	if counts[ReasonNothingToClose] != 1 {
 		t.Fatalf("1 rejet « rien à fermer » attendu, reçu %d", counts[ReasonNothingToClose])
+	}
+}
+
+// TestConcurrentEvaluateIsSafe : régression.
+//
+// Un SEUL Manager est câblé dans app.New puis partagé par le backtest, le
+// walk-forward (plis parallèles) et le moteur live (une goroutine de rejeu
+// par symbole). Les compteurs de rejet étaient écrits sans verrou : le
+// détecteur de concurrence le signalait, et le runtime pouvait tuer le
+// programme sur « concurrent map writes » pendant un entraînement ou une
+// séance. Ce test échoue sous `go test -race` si le verrou disparaît.
+func TestConcurrentEvaluateIsSafe(t *testing.T) {
+	m := newManager(baseConfig())
+	const goroutines, iterations = 4, 500
+
+	var wg sync.WaitGroup
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < iterations; i++ {
+				m.Evaluate(core.Signal{Symbol: "EURUSD", Action: core.Hold}, nil, nil)
+				m.Rejections()
+			}
+		}()
+	}
+	wg.Wait()
+
+	if got := m.Rejections()[ReasonHold]; got != goroutines*iterations {
+		t.Fatalf("%d rejets comptés, %d attendus", got, goroutines*iterations)
 	}
 }
