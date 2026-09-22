@@ -101,9 +101,9 @@ simulé** : toute la chaîne fonctionne, aucun argent n'est engagé.
 | | Ce qu'on y fait |
 |---|---|
 | **1 Live** | Compte, paires suivies, positions, graphique en chandeliers |
-| **2 Données** | Inventaire de l'historique local, téléchargement complet ou par période |
+| **2 Données** | Inventaire de l'historique local, téléchargement complet ou par période, conversion des anciens fichiers (`m`) |
 | **3 Backtest** | Rejeu d'une paire, courbe d'équité, liste des trades, export CSV (`e`) |
-| **4 Entraînement** | Walk-forward, plis, agrégat out-of-sample, runs archivés |
+| **4 Entraînement** | Walk-forward, choix des paires (`p`), plis, agrégat out-of-sample, runs archivés |
 | **5 Journal** | Journal applicatif et journal des trades exécutés, filtre texte (`/`), export CSV (`e`) |
 | **6 Paramètres** | Compte et courtier, risque, stratégie, historique, interface |
 
@@ -131,7 +131,11 @@ Les mêmes calculs sans interface, pour une tâche planifiée ou un conteneur :
 gw download                        # historique M1 complet (long)
 gw download EURUSD --year 2019     # une paire, une année
 gw download EURUSD --from 2019 --to 2021
-gw train                           # walk-forward + modèle de production
+gw train                           # walk-forward sur toutes les paires
+gw train EURUSD GBPUSD             # ... ou seulement celles-là
+gw train --risk-per-trade 0        # comparer les régimes de taille
+gw migrate [--remove]              # convertit les anciens .gwb en Parquet
+gw import --symbol EURUSD f.parquet  # verse un historique venu d'ailleurs
 gw backtest EURUSD                 # rejeu d'une paire
 gw backtest EURUSD --csv           # + trades, équité et métriques en CSV
 gw runs                            # entraînements archivés
@@ -151,7 +155,7 @@ Paramètres le signale) : `GW_CONFIG_DIR`, `GW_DATA_DIR`, `GW_BROKER`,
 | [docs/architecture.md](docs/architecture.md) | Arborescence, règles, où ajouter du code |
 | [docs/colibri.md](docs/colibri.md) | Features, labeling, seuils, révisions |
 | [docs/gbdt.md](docs/gbdt.md) | Le gradient boosting maison : algorithme et choix |
-| [docs/donnees.md](docs/donnees.md) | Dukascopy, format `.gwb`, unités de temps |
+| [docs/donnees.md](docs/donnees.md) | Dukascopy, stockage Parquet, import, unités de temps |
 | [docs/brokers.md](docs/brokers.md) | Contrat de passerelle, rejeu, brancher un courtier |
 | [docs/depannage.md](docs/depannage.md) | Garanties, pannes courantes, emplacement des données |
 | [LLM.md](LLM.md) | Architecture et invariants — la mémoire de travail du projet |

@@ -25,36 +25,111 @@ test la verrouille.
 L'ask est un **bonus** : son absence ne fait pas perdre le bid. La bougie
 existe, seul le spread devient non mesurable — et c'est signalé.
 
-## Stockage : le format `.gwb`
+## Stockage : Parquet
 
 ```
-history/<SYMBOLE>/<SYMBOLE>_m1_<année>.gwb
+history/<SYMBOLE>/<SYMBOLE>_m1_<année>.parquet
 ```
 
-En-tête de 64 octets (magie, version, symbole, année, échelle, nombre de
-bougies), puis des enregistrements de **40 octets à taille fixe** :
+Un format **colonne standard**, que pandas, polars, DuckDB, Spark ou R
+ouvrent sans rien savoir de Golden Waterfall :
 
-| Champ | Type | Note |
+```python
+import pandas as pd
+df = pd.read_parquet("EURUSD_m1_2023.parquet")
+```
+
+### Schéma
+
+| Colonne | Type | Note |
 |---|---|---|
-| offset | `int32` | secondes depuis le 1er janvier de l'année, UTC |
-| bid o/h/l/c | 4 × `int32` | prix ENTIERS mis à l'échelle |
-| ask o/h/l/c | 4 × `int32` | `0` = côté ask absent (un prix réel n'est jamais nul) |
-| volume | `float32` | volume de TICKS en forex |
+| `time` | `TIMESTAMP(MILLIS, UTC)` | début de la bougie |
+| `bid_open` / `bid_high` / `bid_low` / `bid_close` | `DOUBLE` | obligatoires |
+| `ask_open` / `ask_high` / `ask_low` / `ask_close` | `DOUBLE`, **nullable** | `NULL` = côté ask non mesuré |
+| `volume` | `DOUBLE` | volume de TICKS en forex |
 
-Pourquoi pas un format colonne générique :
+Le côté ask absent s'écrit **NULL**, pas zéro. Zéro serait un prix, et
+l'outil tiers qui ouvre le fichier l'ajouterait à ses moyennes : c'est la
+règle « — plutôt que zéro » de l'interface, appliquée au fichier.
 
-1. aucune bibliothèque colonne lourde à embarquer — la promesse « un seul
-   binaire » tient ;
-2. les prix sont stockés **exactement comme Dukascopy les publie**, en
-   entiers : la conversion est sans perte et le fichier est deux fois plus
-   petit qu'en `float64` ;
-3. à taille d'enregistrement fixe, lire une tranche de dates est un
-   **seek** — pas le décodage de toute l'année pour trois mois.
+Les métadonnées du fichier portent ce que le schéma ne dit pas :
+`gw.symbol`, `gw.year`, `gw.timeframe`, `gw.source`, `gw.writer` et
+surtout **`gw.failures`**, le nombre de jours que le téléchargement n'a
+pas pu récupérer. Sans lui, une année trouée serait indiscernable d'une
+année complète et la relance la sauterait.
+
+### Pourquoi avoir quitté le format maison `.gwb`
+
+Le stockage était un format binaire à enregistrements de 40 octets, lu par
+seek. Il était compact et rapide — et lisible **par ce seul programme**.
+Impossible d'y verser un historique téléchargé ailleurs, impossible de
+l'ouvrir dans un tableur ou un notebook. Un format qui enferme son
+utilisateur dans le logiciel qui l'a écrit est exactement l'inverse de ce
+que ce projet promet.
+
+Ce que la bascule coûte et rapporte, mesuré sur une année de M1
+(372 000 bougies, `internal/data/bench_test.go`) :
+
+| | `.gwb` | Parquet |
+|---|---|---|
+| Taille | 14,9 Mo | **9,2 Mo** |
+| Lecture d'une année | 26 ms | 139 ms |
+| Lecture d'un mois | seek | 50 ms |
+| Écriture | 68 ms | 485 ms |
+
+La lecture est cinq fois plus lente en valeur absolue, mais elle se
+produit une fois par entraînement, derrière un calcul qui dure des
+minutes. L'écriture se produit derrière un téléchargement réseau qui dure
+des heures. La taille, elle, reste sur le disque pour toujours.
+
+Le prix payé ailleurs : la bibliothèque Parquet fait passer le binaire de
+8,8 à 15,2 Mo. Il reste unique, statique et sans `cgo`.
+
+### Lire une tranche de dates
+
+Les fichiers sont écrits par **groupes de lignes de 32 768 bougies**, soit
+environ un mois. Les groupes dont la plage de dates ne croise pas la
+période demandée ne sont jamais décompressés : c'est ce qui remplace le
+seek de l'ancien format.
+
+### Les `.gwb` déjà téléchargés
+
+Ils **restent lus**. Rien n'en écrit plus — un format qu'on ne peut plus
+produire ne peut plus se répandre — et l'écran **Données** signale les
+années restées dans l'ancien format.
+
+```bash
+gw migrate            # convertit, garde les originaux
+gw migrate --remove   # supprime chaque original APRÈS relecture du Parquet
+```
+
+La suppression n'intervient qu'après relecture **bougie à bougie** du
+fichier écrit. Une conversion non vérifiée qui efface sa source est la
+seule façon de perdre pour de bon un historique qui a coûté des heures.
+
+### Importer un historique venu d'ailleurs
+
+```bash
+gw import --symbol EURUSD chemin/vers/eurusd.parquet
+```
+
+Les colonnes sont appariées **par leur nom**, avec les alias usuels
+(`time`/`timestamp`/`datetime`, `open`/`bid_open`, …), et l'unité de
+l'horodatage est lue dans le type logique du fichier — secondes,
+millisecondes, microsecondes ou nanosecondes. Un fichier sans colonne de
+prix reconnaissable est **refusé** : mieux vaut un refus qu'une colonne
+appariée au hasard, qui produirait des prix crédibles et faux.
+
+Ce qui est importé est marqué **importé**. Personne n'a compté ses jours
+manquants : `Complete()` répond donc non, et l'écran Données le distingue
+d'une année téléchargée plutôt que de la déclarer faite sur la foi de
+rien.
+
+### Robustesse commune
 
 L'écriture passe par un fichier temporaire renommé à la fin : une
 interruption laisse l'ancien fichier intact plutôt qu'un fichier tronqué
-que la relecture prendrait pour des données. Un fichier plus court que son
-en-tête ne l'annonce est **refusé** avec le remède.
+que la relecture prendrait pour des données.
 
 La relecture est blindée : fichiers au nom non conforme **ignorés** (une
 copie manuelle ne doit pas doubler les bougies), doublons d'horodatage
@@ -120,9 +195,10 @@ un chiffre différent de l'écran qui l'a produit.
 
 ## Ordres de grandeur
 
-Une année de M1 sur une paire forex ≈ 372 000 bougies ≈ **15 Mo**. Trente
-et un instruments sur quinze ans : compter **6 à 8 Go** et plusieurs heures
-de téléchargement à concurrence 3.
+Une année de M1 sur une paire forex ≈ 372 000 bougies ≈ **9 Mo** en
+Parquet (15 Mo dans l'ancien `.gwb`). Trente et un instruments sur quinze
+ans : compter **4 à 5 Go** et plusieurs heures de téléchargement à
+concurrence 3.
 
 ## Ajouter un instrument
 
