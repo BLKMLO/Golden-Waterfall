@@ -13,6 +13,7 @@ import (
 	"github.com/BLKMLO/Golden-Waterfall/internal/backtest"
 	"github.com/BLKMLO/Golden-Waterfall/internal/config"
 	"github.com/BLKMLO/Golden-Waterfall/internal/data"
+	"github.com/BLKMLO/Golden-Waterfall/internal/export"
 	"github.com/BLKMLO/Golden-Waterfall/internal/feature"
 	"github.com/BLKMLO/Golden-Waterfall/internal/strategy"
 	"github.com/BLKMLO/Golden-Waterfall/internal/training"
@@ -80,6 +81,7 @@ func (v *Backtest) Keys() [][2]string {
 		{"r", "lancer"},
 		{"x", "interrompre"},
 		{"u", "unité de temps"},
+		{"e", "exporter en CSV"},
 		{"↑↓", "paire"},
 	}
 }
@@ -114,6 +116,8 @@ func (v *Backtest) Update(msg tea.Msg) (Model, tea.Cmd) {
 			v.tfIndex = (v.tfIndex + 1) % len(data.Timeframes)
 		case "r":
 			return v, v.run()
+		case "e":
+			v.exportResult()
 		case "x":
 			v.mu.Lock()
 			if v.cancel != nil {
@@ -124,6 +128,35 @@ func (v *Backtest) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 	}
 	return v, nil
+}
+
+// exportResult écrit les trades, la courbe de valeur et les métriques du
+// dernier backtest.
+//
+// Trois fichiers plutôt qu'un : ce sont trois tables de formes
+// différentes, et les empiler dans un même CSV obligerait à inventer des
+// colonnes vides — exactement ce que le reste du programme refuse de
+// faire.
+func (v *Backtest) exportResult() {
+	v.mu.Lock()
+	result, symbol := v.result, ""
+	if v.cursor < len(v.symbols) {
+		symbol = v.symbols[v.cursor]
+	}
+	tf := string(v.timeframe())
+	v.mu.Unlock()
+
+	if result == nil {
+		v.deps.Status("aucun résultat à exporter — r lance un backtest")
+		return
+	}
+	paths, err := export.Backtest(v.deps.App.Config.Paths.ExportsDir(), symbol, tf, result, time.Now())
+	if err != nil {
+		v.deps.Status("export impossible : " + err.Error())
+		return
+	}
+	v.deps.Status(fmt.Sprintf("%d fichiers écrits dans %s",
+		len(paths), v.deps.App.Config.Paths.ExportsDir()))
 }
 
 func (v *Backtest) move(delta int) {
@@ -211,16 +244,24 @@ func (v *Backtest) Render(width, height int) string {
 	if v.cursor < len(v.symbols) {
 		symbol = v.symbols[v.cursor]
 	}
-	params := component.StatRow(th, []component.StatCard{
+	cards := []component.StatCard{
 		{Label: "Paire", Value: symbol, Style: th.Accent},
 		{Label: "Unité de temps", Value: string(v.timeframe())},
 		{Label: "Stratégie", Value: v.deps.App.Config.Strategy.Name},
 		{Label: "Capital", Value: component.Num(v.deps.App.Config.Backtest.InitialCapital, 0)},
 		{Label: "Levier", Value: component.Num(v.deps.App.Config.Backtest.Leverage, 0) + "×"},
 		sizeCard(v.deps.App.Config.Risk),
-	}, component.PanelContent(width))
-	sb.WriteString(component.Panel(th, "Paramètres", params, width))
+	}
+	// Mesuré, pas deviné : le panneau de tête étalait ses six cartes sur
+	// trois rangées dès 60 colonnes et l'écran entier débordait la
+	// fenêtre, ce qui expulse l'entête et la barre de raccourcis.
+	params := component.FitBlock(height/2, 1, component.DefaultStatRows, func(rows int) string {
+		return component.Panel(th, "Paramètres",
+			component.StatRowMax(th, cards, component.PanelContent(width), rows), width)
+	})
+	sb.WriteString(params)
 	sb.WriteString("\n")
+	rest := height - lipgloss.Height(params)
 
 	switch {
 	case running:
@@ -235,22 +276,22 @@ func (v *Backtest) Render(width, height int) string {
 	case result == nil:
 		sb.WriteString(component.Panel(th, "Résultat", th.Muted.Render(
 			"Aucun backtest lancé.\n\n"+
-				"r lance le rejeu de la paire sélectionnée avec le MODÈLE DE PRODUCTION du dernier\n"+
-				"entraînement. Les coûts (spread mesuré + commission) sont appliqués ; le spread\n"+
-				"est la médiane de ask_close − bid_close observée dans les données.\n\n"+
-				"À quoi cet écran sert VRAIMENT : inspecter le comportement du modèle (rythme des\n"+
-				"trades, motifs de sortie, allure de la courbe). Pas à juger sa performance — il\n"+
-				"a été entraîné sur cette période. Pour juger, c'est l'écran Entraînement."), width))
+				"r rejoue la paire sélectionnée avec le MODÈLE DE PRODUCTION du\n"+
+				"dernier entraînement, coûts appliqués (spread + commission).\n\n"+
+				"Cet écran sert à INSPECTER le comportement du modèle, pas à juger\n"+
+				"sa performance : il a été entraîné sur cette période. Pour juger,\n"+
+				"c'est l'écran Entraînement."), width))
 		return sb.String()
 	}
 
-	stats := v.renderStats(result, took, width)
+	stats := component.FitBlock(rest-minBandHeight, 1, component.DefaultStatRows,
+		func(rows int) string { return v.renderStats(result, took, width, rows) })
 	sb.WriteString(stats)
 	sb.WriteString("\n")
 
-	chartHeight := height - lipgloss.Height(stats) - lipgloss.Height(component.Panel(th, "Paramètres", params, width)) - 2
-	if chartHeight < 6 {
-		chartHeight = 6
+	chartHeight := rest - lipgloss.Height(stats)
+	if chartHeight < minBandHeight {
+		chartHeight = minBandHeight
 	}
 	leftWidth := width / 2
 	sb.WriteString(lipgloss.JoinHorizontal(lipgloss.Top,
@@ -281,7 +322,7 @@ func sizeCard(cfg config.RiskConfig) component.StatCard {
 	}
 }
 
-func (v *Backtest) renderStats(res *backtest.Result, took time.Duration, width int) string {
+func (v *Backtest) renderStats(res *backtest.Result, took time.Duration, width, rows int) string {
 	th := v.deps.Theme
 	s := res.Stats
 	pnlStyle := th.Positive
@@ -306,7 +347,7 @@ func (v *Backtest) renderStats(res *backtest.Result, took time.Duration, width i
 		{Label: "SQN", Value: component.Ratio(s.SQN)},
 		{Label: "Coûts", Value: component.Num(s.Costs, 2), Style: costStyle, Note: costNote},
 	}
-	body := component.StatRow(th, cards, component.PanelContent(width))
+	body := component.StatRowMax(th, cards, component.PanelContent(width), rows)
 	extra := fmt.Sprintf("%s → %s · %s bougies · calcul %s",
 		component.Time(s.Start), component.Time(s.End), component.Count(s.Bars),
 		component.Duration(took))
