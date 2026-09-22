@@ -10,6 +10,7 @@
 //	                        --year / --from / --to limitent la période
 //	gw train                walk-forward complet
 //	gw backtest PAIRE       rejeu d'une paire avec le modèle de production
+//	                        (--csv écrit trades, équité et métriques)
 //	gw runs                 entraînements archivés
 //	gw paths                emplacements de la configuration et des données
 //	gw config               configuration effective (--default pour le modèle)
@@ -30,6 +31,7 @@ import (
 	"github.com/BLKMLO/Golden-Waterfall/internal/backtest"
 	"github.com/BLKMLO/Golden-Waterfall/internal/config"
 	"github.com/BLKMLO/Golden-Waterfall/internal/data"
+	"github.com/BLKMLO/Golden-Waterfall/internal/export"
 	"github.com/BLKMLO/Golden-Waterfall/internal/feature"
 	"github.com/BLKMLO/Golden-Waterfall/internal/strategy"
 	"github.com/BLKMLO/Golden-Waterfall/internal/training"
@@ -86,6 +88,7 @@ func printUsage() {
      --from A --to B      une période            (bornes comprises)
   gw train                lance un walk-forward complet
   gw backtest PAIRE       rejoue une paire avec le modèle de production
+     --csv                écrit aussi trades, équité et métriques en CSV
   gw runs                 liste les entraînements archivés
   gw paths                affiche les emplacements utilisés
   gw config [--default]   affiche la configuration effective
@@ -123,6 +126,7 @@ func runPaths() error {
 	fmt.Printf("Données       : %s\n", p.DataDir)
 	fmt.Printf("  historique  : %s\n", p.HistoryDir())
 	fmt.Printf("  modèles     : %s\n", p.ModelsDir())
+	fmt.Printf("  exports     : %s\n", p.ExportsDir())
 	fmt.Printf("  base        : %s\n", p.DatabaseFile())
 	fmt.Printf("  journal     : %s\n", p.LogFile())
 	return nil
@@ -316,11 +320,12 @@ func runTrain(args []string) error {
 func runBacktest(args []string) error {
 	fs := flag.NewFlagSet("backtest", flag.ContinueOnError)
 	tfName := fs.String("tf", "", "unité de temps (défaut : config)")
+	toCSV := fs.Bool("csv", false, "écrire trades, courbe de valeur et métriques en CSV")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
-		return fmt.Errorf("usage : gw backtest [-tf H4] PAIRE")
+		return fmt.Errorf("usage : gw backtest [-tf H4] [--csv] PAIRE")
 	}
 	symbol := strings.ToUpper(fs.Arg(0))
 
@@ -382,6 +387,15 @@ func runBacktest(args []string) error {
 	}
 	if s.RejectedOrders > 0 {
 		fmt.Printf("⚠ %d ordre(s) refusé(s) faute de marge.\n", s.RejectedOrders)
+	}
+	if *toCSV {
+		paths, err := export.Backtest(a.Config.Paths.ExportsDir(), symbol, string(tf), res, time.Now())
+		if err != nil {
+			return err
+		}
+		for _, p := range paths {
+			fmt.Printf("écrit %s\n", p)
+		}
 	}
 	fmt.Println(inSampleWarning)
 	return nil

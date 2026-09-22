@@ -11,6 +11,7 @@ import (
 	"github.com/BLKMLO/Golden-Waterfall/internal/app"
 	"github.com/BLKMLO/Golden-Waterfall/internal/backtest"
 	"github.com/BLKMLO/Golden-Waterfall/internal/config"
+	"github.com/BLKMLO/Golden-Waterfall/internal/core"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/BLKMLO/Golden-Waterfall/internal/tui/theme"
@@ -169,5 +170,19 @@ func TestBacktestSizeCardTellsWhichRegimeIsActive(t *testing.T) {
 	}
 	if !strings.Contains(sized.Note, "plafond") {
 		t.Fatalf("max_position_size devient un plafond, et cela doit se lire : %+v", sized)
+	}
+}
+
+// sampleViewTrades : deux trades sur deux paires, de quoi vérifier qu'un
+// filtre sépare vraiment.
+func sampleViewTrades() []core.Trade {
+	entry := time.Date(2024, 3, 4, 8, 0, 0, 0, time.UTC)
+	return []core.Trade{
+		{ID: 1, Symbol: "EURUSD", Side: core.Buy, Quantity: 10000, EntryTime: entry,
+			EntryPrice: 1.08, ExitTime: entry.Add(time.Hour), ExitPrice: 1.081,
+			PnL: 10, ExitReason: "tp"},
+		{ID: 2, Symbol: "GBPUSD", Side: core.Sell, Quantity: 10000, EntryTime: entry,
+			EntryPrice: 1.27, ExitTime: entry.Add(time.Hour), ExitPrice: 1.269,
+			PnL: 10, ExitReason: "sl"},
 	}
 }
