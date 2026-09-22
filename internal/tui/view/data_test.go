@@ -14,8 +14,6 @@ func newData(t *testing.T) *Data {
 	return NewData(newTestDeps(t)).(*Data)
 }
 
-func key(s string) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)} }
-
 // TestPeriodStartsOnTheWholeHistory : le comportement par défaut ne change
 // pas — c'est la possibilité de le restreindre qui est nouvelle.
 func TestPeriodStartsOnTheWholeHistory(t *testing.T) {

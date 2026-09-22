@@ -160,11 +160,15 @@ func TestLiveShowsDashesWithoutAccount(t *testing.T) {
 // un mensonge dès que le dimensionnement au risque est actif — la taille
 // varie alors d'un trade à l'autre et ce nombre n'est plus qu'un plafond.
 func TestBacktestSizeCardTellsWhichRegimeIsActive(t *testing.T) {
-	fixed := sizeCard(config.RiskConfig{MaxPositionSize: 10000})
-	if fixed.Label != "Taille" || fixed.Note != "fixe" {
-		t.Fatalf("à risque désactivé, la carte annonce la taille fixe : %+v", fixed)
+	fixed := sizeCard(config.RiskConfig{MaxPositionSize: 100000, FixedPositionSize: 10000})
+	if fixed.Label != "Taille" || fixed.Value != "10000.00" {
+		t.Fatalf("à risque désactivé, la carte annonce fixed_position_size : %+v", fixed)
 	}
-	sized := sizeCard(config.RiskConfig{MaxPositionSize: 10000, RiskPerTradePct: 1})
+	if !strings.Contains(fixed.Note, "fixe") || !strings.Contains(fixed.Note, "plafond") {
+		t.Fatalf("la carte doit distinguer la taille du plafond : %+v", fixed)
+	}
+	sized := sizeCard(config.RiskConfig{
+		MaxPositionSize: 100000, FixedPositionSize: 10000, RiskPerTradePct: 1})
 	if sized.Label == "Taille" {
 		t.Fatalf("dimensionnement au risque actif : la carte ne doit plus annoncer UNE taille (%+v)", sized)
 	}
@@ -185,4 +189,26 @@ func sampleViewTrades() []core.Trade {
 			EntryPrice: 1.27, ExitTime: entry.Add(time.Hour), ExitPrice: 1.269,
 			PnL: 10, ExitReason: "sl"},
 	}
+}
+
+// key fabrique une touche depuis son nom. Les écrans de ce paquet
+// réagissent autant aux touches spéciales (entrée, échap, espace) qu'aux
+// caractères : un helper qui ne saurait produire que des runes obligerait
+// chaque test à réécrire le même switch.
+func key(s string) tea.KeyMsg {
+	switch s {
+	case "enter":
+		return tea.KeyMsg{Type: tea.KeyEnter}
+	case "esc":
+		return tea.KeyMsg{Type: tea.KeyEsc}
+	case " ":
+		return tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}}
+	case "up":
+		return tea.KeyMsg{Type: tea.KeyUp}
+	case "down":
+		return tea.KeyMsg{Type: tea.KeyDown}
+	case "backspace":
+		return tea.KeyMsg{Type: tea.KeyBackspace}
+	}
+	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
 }

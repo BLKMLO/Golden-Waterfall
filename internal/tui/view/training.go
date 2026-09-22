@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/BLKMLO/Golden-Waterfall/internal/data"
+	"github.com/BLKMLO/Golden-Waterfall/internal/risk"
 	"github.com/BLKMLO/Golden-Waterfall/internal/training"
 	"github.com/BLKMLO/Golden-Waterfall/internal/tui/component"
 )
@@ -36,6 +37,12 @@ type Training struct {
 	runs    []training.RunSummary
 	cursor  int
 	tab     int // 0 = résultat courant, 1 = historique des runs
+	// symbols : les paires de CE run. Par défaut celles de la
+	// configuration, mais un walk-forward complet sur trente et une
+	// paires dure des heures : pouvoir n'en reprendre qu'une, après avoir
+	// changé un réglage, est la différence entre essayer et renoncer.
+	symbols []string
+	picker  *SymbolPicker
 
 	mu       sync.Mutex
 	running  bool
@@ -59,7 +66,10 @@ func NewTraining(deps Deps) Model {
 			idx = i
 		}
 	}
-	v := &Training{deps: deps, tfIndex: idx, folds: deps.App.Config.Training.Folds}
+	v := &Training{
+		deps: deps, tfIndex: idx, folds: deps.App.Config.Training.Folds,
+		symbols: append([]string{}, deps.App.Config.History.Instruments...),
+	}
 	v.reloadRuns()
 	return v
 }
@@ -75,8 +85,12 @@ func (v *Training) Busy() bool {
 func (v *Training) Init() tea.Cmd { return nil }
 
 func (v *Training) Keys() [][2]string {
+	if v.picker != nil {
+		return v.picker.Keys()
+	}
 	return [][2]string{
 		{"r", "lancer le walk-forward"},
+		{"p", "choisir les paires"},
 		{"x", "interrompre"},
 		{"u", "unité de temps"},
 		{"+/-", "nombre de plis"},
@@ -98,7 +112,48 @@ func (v *Training) reloadRuns() {
 	}
 }
 
+// CapturesKeys : le sélecteur de paires est modal.
+func (v *Training) CapturesKeys() bool { return v.picker != nil }
+
+// openPicker ouvre le sélecteur, annoté de ce qui empêcherait une paire
+// de produire quoi que ce soit : pas d'historique local, ou pas de
+// dimensionnement possible dans la devise du compte.
+func (v *Training) openPicker() {
+	cfg := v.deps.App.Config
+	available := map[string]bool{}
+	if cat, err := data.Catalog(cfg.Paths.HistoryDir()); err == nil {
+		for _, inv := range cat {
+			available[inv.Symbol] = true
+		}
+	}
+	th := v.deps.Theme
+	p := NewSymbolPicker(th, "Paires du walk-forward", v.symbols)
+	p.Note = func(symbol string) string {
+		switch {
+		case !available[symbol]:
+			return th.Negative.Render("aucun historique local")
+		case cfg.Risk.RiskPerTradePct > 0 &&
+			!data.ConversionFor(symbol, cfg.Backtest.AccountCurrency).Exact:
+			return th.Warning.Render("non dimensionnable en " + cfg.Backtest.AccountCurrency)
+		}
+		return ""
+	}
+	v.picker = p
+}
+
 func (v *Training) Update(msg tea.Msg) (Model, tea.Cmd) {
+	if key, ok := msg.(tea.KeyMsg); ok && v.picker != nil {
+		done, accepted := v.picker.Update(key)
+		if done {
+			if accepted {
+				v.symbols = v.picker.Selected()
+				v.deps.Status(fmt.Sprintf("%d paire(s) retenue(s) pour le walk-forward",
+					len(v.symbols)))
+			}
+			v.picker = nil
+		}
+		return v, nil
+	}
 	switch msg := msg.(type) {
 	case trainingProgressMsg:
 		v.mu.Lock()
@@ -123,6 +178,8 @@ func (v *Training) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch msg.String() {
+		case "p":
+			v.openPicker()
 		case "r":
 			return v, v.run()
 		case "x":
@@ -189,18 +246,28 @@ func (v *Training) run() tea.Cmd {
 	v.progress = training.Progress{Phase: "démarrage"}
 	tf := v.timeframe()
 	folds := v.folds
+	symbols := append([]string{}, v.symbols...)
 	v.mu.Unlock()
+
+	if len(symbols) == 0 {
+		v.mu.Lock()
+		v.running, v.cancel = false, nil
+		v.mu.Unlock()
+		v.deps.Status("aucune paire sélectionnée — p pour en choisir")
+		return nil
+	}
 
 	a := v.deps.App
 	emit := v.deps.Emit
-	v.deps.Status(fmt.Sprintf("walk-forward %d plis en %s…", folds, tf))
+	v.deps.Status(fmt.Sprintf("walk-forward %d plis en %s sur %d paire(s)…",
+		folds, tf, len(symbols)))
 
 	return func() tea.Msg {
 		started := time.Now()
 		defer cancel()
 		res, err := a.Training.Run(ctx, training.Request{
 			Strategy:   a.Config.Strategy.Name,
-			Symbols:    a.Config.History.Instruments,
+			Symbols:    symbols,
 			Timeframe:  tf,
 			Folds:      folds,
 			Seed:       a.Config.Training.Seed,
@@ -224,6 +291,9 @@ func (v *Training) Render(width, height int) string {
 	// déborder l'écran de trois à quatorze lignes selon la taille de la
 	// fenêtre — et un corps trop haut ne perd pas son bas, il pousse
 	// l'entête et la barre de raccourcis hors de l'écran.
+	if v.picker != nil {
+		return v.picker.Render(width, height)
+	}
 	header := component.FitBlock(height/2, 1, component.DefaultStatRows,
 		func(rows int) string { return v.renderHeader(width, rows) })
 	sb.WriteString(header)
@@ -270,6 +340,19 @@ func (v *Training) Render(width, height int) string {
 	return sb.String()
 }
 
+// pairsNote résume la sélection de paires en une ligne : « 3 sur 31 »
+// n'apprend rien, « EURUSD GBPUSD » dit ce qui va tourner.
+func pairsNote(symbols []string) string {
+	switch {
+	case len(symbols) == 0:
+		return "aucune — p"
+	case len(symbols) <= 3:
+		return strings.Join(symbols, " ")
+	default:
+		return strings.Join(symbols[:2], " ") + fmt.Sprintf(" +%d", len(symbols)-2)
+	}
+}
+
 func (v *Training) renderHeader(width, rows int) string {
 	th := v.deps.Theme
 	v.mu.Lock()
@@ -281,7 +364,8 @@ func (v *Training) renderHeader(width, rows int) string {
 			{Label: "Stratégie", Value: v.deps.App.Config.Strategy.Name, Style: th.Accent},
 			{Label: "Unité de temps", Value: string(v.timeframe())},
 			{Label: "Plis", Value: fmt.Sprintf("%d", v.folds)},
-			{Label: "Paires", Value: fmt.Sprintf("%d", len(v.deps.App.Config.History.Instruments))},
+			{Label: "Paires", Value: fmt.Sprintf("%d", len(v.symbols)),
+				Note: pairsNote(v.symbols)},
 			{Label: "Graine", Value: fmt.Sprintf("%d", v.deps.App.Config.Training.Seed),
 				Note: "reproductible"},
 		}, component.PanelContent(width), rows)
@@ -355,6 +439,19 @@ func (v *Training) renderAggregate(res *training.Result, took time.Duration, wid
 		body += "\n" + th.Warning.Render(fmt.Sprintf(
 			"⚠ %d ordre(s) refusé(s) faute de marge : ce ne sont PAS des abstentions du modèle.",
 			s.RejectedOrders))
+	}
+	if s.SizeCapped > 0 {
+		body += "\n" + th.Warning.Render(component.Truncate(fmt.Sprintf(
+			"⚠ %d entrée(s) ramenée(s) au plafond max_position_size : sur celles-là, le risque "+
+				"par trade réellement pris est INFÉRIEUR à celui demandé.", s.SizeCapped), width-6))
+	}
+	// Un refus de DIMENSIONNEMENT ne se voit pas dans les chiffres : la
+	// stratégie paraît simplement muette. Sur une paire croisée non
+	// convertible vers la devise du compte, ce sont TOUTES les entrées
+	// qui disparaissent ainsi.
+	if n, detail := risk.SizingRefusals(s.Rejections); n > 0 {
+		body += "\n" + th.Warning.Render(component.Truncate(fmt.Sprintf(
+			"⚠ %d entrée(s) non dimensionnée(s), donc refusée(s) : %s", n, detail), width-6))
 	}
 	return component.Panel(th, "Agrégat OUT-OF-SAMPLE", body, width)
 }

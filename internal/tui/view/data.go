@@ -73,6 +73,7 @@ func (v *Data) Keys() [][2]string {
 		{"←→", "borne d'année"},
 		{"p", "début / fin"},
 		{"a", "tout l'historique"},
+		{"m", "convertir les .gwb"},
 		{"x", "interrompre"},
 		{"r", "rafraîchir"},
 	}
@@ -140,6 +141,12 @@ func (v *Data) Update(msg tea.Msg) (Model, tea.Cmd) {
 			v.deps.Status(fmt.Sprintf("%s : %s bougies écrites", msg.symbol, component.Count(msg.bars)))
 		}
 
+	case JobDone:
+		// Fin d'une conversion : l'inventaire a changé de format.
+		if msg.View == "données" {
+			v.refresh()
+		}
+
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "up", "K":
@@ -155,6 +162,8 @@ func (v *Data) Update(msg tea.Msg) (Model, tea.Cmd) {
 		case "a":
 			v.span = data.FullRange(v.deps.App.Config.History.StartYear)
 			v.deps.Status("période remise à l'historique complet")
+		case "m":
+			return v, v.migrate()
 		case "r":
 			v.refresh()
 			v.deps.Status("inventaire rafraîchi")
@@ -172,6 +181,45 @@ func (v *Data) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 	}
 	return v, nil
+}
+
+// legacyCount compte les années restées dans l'ancien format.
+func (v *Data) legacyCount() int {
+	n := 0
+	for _, inv := range v.rows {
+		n += len(inv.Legacy)
+	}
+	return n
+}
+
+// migrate convertit les .gwb en Parquet, sans supprimer les originaux.
+//
+// La suppression reste à la ligne de commande (`gw migrate --remove`) :
+// effacer des gigaoctets d'historique est irréversible, et une touche de
+// l'interface est trop facile à frapper par mégarde.
+func (v *Data) migrate() tea.Cmd {
+	if v.legacyCount() == 0 {
+		v.deps.Status("aucun fichier .gwb : rien à convertir")
+		return nil
+	}
+	dir := v.deps.App.Config.Paths.HistoryDir()
+	emit, status := v.deps.Emit, v.deps.Status
+	status("conversion en cours…")
+	return func() tea.Msg {
+		report, err := data.Migrate(dir, false, nil)
+		if err != nil {
+			status("conversion impossible : " + err.Error())
+		} else if report.Failed > 0 {
+			status(fmt.Sprintf("%d converti(s), %d en échec — les originaux sont intacts",
+				report.Converted, report.Failed))
+		} else {
+			status(fmt.Sprintf("%d fichier(s) converti(s) · %.0f Mo → %.0f Mo · "+
+				"`gw migrate --remove` supprime les .gwb",
+				report.Converted, float64(report.Before)/1e6, float64(report.After)/1e6))
+		}
+		emit(JobDone{View: "données"})
+		return nil
+	}
 }
 
 func (v *Data) move(delta int) {
@@ -258,6 +306,7 @@ func (v *Data) Render(width, height int) string {
 		{Title: "Classe", Width: 9, Priority: 3},
 		{Title: "Années", Width: 14, Priority: 2},
 		{Title: "Bougies M1", Width: 14, Right: true, Priority: 1},
+		{Title: "Format", Width: 9, Priority: 4},
 		{Title: "Manquant", Width: 26, Flex: true, Min: 10},
 	}
 	endYear := time.Now().UTC().Year()
@@ -281,10 +330,25 @@ func (v *Data) Render(width, height int) string {
 		if missing == "complet" {
 			style = th.Positive
 		}
-		rows = append(rows, []string{inv.Symbol, class, years, bars, style.Render(missing)})
+		// Le format se lit, il ne se devine pas : un .gwb reste lisible
+		// par ce programme mais par AUCUN autre, et c'est précisément ce
+		// qu'on a cessé d'écrire.
+		format := th.Muted.Render("parquet")
+		if n := len(inv.Legacy); n > 0 {
+			format = th.Warning.Render(fmt.Sprintf("%d .gwb", n))
+		}
+		rows = append(rows, []string{inv.Symbol, class, years, bars, format, style.Render(missing)})
 	}
 	sb.WriteString(component.Panel(th, "Historique local", component.Table(th, cols, rows, v.cursor, height-10, component.PanelContent(width)), width))
 
+	// Tronqué : hors panneau, rien ne borne cette ligne, et un chemin long
+	// débordait la largeur du terminal — ce qui décale toute la mise en
+	// page, pas seulement cette ligne.
+	if n := v.legacyCount(); n > 0 {
+		sb.WriteString("\n" + th.Warning.Render(component.Truncate(fmt.Sprintf(
+			"⚠ %d année(s) encore au format .gwb, lisible par ce seul programme. "+
+				"« m » les convertit en Parquet.", n), width)))
+	}
 	// Tronqué : hors panneau, rien ne borne cette ligne, et un chemin long
 	// débordait la largeur du terminal — ce qui décale toute la mise en
 	// page, pas seulement cette ligne.

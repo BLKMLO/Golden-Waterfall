@@ -9,10 +9,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-func runes(s string) tea.KeyMsg {
-	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
-}
-
 // TestJournalFilterCapturesKeys : pendant une saisie, l'écran doit garder
 // les touches que le routeur intercepte. Sans cela, taper « 3 » dans le
 // filtre changerait d'onglet et « q » quitterait le programme.
@@ -21,12 +17,12 @@ func TestJournalFilterCapturesKeys(t *testing.T) {
 	if v.CapturesKeys() {
 		t.Fatal("au repos, l'écran ne doit pas confisquer les touches")
 	}
-	v.Update(runes("/"))
+	v.Update(key("/"))
 	if !v.CapturesKeys() {
 		t.Fatal("pendant la saisie, l'écran doit confisquer les touches")
 	}
 	for _, r := range "eur3q" {
-		v.Update(runes(string(r)))
+		v.Update(key(string(r)))
 	}
 	if v.buffer != "eur3q" {
 		t.Fatalf("saisie perdue : %q", v.buffer)
@@ -78,7 +74,7 @@ func TestJournalExportWritesWhatIsShown(t *testing.T) {
 	v.deps = deps
 
 	v.filter = "GBPUSD"
-	v.Update(runes("e"))
+	v.Update(key("e"))
 
 	dir := deps.App.Config.Paths.ExportsDir()
 	entries, err := os.ReadDir(dir)
@@ -112,7 +108,7 @@ func TestJournalExportSaysWhenThereIsNothing(t *testing.T) {
 	v := NewJournal(deps).(*Journal)
 	v.tradesFresh = true
 
-	v.Update(runes("e"))
+	v.Update(key("e"))
 	if len(status) == 0 || !strings.Contains(status[0], "aucun trade") {
 		t.Fatalf("un export vide doit être refusé et dit : %v", status)
 	}
