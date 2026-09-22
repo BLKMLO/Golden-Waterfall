@@ -33,6 +33,7 @@ import (
 	"github.com/BLKMLO/Golden-Waterfall/internal/data"
 	"github.com/BLKMLO/Golden-Waterfall/internal/export"
 	"github.com/BLKMLO/Golden-Waterfall/internal/feature"
+	"github.com/BLKMLO/Golden-Waterfall/internal/risk"
 	"github.com/BLKMLO/Golden-Waterfall/internal/strategy"
 	"github.com/BLKMLO/Golden-Waterfall/internal/training"
 	"github.com/BLKMLO/Golden-Waterfall/internal/tui"
@@ -73,6 +74,10 @@ func run(args []string) error {
 		return runBacktest(args[1:])
 	case "runs":
 		return runRuns()
+	case "migrate":
+		return runMigrate(args[1:])
+	case "import":
+		return runImport(args[1:])
 	default:
 		printUsage()
 		return fmt.Errorf("sous-commande inconnue %q", args[0])
@@ -86,10 +91,13 @@ func printUsage() {
   gw download [PAIRE…]    télécharge l'historique M1 Dukascopy
      --year A             une seule année        (ex. gw download EURUSD --year 2019)
      --from A --to B      une période            (bornes comprises)
-  gw train                lance un walk-forward complet
+  gw train [PAIRE…]       lance un walk-forward (toutes les paires par défaut)
+     --risk-per-trade X   force le dimensionnement pour CE run (0 = taille fixe)
   gw backtest PAIRE       rejoue une paire avec le modèle de production
      --csv                écrit aussi trades, équité et métriques en CSV
   gw runs                 liste les entraînements archivés
+  gw migrate [--remove]   convertit les anciens .gwb en Parquet
+  gw import --symbol S F… verse des fichiers Parquet extérieurs dans l'historique
   gw paths                affiche les emplacements utilisés
   gw config [--default]   affiche la configuration effective
   gw version
@@ -150,11 +158,21 @@ func runConfig(args []string) error {
 	fmt.Printf("passerelle         : %s (%s)\n", cfg.Broker.Name, cfg.Broker.Mode)
 	fmt.Printf("stratégie          : %s (kill-switch %v)\n", cfg.Strategy.Name, cfg.Strategy.Enabled)
 	fmt.Printf("unité de temps     : %s (live %s)\n", cfg.Training.Timeframe, cfg.Broker.Timeframe)
-	fmt.Printf("risque             : taille %g · %d/symbole · %d/compte · perte max %.1f %%\n",
-		cfg.Risk.MaxPositionSize, cfg.Risk.MaxPositionsPerSymbol,
+	fmt.Printf("risque             : %s · %d/symbole · %d/compte · perte max %.1f %%\n",
+		sizingLabel(cfg.Risk), cfg.Risk.MaxPositionsPerSymbol,
 		cfg.Risk.MaxOpenPositions, cfg.Risk.MaxDailyLossPct)
 	fmt.Printf("backtest           : capital %.0f · levier %g×\n",
 		cfg.Backtest.InitialCapital, cfg.Backtest.Leverage)
+	if cfg.Risk.RiskPerTradePct > 0 {
+		exact, inexact := data.SplitByConversion(
+			cfg.History.Instruments, cfg.Backtest.AccountCurrency)
+		fmt.Printf("dimensionnables    : %d sur %d en %s\n",
+			len(exact), len(cfg.History.Instruments), cfg.Backtest.AccountCurrency)
+		if len(inexact) > 0 {
+			fmt.Printf("  ⚠ non dimensionnables (entrées REFUSÉES) : %s\n",
+				strings.Join(inexact, " "))
+		}
+	}
 	fmt.Printf("instruments        : %d (%s)\n", len(cfg.History.Instruments),
 		strings.Join(cfg.History.Instruments, " "))
 	fmt.Printf("stratégies         : %s\n", strings.Join(strategy.List(), ", "))
@@ -253,7 +271,15 @@ func runTrain(args []string) error {
 	fs := flag.NewFlagSet("train", flag.ContinueOnError)
 	folds := fs.Int("folds", 0, "nombre de plis (défaut : config)")
 	tfName := fs.String("tf", "", "unité de temps (défaut : config)")
-	if err := fs.Parse(args); err != nil {
+	// Surcharge du dimensionnement, POUR CE RUN seulement : c'est ce qui
+	// permet de mesurer l'effet de risk_per_trade_pct sur ses propres
+	// données, deux entraînements et une comparaison de `gw runs`, plutôt
+	// que de croire un chiffre trouvé ailleurs.
+	riskPct := fs.Float64("risk-per-trade", -1,
+		"risque par trade en % de l'équité, pour ce run (0 = taille fixe)")
+	flags, symbols := partitionArgs(args, map[string]bool{
+		"folds": true, "tf": true, "risk-per-trade": true})
+	if err := fs.Parse(flags); err != nil {
 		return err
 	}
 	a, ctx, cancel, err := open()
@@ -275,10 +301,27 @@ func runTrain(args []string) error {
 	if *folds > 0 {
 		n = *folds
 	}
+	if len(symbols) == 0 {
+		symbols = a.Config.History.Instruments
+	} else {
+		for i, sym := range symbols {
+			symbols[i] = strings.ToUpper(sym)
+			if _, err := data.LookupInstrument(symbols[i]); err != nil {
+				return err
+			}
+		}
+	}
+	if *riskPct >= 0 {
+		if err := a.SetRiskPerTrade(*riskPct); err != nil {
+			return err
+		}
+		fmt.Printf("Dimensionnement forcé pour ce run : %s\n", sizingLabel(a.Config.Risk))
+	}
+	fmt.Printf("Paires : %s\n", strings.Join(symbols, " "))
 
 	res, err := a.Training.Run(ctx, training.Request{
 		Strategy:   a.Config.Strategy.Name,
-		Symbols:    a.Config.History.Instruments,
+		Symbols:    symbols,
 		Timeframe:  tf,
 		Folds:      n,
 		Seed:       a.Config.Training.Seed,
@@ -309,6 +352,7 @@ func runTrain(args []string) error {
 		fmt.Printf("⚠ %d ordre(s) refusé(s) faute de marge : ce ne sont pas des abstentions du modèle.\n",
 			res.Aggregate.RejectedOrders)
 	}
+	printSizing(a.Config.Risk, res.Aggregate)
 	if res.FinalDir != "" {
 		fmt.Printf("Modèle de production : %s\n", res.FinalDir)
 	} else {
@@ -321,13 +365,17 @@ func runBacktest(args []string) error {
 	fs := flag.NewFlagSet("backtest", flag.ContinueOnError)
 	tfName := fs.String("tf", "", "unité de temps (défaut : config)")
 	toCSV := fs.Bool("csv", false, "écrire trades, courbe de valeur et métriques en CSV")
-	if err := fs.Parse(args); err != nil {
+	// Les options sont remises DEVANT la paire : le paquet flag s'arrête
+	// au premier argument positionnel, et `gw backtest EURUSD --csv`
+	// échouait donc sur un usage que le README documente.
+	flags, pairs := partitionArgs(args, map[string]bool{"tf": true})
+	if err := fs.Parse(flags); err != nil {
 		return err
 	}
-	if fs.NArg() != 1 {
+	if len(pairs) != 1 {
 		return fmt.Errorf("usage : gw backtest [-tf H4] [--csv] PAIRE")
 	}
-	symbol := strings.ToUpper(fs.Arg(0))
+	symbol := strings.ToUpper(pairs[0])
 
 	a, ctx, cancel, err := open()
 	if err != nil {
@@ -388,6 +436,7 @@ func runBacktest(args []string) error {
 	if s.RejectedOrders > 0 {
 		fmt.Printf("⚠ %d ordre(s) refusé(s) faute de marge.\n", s.RejectedOrders)
 	}
+	printSizing(a.Config.Risk, s)
 	if *toCSV {
 		paths, err := export.Backtest(a.Config.Paths.ExportsDir(), symbol, string(tf), res, time.Now())
 		if err != nil {
@@ -409,6 +458,125 @@ func runBacktest(args []string) error {
 const inSampleWarning = "\n⚠ Rejeu IN-SAMPLE : le modèle de production a été entraîné sur tout " +
 	"l'historique,\n  cette période comprise. Le chiffre honnête est l'agrégat out-of-sample " +
 	"de `gw train`."
+
+// runMigrate convertit les .gwb restants en Parquet.
+func runMigrate(args []string) error {
+	fs := flag.NewFlagSet("migrate", flag.ContinueOnError)
+	remove := fs.Bool("remove", false, "supprimer chaque .gwb APRÈS relecture du Parquet écrit")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	a, _, cancel, err := open()
+	if err != nil {
+		return err
+	}
+	defer cancel()
+	defer a.Close()
+
+	dir := a.Config.Paths.HistoryDir()
+	files, err := data.LegacyFiles(dir)
+	if err != nil {
+		return err
+	}
+	if len(files) == 0 {
+		fmt.Printf("Aucun fichier .gwb dans %s : rien à convertir.\n", dir)
+		return nil
+	}
+	fmt.Printf("%d fichier(s) .gwb à convertir dans %s\n", len(files), dir)
+	if !*remove {
+		fmt.Println("Les originaux sont CONSERVÉS. Relancer avec --remove pour les supprimer")
+		fmt.Println("une fois la conversion vérifiée.")
+	}
+
+	report, err := data.Migrate(dir, *remove, func(c data.Converted) {
+		if c.Err != nil {
+			fmt.Printf("  %s %d : ÉCHEC — %v\n", c.Symbol, c.Year, c.Err)
+			return
+		}
+		fmt.Printf("  %s %d : %d bougies, %.1f Mo → %.1f Mo%s\n",
+			c.Symbol, c.Year, c.Bars,
+			float64(c.Before)/1e6, float64(c.After)/1e6,
+			map[bool]string{true: " (original supprimé)"}[c.Removed])
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("\n%d converti(s), %d en échec.\n", report.Converted, report.Failed)
+	if report.Before > 0 {
+		fmt.Printf("Taille : %.1f Mo → %.1f Mo (%+.0f %%)\n",
+			float64(report.Before)/1e6, float64(report.After)/1e6,
+			(float64(report.After)/float64(report.Before)-1)*100)
+	}
+	if report.Freed > 0 {
+		fmt.Printf("Espace libéré : %.1f Mo\n", float64(report.Freed)/1e6)
+	}
+	if report.Failed > 0 {
+		return fmt.Errorf("%d fichier(s) non convertis — les originaux sont intacts", report.Failed)
+	}
+	return nil
+}
+
+// runImport verse des fichiers Parquet extérieurs dans l'historique.
+func runImport(args []string) error {
+	fs := flag.NewFlagSet("import", flag.ContinueOnError)
+	symbol := fs.String("symbol", "", "paire à laquelle rattacher les fichiers (obligatoire)")
+	flags, files := partitionArgs(args, map[string]bool{"symbol": true})
+	if err := fs.Parse(flags); err != nil {
+		return err
+	}
+	if *symbol == "" || len(files) == 0 {
+		return fmt.Errorf("usage : gw import --symbol EURUSD FICHIER.parquet…")
+	}
+	a, _, cancel, err := open()
+	if err != nil {
+		return err
+	}
+	defer cancel()
+	defer a.Close()
+
+	report, err := data.Import(a.Config.Paths.HistoryDir(), strings.ToUpper(*symbol), files)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%s : %d bougies importées sur %d année(s)\n",
+		report.Symbol, report.Bars, len(report.Years))
+	for _, f := range report.Files {
+		fmt.Printf("  écrit %s\n", f)
+	}
+	fmt.Println("\n⚠ Ces années sont marquées IMPORTÉES : personne n'a compté leurs jours")
+	fmt.Println("  manquants, elles ne sont donc pas déclarées complètes.")
+	return nil
+}
+
+// sizingLabel dit quel RÉGIME de taille est actif.
+//
+// Annoncer « taille 10 000 » quand le dimensionnement au risque est actif
+// serait annoncer une quantité que le moteur ne prendra presque jamais :
+// dans ce régime, max_position_size n'est plus qu'un plafond.
+// printSizing dit quel régime de taille a servi, et ce qu'il a coûté.
+//
+// Deux silences à lever : une entrée qu'on n'a pas su dimensionner ne
+// laisse aucune trace dans les chiffres (la stratégie paraît muette), et
+// une taille rabotée au plafond fait croire à un risque par trade qui
+// n'a pas été pris.
+func printSizing(cfg config.RiskConfig, s backtest.Stats) {
+	fmt.Printf("Dimensionnement : %s\n", sizingLabel(cfg))
+	if s.SizeCapped > 0 {
+		fmt.Printf("⚠ %d entrée(s) ramenée(s) au plafond : le risque pris y est inférieur "+
+			"à celui demandé.\n", s.SizeCapped)
+	}
+	if n, detail := risk.SizingRefusals(s.Rejections); n > 0 {
+		fmt.Printf("⚠ %d entrée(s) non dimensionnée(s), donc refusée(s) : %s\n", n, detail)
+	}
+}
+
+func sizingLabel(cfg config.RiskConfig) string {
+	if cfg.RiskPerTradePct > 0 {
+		return fmt.Sprintf("%.2f %% de l'équité par trade (plafond %.0f unités)",
+			cfg.RiskPerTradePct, cfg.MaxPositionSize)
+	}
+	return fmt.Sprintf("taille fixe de %.0f unités", cfg.MaxPositionSize)
+}
 
 func runRuns() error {
 	cfg, err := config.Load(config.DefaultPaths())

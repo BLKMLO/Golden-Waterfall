@@ -33,6 +33,14 @@ make dist       # les cinq binaires (Linux ×2, macOS ×2, Windows)
 Sous-commandes non interactives : `download`, `train`, `backtest PAIRE`,
 `runs`, `paths`, `config [--default]`, `version`.
 
+`train` accepte des PAIRES en positionnel (`gw train EURUSD GBPUSD`) et
+`--risk-per-trade X`, qui force le dimensionnement pour CE run — c'est
+ainsi qu'on mesure l'effet du réglage sur ses propres données, deux runs
+et un `gw runs`.
+
+`migrate [--remove]` convertit les anciens `.gwb` en Parquet ;
+`import --symbol S FICHIER…` verse un historique venu d'ailleurs.
+
 `backtest` accepte `--csv` : trades, courbe de valeur et métriques partent
 dans `<données>/exports/`. Même sortie que la touche `e` de l'écran
 Backtest, et que `e` sur l'onglet trades du Journal.
@@ -108,6 +116,15 @@ cessait d'être vraie.
 | `couts_modelises` / `devise_exacte` exportés | export CSV | Additionner des chiffres qui ne sont pas additionnables |
 | Export = copie, jamais recalcul | export CSV | Un fichier qui contredit l'écran qui l'a produit |
 | `theme.Apply` force réellement le fond | TUI | Une clé de configuration qui n'agit pas |
+| `Decision.Capped` + `Stats.SizeCapped` | risk, backtest | Annoncer « 0,5 % par trade » quand le plafond rabote chaque entrée |
+| `risk.SizingRefusals` affiché par écran | risk, TUI, CLI | Confondre « refusée faute de devise » et « le modèle s'abstient » |
+| `SplitByConversion` au démarrage et dans `gw config` | app, CLI | Découvrir dans un agrégat vide que 21 paires sur 31 ne tradent pas |
+| Paire annotée dans le sélecteur | TUI | Choisir une paire qui ne produira rien |
+| Côté ask absent écrit `NULL`, jamais `0` | data | Qu'un outil tiers additionne un prix inventé |
+| `gw.failures` en métadonnée Parquet | data | Prendre une année trouée pour une année faite |
+| `FileHeader.Imported` | data | Déclarer complète une année dont personne n'a compté les jours |
+| Colonnes appariées PAR LEUR NOM | data | Lire des prix crédibles et faux dans un fichier tiers |
+| Relecture bougie à bougie avant suppression | data (migrate) | Effacer un historique sur une conversion non vérifiée |
 
 ## Conventions
 
@@ -142,10 +159,28 @@ cessait d'être vraie.
   dans l'ordre **`offset, open, CLOSE, LOW, HIGH, volume`** (pas OHLC) ;
   404 = marché fermé ; 429 = limite de débit → backoff LONG,
   concurrence 3. Week-ends jamais demandés.
-- **Format `.gwb`** : en-tête 64 o + enregistrements 40 o à taille fixe,
-  prix en entiers mis à l'échelle. Écriture via fichier temporaire renommé.
-  Lecture d'une tranche de dates par **seek**. L'en-tête porte le nombre de
-  jours en échec : `Complete()` décide s'il faut retélécharger.
+- **Stockage en Parquet** (`data/parquet.go`). Colonnes `time`
+  (TIMESTAMP MILLIS UTC), `bid_*`, `ask_*` (NULLABLES), `volume`. Les
+  métadonnées portent `gw.failures` — le nombre de jours en échec, dont
+  `Complete()` dépend. Groupes de lignes de 32 768 bougies (≈ un mois) :
+  une lecture bornée saute les groupes hors période, ce qui remplace le
+  seek de l'ancien format. Les prix sont ARRONDIS avant écriture, mais
+  seulement si l'aller-retour est exact (`rounder` monte l'échelle par
+  décades) : sans arrondi le fichier triple, avec un arrondi au jugé on
+  perdrait les cotations d'une source plus fine.
+- **L'ancien `.gwb` est en LECTURE SEULE** (`data/gwb.go`). Rien ne peut
+  plus l'écrire — un format qu'on ne peut plus produire ne peut plus se
+  répandre — et `writeLegacySeries` vit dans les tests, pour que le
+  lecteur reste éprouvé contre de vrais octets. `NeedsDownload` regarde
+  les DEUX formats : sinon quinze ans d'historique repartiraient en
+  téléchargement pour cause de changement d'extension.
+- **Lire un Parquet écrit ailleurs** : les colonnes sont appariées par
+  NOM avec des alias, l'unité d'horodatage vient du type logique (à
+  défaut, de l'ordre de grandeur — les plages s/ms/µs/ns ne se chevauchent
+  pour aucune date plausible), et pyarrow déclare TOUTES ses colonnes
+  nullables, donc le lecteur ne peut pas compter sur `Int64Reader`.
+  `testdata/foreign_EURUSD_m1_2021.parquet` est un vrai fichier pyarrow :
+  c'est lui qui a trouvé ces deux pièges.
 - **Anti-fuite** : le test de **stabilité par préfixe**
   (`Compute(s)[:k] == Compute(s[:k])`) est le garde-fou central. Ne jamais
   le désactiver.
@@ -174,6 +209,21 @@ cessait d'être vraie.
   marché se calme. Mesuré : zéro barrière temporelle sur un marché agité
   comme sur un marché plat. Ne pas « optimiser » ce balayage par
   décomposition en blocs — ce serait de la complexité sans gain.
+- **Dimensionnement au risque, actif par défaut (0,5 %)**. Deux clés
+  distinctes : `max_position_size` est une GARDE (aucune entrée ne la
+  dépasse, quel que soit le mode), `fixed_position_size` est la taille
+  quand le risque par trade vaut 0. Les confondre — ce qu'elles faisaient
+  — obligeait à relever le plafond pour activer le risque, ce qui
+  décuplait la taille fixe dès qu'on le désactivait.
+  ⚠ **0,5 % est une CONVENTION, pas une mesure** : le bac à sable de dev
+  n'a pas d'historique réel (Dukascopy y répond 429). `gw train
+  --risk-per-trade X` existe pour que l'utilisateur le mesure chez lui.
+- **Conséquence lourde du dimensionnement** : sur un compte en USD, 21 des
+  31 instruments par défaut ne sont pas convertibles, donc TOUTES leurs
+  entrées sont refusées. C'est la règle « refuser plutôt que deviner »,
+  et elle est criée à quatre endroits (journal de démarrage, `gw config`,
+  sélecteur de paires, écrans Backtest et Entraînement). La lever pour de
+  bon demande la TRIANGULATION par une paire tierce — voir reste-à-faire.
 - **Devises** : le P&L d'une paire `XXXYYY` naît en `YYY`.
   `data.ConversionFor` convertit si la devise du compte est la base ou la
   cotation ; sinon `CurrencyExact = false` et on ne convertit PAS.
@@ -205,8 +255,16 @@ cessait d'être vraie.
 
 ## Dépendances (volontairement minimales)
 
-`bubbletea`, `lipgloss`, `yaml.v3`, `bbolt`, `ulikunitz/xz` — cinq
-directes en production, **aucune native**. `muesli/termenv`, déjà
+`bubbletea`, `lipgloss`, `yaml.v3`, `bbolt`, `ulikunitz/xz`,
+**`parquet-go/parquet-go`** — six directes en production, **aucune
+native**.
+
+Parquet est la dépendance la plus lourde du projet : elle amène neuf
+modules transitifs et fait passer le binaire de **8,8 à 15,2 Mo**. C'est
+le prix d'un format de données que d'autres outils savent lire, et il a
+été payé volontairement — un format maison enferme l'utilisateur dans le
+logiciel qui l'a écrit. Le binaire reste unique, statique et sans `cgo`,
+et les cinq cibles compilent toujours. `muesli/termenv`, déjà
 transitive via lipgloss, est devenue directe pour les SEULS tests du
 thème : forcer un profil de couleur est la seule façon de vérifier que
 `ui.theme` change vraiment ce qui sort à l'écran, et un test qui se
@@ -234,69 +292,70 @@ Une tentative de repli sur 1.24 casse la compatibilité entre les paquets
 
 ## État du projet (22 septembre 2026)
 
-**Complet de bout en bout, ~15 200 lignes de code + ~6 700 de tests,
+**Complet de bout en bout, ~17 000 lignes de code + ~7 700 de tests,
 21 paquets, suite verte avec `-race`.**
 
-Couverture par paquet (la plus basse d'abord) : `cmd/gw` 18 %,
-`tui/view` 43 %, `config` 57 %, `data` 59 %, `core` 62 %, `tui` 68 %,
-`training` 75 %, `indicator` 77 %, `broker` 78 %, `app` 78 %,
-`storage` 79 %, `tui/component` 79 %, `feature` 79 %, `live` 80 %,
-`strategy` 80 %, `ml/gbdt` 81 %, `backtest` 85 %, `export` 88 %,
-`risk` 88 %, `label` 95 %, `tui/theme` 100 %. Les chiffres bas ne sont pas
-tous des trous : dans `data` et `config`, le non-couvert est surtout la
-branche réseau Dukascopy et les erreurs d'E/S ; tous les invariants
-annoncés, eux, ont un test qui échoue s'ils cessent d'être vrais.
+Couverture par paquet (la plus basse d'abord) : `cmd/gw` 22 %,
+`tui/view` 48 %, `config` 58 %, `core` 62 %, `tui` 68 %, `data` 70 %,
+`training` 75 %, `broker` 75 %, `indicator` 77 %, `storage` 79 %,
+`tui/component` 79 %, `feature` 79 %, `app` 79 %, `live` 80 %,
+`strategy` 81 %, `ml/gbdt` 81 %, `backtest` 85 %, `export` 88 %,
+`risk` 90 %, `label` 95 %, `tui/theme` 100 %.
 
 Validé réellement :
 
-- walk-forward 5 plis × 3 paires sur ~18 000 bougies H4 : **3 s**,
-  AUC OOS 0,616, modèle de production écrit ;
-- backtest CLI et TUI, courbe d'équité braille, tableau des trades ;
-- passerelle `replay` en TUI : connexion, flux, agrégation H4, signaux,
-  ordres, exécutions, positions, journal des trades ;
-- rendu de la TUI CONTRÔLÉ par test en LARGEUR **et en HAUTEUR** : chaque
-  écran est dessiné de 60×18 à 200×60 et ne dépasse ni la largeur ni la
-  hauteur demandées. C'est le contrôle de hauteur, ajouté en v0.3, qui a
-  révélé que cinq écrans sur six débordaient en 80×24 ;
-- `ui.theme` vérifié sur le vrai binaire sous tmux : `GW_THEME=dark` et
-  `GW_THEME=light` produisent bien deux jeux de couleurs différents
-  (SGR 179 contre 136 pour un titre).
+- walk-forward et backtest de bout en bout sur un historique **importé
+  depuis un fichier pyarrow** : import → 2 ans de M1 → 3 plis → modèle de
+  production → backtest → export CSV. Le spread mesuré à la sortie
+  (0,000080) prouve que le côté ask a survécu à l'aller-retour ;
+- fichier Parquet écrit par le programme **relu par pyarrow** : types,
+  colonnes nullables et métadonnées `gw.*` conformes ;
+- rendu de la TUI CONTRÔLÉ par test en largeur ET en hauteur, de 60×18 à
+  200×60 ;
+- sélecteur de paires exercé sous tmux : filtre « JPY » → 7 paires, « a »
+  les coche, annotation « non dimensionnable en USD » visible au moment
+  du choix.
 
 **Reste à valider chez l'utilisateur** : premier téléchargement Dukascopy
-réel (le bac à sable de dev est limité à 429).
+réel (le bac à sable de dev est limité à 429), et surtout la MESURE de
+`risk_per_trade_pct` sur des données réelles.
 
-**Reste à faire** :
+**Reste à faire**, par ordre de valeur :
 
-1. **Brancher Interactive Brokers** — seul élément manquant pour que le
-   live soit autre chose qu'un rejeu. Feuille de route détaillée dans
+1. **Triangulation des devises.** C'est devenu la limite la plus coûteuse
+   du programme : sur un compte en dollars, 21 des 31 instruments par
+   défaut ne sont pas convertibles, leur P&L reste en devise de cotation
+   (`CurrencyExact = false`) et, depuis que le dimensionnement au risque
+   est actif, TOUTES leurs entrées sont refusées. Le taux manquant est
+   pourtant **déjà sur le disque** : convertir un P&L en GBP vers l'USD
+   demande GBPUSD, que l'historique contient. Ce qu'il faut : une source
+   de taux alignée dans le temps (une deuxième série chargée par le
+   moteur de backtest, une cotation supplémentaire côté passerelle en
+   live), et `Conversion` qui prenne un instant. Attention : cela change
+   des résultats déjà publiés — à traiter comme un changement de moteur,
+   pas comme un correctif.
+2. **Mesurer `risk_per_trade_pct`.** Le réglage est actif à 0,5 %, valeur
+   de CONVENTION. `gw train --risk-per-trade 0` puis `0.5` sur le même
+   historique, et `gw runs` compare. Tant que ce n'est pas fait, le
+   chiffre par défaut n'est adossé à aucune mesure — et le dire est la
+   moitié du travail.
+3. **Brancher Interactive Brokers** — seul élément manquant pour que le
+   live soit autre chose qu'un rejeu. Feuille de route dans
    `docs/brokers.md`. Tant que `placeOrder` ne soumet pas un vrai bracket
    OCA, `Info.SupportsBracket` reste à `false` et le moteur REFUSE les
-   entrées : basculer ce drapeau sans le code revient à mentir au moteur.
-   ⚠ Ne pas écrire ce protocole « à l'aveugle » : du code non éprouvé
-   contre un vrai TWS, sur le chemin qui envoie des ordres réels, est
-   précisément ce que les règles du projet interdisent.
-2. **Icône Windows** : toute la mécanique est en place et automatique —
-   `make windows` et le workflow de release détectent `build/icon.ico`,
-   génèrent le `.syso` et le lient, ou DISENT ce qui manque. Il ne reste
-   qu'à déposer l'icône elle-même (256×256), qui est une décision de
-   design, pas de code.
-3. **Exposition croisée inter-actifs** dans le walk-forward : chaque actif
-   a son propre moteur, donc les plafonds s'appliquent par actif. Limite
-   documentée, pas masquée — et plus masquée non plus dans les chiffres :
-   l'agrégat renvoie NaN pour le drawdown et le Sharpe, qui exigeraient
-   une courbe de valeur commune inexistante. Les calculer pour de bon
-   suppose de trancher comment le capital se partage entre actifs : c'est
-   une décision de conception, pas un calcul.
-4. **Mesurer `risk_per_trade_pct`** : le dimensionnement au risque existe
-   et est testé, mais il est à 0 (désactivé) par défaut. Avant de
-   l'activer, un walk-forward avant/après — il déplace drawdown, profit
-   factor et SQN.
-5. **60×18 ne suffit pas à l'écran Live.** C'est le plancher en deçà
-   duquel le programme refuse de dessiner, mais entre 60×18 et 80×24 le
-   corps est coupé et `Fit` annonce les lignes masquées. Deux sorties
-   possibles : relever le plancher déclaré, ou donner aux panneaux
-   explicatifs une version courte sous 70 colonnes. Ne pas le « régler »
-   en supprimant l'avertissement.
+   entrées. ⚠ Ne pas écrire ce protocole « à l'aveugle ».
+4. **Icône Windows** : mécanique en place, il manque le fichier
+   `build/icon.ico` (256×256) — décision de design, pas de code.
+5. **Exposition croisée inter-actifs** dans le walk-forward : les
+   plafonds s'appliquent par actif, et l'agrégat renvoie NaN pour
+   drawdown et Sharpe faute de courbe de valeur commune.
+6. **60×18 ne suffit pas à l'écran Live.** Entre le plancher déclaré et
+   80×24, le corps est coupé et `Fit` le dit. Relever le plancher, ou
+   abréger les panneaux explicatifs sous 70 colonnes — pas supprimer
+   l'avertissement.
+7. **Import CSV.** L'import lit le Parquet ; beaucoup d'outils exportent
+   en CSV. Le lecteur de colonnes par alias est déjà écrit, il ne
+   manquerait que le décodage.
 
 ## Journal de décisions
 
@@ -369,6 +428,42 @@ réel (le bac à sable de dev est limité à 429).
 - **L'aide est une fenêtre MODALE et défilable.** Tant qu'elle couvre
   l'écran, les touches lui appartiennent — sinon les flèches faisaient
   défiler un tableau invisible derrière elle.
+- **Parquet plutôt qu'un format maison.** `.gwb` était plus compact à
+  écrire et se relisait par seek — et n'était lisible que par ce
+  programme. Impossible d'y verser un historique téléchargé ailleurs,
+  impossible de l'ouvrir dans un notebook. Un format de données qui
+  enferme son utilisateur dans le logiciel qui l'a écrit est l'inverse de
+  ce que ce projet promet. Mesuré : fichier 9,2 Mo contre 14,9, lecture
+  139 ms contre 26, écriture 485 ms contre 68 — la lecture se produit une
+  fois par entraînement et l'écriture derrière un téléchargement réseau,
+  tandis que la taille reste sur le disque pour toujours.
+- **Le côté ask absent s'écrit NULL, pas zéro.** Zéro serait un prix, et
+  l'outil tiers qui ouvre le fichier l'additionnerait. C'est la règle
+  « — plutôt que zéro » de l'interface, appliquée au fichier.
+- **Les `.gwb` restent lus, rien ne les écrit plus.** Casser la lecture
+  d'un format qu'on abandonne reviendrait à demander de retélécharger
+  quinze ans d'historique parce qu'on a changé d'avis. `gw migrate` les
+  convertit, et ne supprime qu'APRÈS relecture bougie à bougie.
+- **Un import est marqué comme tel.** Personne n'a compté les jours
+  manquants d'un fichier venu d'ailleurs : `Complete()` répond non plutôt
+  que de déclarer faite une année dont on ne sait rien.
+- **`max_position_size` et `fixed_position_size` sont deux clés.** Une
+  seule valeur servait de plafond dans un mode et de taille exacte dans
+  l'autre : activer le dimensionnement au risque obligeait à relever ce
+  nombre, ce qui décuplait la taille fixe dès qu'on le désactivait. Deux
+  sens pour une valeur, c'est un piège, pas une économie.
+- **Une taille rabotée par le plafond est COMPTÉE.** Sans ce compteur, un
+  plafond trop bas neutralise le dimensionnement au risque à chaque
+  entrée et l'écran continue d'annoncer « 0,5 % par trade » en toute
+  bonne foi.
+- **Le sélecteur de paires annote ce qu'il sait.** Une paire sans
+  historique local, ou non dimensionnable dans la devise du compte, ne
+  produira rien. Le dire AU MOMENT DU CHOIX, et non dans un agrégat vide
+  deux heures plus tard, est tout l'intérêt d'avoir remplacé le champ de
+  texte.
+- **Entraîner un sous-ensemble de paires.** Un walk-forward sur trente et
+  une paires dure des heures ; pouvoir n'en reprendre qu'une après avoir
+  changé un réglage est la différence entre essayer et renoncer.
 - **README abrégé, détail dans `docs/`.** Les tableaux de garanties et de
   pannes vivent dans `docs/depannage.md` : un lecteur qui découvre le
   projet n'en a pas besoin avant d'avoir lancé le binaire.
@@ -467,6 +562,19 @@ réel (le bac à sable de dev est limité à 429).
   témoin naïf ajouté en même temps que l'optimisation.
 - **`ui.theme` ne forçait rien** (voir plus haut) : une clé exposée dans
   l'écran Paramètres, réglable, documentée, et sans le moindre effet.
+- **`gw backtest EURUSD --csv` refusé** : `runBacktest` parsait ses
+  options sans `partitionArgs`, et le paquet `flag` s'arrête au premier
+  argument positionnel. L'usage documenté dans le README ne marchait
+  pas. Trouvé par un essai de bout en bout sur le vrai binaire, pas par
+  les tests — d'où le test ajouté dans la foulée.
+- **Une année en `.gwb` aurait été retéléchargée** après la bascule :
+  `NeedsDownload` ne cherchait que le Parquet. Des heures de réseau, et
+  un 429 au bout de trois minutes, pour des données déjà sur le disque.
+- **Prix relus à cinq décimales près, puis réécrits en flottant brut** :
+  le fichier triplait (24,9 Mo au lieu de 9,2). Un compresseur ne sait
+  rien faire d'un bruit de bas de mantisse. Corrigé par un arrondi — mais
+  un arrondi VÉRIFIÉ, sans quoi un import plus fin que
+  `Instruments` y perdrait des cotations réelles.
 - **Recentrage de `RollingStd` jamais établi sur une série courte** : bug
   introduit pendant l'optimisation et attrapé par la comparaison avec
   l'implémentation naïve. C'est précisément à ça qu'elle sert.
@@ -489,6 +597,11 @@ Bancs d'essai : `internal/indicator/bench_test.go`,
 | `Resample` M1→H4, 372 k bougies | 21,0 ms / 8,93 Mo | **9,0 ms / 0,16 Mo** |
 | `Resample` M1→M5, 372 k bougies | 23,5 ms / 8,93 Mo | 16,1 ms / 7,14 Mo |
 | `Resample` M1→D1, 372 k bougies | 26,4 ms / 8,93 Mo | **8,5 ms / 0,03 Mo** |
+| Stockage d'une année de M1 (taille) | 14,9 Mo (`.gwb`) | **9,2 Mo** (Parquet) |
+| Lecture d'une année | 26 ms | 139 ms |
+| Lecture d'un mois | seek | 50 ms |
+| Écriture d'une année | 68 ms | 485 ms |
+| Binaire (`-s -w`, CGO désactivé) | 8,8 Mo | 15,2 Mo |
 
 Ce qui a produit ces gains : file monotone pour les extrema glissants,
 capacité de sortie du ré-échantillonnage calée sur la durée couverte et
@@ -500,6 +613,12 @@ par coupure), seuil en deçà duquel la parallélisation des histogrammes
 coûte plus qu'elle ne rapporte, pré-dimensionnement du chargement de
 l'historique depuis les en-têtes, et mise en cache des lectures de la TUI
 (trades, graphique ré-échantillonné).
+
+Le stockage est le seul poste où le projet a sciemment payé de la vitesse
+et de la taille de binaire : lecture ×5, écriture ×7, binaire ×1,7. Ce
+qu'il achète est l'interopérabilité, et la lecture columnaire a tout de
+même été optimisée (chemin rapide `ReadDoubles` pour les colonnes sans
+valeur absente, groupes de lignes sautés hors période).
 
 Ce qui a été mesuré puis **écarté** : la décomposition en blocs du
 balayage du labeling — le pire cas redouté n'est pas atteignable, les

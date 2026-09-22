@@ -65,22 +65,30 @@ type StrategyConfig struct {
 
 // RiskConfig : limites appliquées par le seul risk.Manager.
 type RiskConfig struct {
-	// MaxPositionSize : taille d'une entrée en UNITÉS de devise de base
+	// MaxPositionSize : PLAFOND d'une entrée, en unités de devise de base
 	// (1 lot standard = 100 000, 1 mini-lot = 10 000, 1 micro-lot = 1 000).
-	// L'unité compte : à 1, tous les P&L affichés deviennent des
-	// poussières illisibles qu'on prend pour du bruit.
+	//
+	// C'est une garde, pas une taille. Elle l'était : la même clé servait
+	// de plafond en dimensionnement au risque et de taille exacte en
+	// taille fixe — deux sens pour une valeur, donc un piège. Activer le
+	// risque par trade obligeait à relever ce nombre, ce qui décuplait en
+	// même temps la taille fixe si on le désactivait ensuite.
 	MaxPositionSize float64 `yaml:"max_position_size"`
+	// FixedPositionSize : la taille utilisée quand `risk_per_trade_pct`
+	// vaut 0. L'unité compte : à 1, tous les P&L affichés deviennent des
+	// poussières illisibles qu'on prend pour du bruit.
+	FixedPositionSize float64 `yaml:"fixed_position_size"`
 	// RiskPerTradePct : part de l'ÉQUITÉ risquée par entrée, en %.
 	//
-	// 0 = désactivé : la taille vaut alors `max_position_size`, quels que
-	// soient la paire et le régime de volatilité. Au-dessus de 0, la
+	// 0 = désactivé : la taille vaut alors `fixed_position_size`, quels
+	// que soient la paire et le régime de volatilité. Au-dessus de 0, la
 	// taille est calculée pour que la distance jusqu'au stop coûte
-	// exactement ce pourcentage, et `max_position_size` redevient ce que
-	// son nom dit : un PLAFOND.
+	// exactement ce pourcentage, plafonnée par `max_position_size`.
 	//
 	// Changer ce réglage change le système, pas seulement son échelle :
 	// une taille variable modifie les drawdowns, le profit factor et le
-	// SQN. À mesurer en walk-forward avant/après, jamais à supposer.
+	// SQN. `gw train --risk-per-trade X` le mesure sur ses propres
+	// données, deux runs et une comparaison — jamais à supposer.
 	RiskPerTradePct       float64 `yaml:"risk_per_trade_pct"`
 	MaxPositionsPerSymbol int     `yaml:"max_positions_per_symbol"`
 	MaxOpenPositions      int     `yaml:"max_open_positions"`
@@ -163,8 +171,10 @@ func Default() Config {
 		},
 		Strategy: StrategyConfig{Name: "colibri_v1_1", Enabled: false},
 		Risk: RiskConfig{
-			MaxPositionSize: 10000, MaxPositionsPerSymbol: 1,
-			MaxOpenPositions: 4, MaxDailyLossPct: 2.0,
+			MaxPositionSize: 100000, FixedPositionSize: 10000,
+			RiskPerTradePct:       0.5,
+			MaxPositionsPerSymbol: 1,
+			MaxOpenPositions:      4, MaxDailyLossPct: 2.0,
 		},
 		Costs:    CostsConfig{CommissionPerUnit: 0},
 		Backtest: BacktestConfig{InitialCapital: 10000, Leverage: 30, AccountCurrency: "USD"},
@@ -341,6 +351,16 @@ func (c Config) Validate() error {
 	}
 	if c.Risk.MaxPositionSize <= 0 {
 		add("risk.max_position_size doit être > 0 (reçu %g)", c.Risk.MaxPositionSize)
+	}
+	if c.Risk.FixedPositionSize <= 0 {
+		add("risk.fixed_position_size doit être > 0 (reçu %g)", c.Risk.FixedPositionSize)
+	}
+	if c.Risk.FixedPositionSize > c.Risk.MaxPositionSize {
+		// Sans ce refus, la taille fixe serait silencieusement rabotée au
+		// plafond : le programme n'enverrait pas la taille demandée et
+		// rien ne le dirait.
+		add("risk.fixed_position_size (%g) dépasse risk.max_position_size (%g)",
+			c.Risk.FixedPositionSize, c.Risk.MaxPositionSize)
 	}
 	if c.Risk.MaxPositionsPerSymbol < 1 {
 		add("risk.max_positions_per_symbol doit être >= 1")

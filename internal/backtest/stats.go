@@ -180,6 +180,7 @@ func AggregateStats(results []*Result, initialCapital float64) Stats {
 		agg.Bars += r.Stats.Bars
 		agg.Costs += r.Stats.Costs
 		agg.RejectedOrders += r.Stats.RejectedOrders
+		agg.SizeCapped += r.Stats.SizeCapped
 		if !r.Stats.CostsModelled {
 			// Un seul actif sans spread mesurable suffit à rendre
 			// l'agrégat incomplet : on le dit pour l'ensemble.

@@ -82,33 +82,39 @@ type EquityPoint struct {
 // Stats agrège les métriques d'un backtest. Chaque champ est MESURÉ ;
 // aucun n'est estimé ni extrapolé.
 type Stats struct {
-	Symbol         string         `json:"symbol"`
-	Bars           int            `json:"bars"`
-	Trades         int            `json:"trades"`
-	Wins           int            `json:"wins"`
-	Losses         int            `json:"losses"`
-	WinRate        float64        `json:"win_rate"`
-	NetPnL         float64        `json:"net_pnl"`
-	GrossProfit    float64        `json:"gross_profit"`
-	GrossLoss      float64        `json:"gross_loss"`
-	ProfitFactor   float64        `json:"profit_factor"`
-	Costs          float64        `json:"costs"`
-	CostsModelled  bool           `json:"costs_modelled"`
-	Spread         float64        `json:"spread"`
-	InitialCapital float64        `json:"initial_capital"`
-	FinalEquity    float64        `json:"final_equity"`
-	ReturnPct      float64        `json:"return_pct"`
-	MaxDrawdownPct float64        `json:"max_drawdown_pct"`
-	Sharpe         float64        `json:"sharpe"`
-	SQN            float64        `json:"sqn"`
-	Expectancy     float64        `json:"expectancy"`
-	AvgWin         float64        `json:"avg_win"`
-	AvgLoss        float64        `json:"avg_loss"`
-	RejectedOrders int            `json:"rejected_orders"`
-	Rejections     map[string]int `json:"rejections,omitempty"`
-	ExitReasons    map[string]int `json:"exit_reasons,omitempty"`
-	Start          time.Time      `json:"start"`
-	End            time.Time      `json:"end"`
+	Symbol         string  `json:"symbol"`
+	Bars           int     `json:"bars"`
+	Trades         int     `json:"trades"`
+	Wins           int     `json:"wins"`
+	Losses         int     `json:"losses"`
+	WinRate        float64 `json:"win_rate"`
+	NetPnL         float64 `json:"net_pnl"`
+	GrossProfit    float64 `json:"gross_profit"`
+	GrossLoss      float64 `json:"gross_loss"`
+	ProfitFactor   float64 `json:"profit_factor"`
+	Costs          float64 `json:"costs"`
+	CostsModelled  bool    `json:"costs_modelled"`
+	Spread         float64 `json:"spread"`
+	InitialCapital float64 `json:"initial_capital"`
+	FinalEquity    float64 `json:"final_equity"`
+	ReturnPct      float64 `json:"return_pct"`
+	MaxDrawdownPct float64 `json:"max_drawdown_pct"`
+	Sharpe         float64 `json:"sharpe"`
+	SQN            float64 `json:"sqn"`
+	Expectancy     float64 `json:"expectancy"`
+	AvgWin         float64 `json:"avg_win"`
+	AvgLoss        float64 `json:"avg_loss"`
+	RejectedOrders int     `json:"rejected_orders"`
+	// SizeCapped : entrées dont la taille a été RAMENÉE au plafond
+	// `max_position_size`. L'ordre est parti, mais il ne risquait plus le
+	// pourcentage demandé : sans ce compteur, un plafond trop bas
+	// neutraliserait le dimensionnement au risque sans que rien ne le
+	// dise, et l'écran afficherait « 0,5 % par trade » en toute bonne foi.
+	SizeCapped  int            `json:"size_capped"`
+	Rejections  map[string]int `json:"rejections,omitempty"`
+	ExitReasons map[string]int `json:"exit_reasons,omitempty"`
+	Start       time.Time      `json:"start"`
+	End         time.Time      `json:"end"`
 
 	// Currency : devise dans laquelle les montants sont exprimés.
 	Currency string `json:"currency"`
@@ -354,6 +360,7 @@ func (e *Engine) Run(ctx context.Context, req Request) (*Result, error) {
 
 	stats := computeStats(req, trades, equity, e.cfg.Backtest.InitialCapital,
 		totalCosts, spread, costsModelled, rejectedOrders, exitReasons, rm.Rejections())
+	stats.SizeCapped = rm.Capped()
 	stats.Currency, stats.CurrencyExact = conv.AccountCurrency, conv.Exact
 	if !conv.Exact {
 		// Non convertible : on n'invente pas un taux, on dit dans quelle

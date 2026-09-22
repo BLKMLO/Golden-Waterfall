@@ -93,7 +93,7 @@ func envOr(key, fallback string) string {
 // ConfigFile est le chemin du fichier config.yaml.
 func (p Paths) ConfigFile() string { return filepath.Join(p.ConfigDir, "config.yaml") }
 
-// HistoryDir contient l'historique M1 : history/<SYMBOLE>/<SYMBOLE>_m1_<année>.gwb
+// HistoryDir contient l'historique M1 : history/<SYMBOLE>/<SYMBOLE>_m1_<année>.parquet
 func (p Paths) HistoryDir() string { return filepath.Join(p.DataDir, "history") }
 
 // ModelsDir contient un sous-dossier par entraînement réussi.

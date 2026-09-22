@@ -43,30 +43,45 @@ strategy:
   enabled: false
 
 risk:
-  # Taille d'une entrée, en UNITÉS de devise de base :
+  # DEUX clés distinctes, et elles ne veulent pas dire la même chose.
+  #
+  # max_position_size est un PLAFOND : aucune entrée ne dépassera cette
+  # taille, quel que soit le mode de dimensionnement. C'est une garde.
+  #
+  # fixed_position_size est la taille employée quand risk_per_trade_pct
+  # vaut 0. Unités de devise de base :
   #   1 000   = micro-lot     10 000 = mini-lot     100 000 = lot standard
   # Avec 10 000 unités d'EURUSD et un levier de 30, une entrée immobilise
-  # environ 370 unités de compte. Une taille de 1 est possible, mais tous
-  # les P&L affichés deviennent alors des poussières illisibles.
-  max_position_size: 10000
-  # Part de l'ÉQUITÉ risquée par entrée, en %. 0 = DÉSACTIVÉ : la taille
-  # vaut exactement max_position_size, quelle que soit la volatilité.
+  # environ 370 unités de compte.
+  max_position_size: 100000
+  fixed_position_size: 10000
+  # Part de l'ÉQUITÉ risquée par entrée, en %.
   #
-  # Au-dessus de 0, la taille est calculée pour que la distance jusqu'au
-  # stop coûte ce pourcentage :
+  # La taille est calculée pour que la distance jusqu'au stop coûte
+  # exactement ce pourcentage :
   #
   #   quantité = (équité × risk_per_trade_pct / 100) / distance_au_stop
   #
   # où la distance au stop est celle proposée par la stratégie (Colibri :
-  # 1,5 × ATR) convertie dans la devise du compte. max_position_size
-  # redevient alors ce que son nom dit : un PLAFOND.
+  # 1,5 × ATR) convertie dans la devise du compte.
   #
-  # ⚠ Ce réglage change le SYSTÈME, pas seulement son échelle : drawdown,
-  # profit factor et SQN bougent tous. À mesurer en walk-forward avant et
-  # après, jamais à supposer. Si l'équité, le stop ou la conversion de
-  # devise manquent, l'entrée est REFUSÉE avec son motif — jamais
-  # dimensionnée au jugé.
-  risk_per_trade_pct: 0
+  # Pourquoi c'est le défaut : à taille fixe, la perte au stop suit l'ATR.
+  # Elle DOUBLE quand la volatilité double, sans que personne ne l'ait
+  # décidé. Ce réglage inverse la dépendance — c'est la taille qui bouge,
+  # la perte qui reste constante.
+  #
+  # 0 = désactivé : retour à fixed_position_size.
+  #
+  # ⚠ 0,5 % est une CONVENTION, pas une mesure. Ce réglage change le
+  # SYSTÈME, pas seulement son échelle : drawdown, profit factor et SQN
+  # bougent tous. Le mesurer sur SES données prend deux commandes :
+  #
+  #   gw train --risk-per-trade 0     puis     gw train --risk-per-trade 0.5
+  #   gw runs                          compare les deux
+  #
+  # Si l'équité, le stop ou la conversion de devise manquent, l'entrée est
+  # REFUSÉE avec son motif — jamais dimensionnée au jugé.
+  risk_per_trade_pct: 0.5
   # Deux plafonds DISTINCTS. Par symbole : empêche d'empiler des entrées
   # sur la même paire. Sur le compte : borne l'exposition totale.
   max_positions_per_symbol: 1

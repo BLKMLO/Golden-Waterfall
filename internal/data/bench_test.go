@@ -3,6 +3,8 @@ package data
 import (
 	"math"
 	"math/rand"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -17,13 +19,22 @@ func benchM1(n int) core.Series {
 	rng := rand.New(rand.NewSource(7))
 	start := time.Date(2022, 1, 3, 0, 0, 0, 0, time.UTC)
 	out := make(core.Series, n)
-	p := 1.10
+	// Marche aléatoire sur l'ENTIER, pas sur le flottant : Dukascopy
+	// publie des prix entiers mis à l'échelle, et un banc d'essai de
+	// stockage nourri de doubles à quinze décimales mesurerait la
+	// compression d'un bruit qui n'existe sur aucun marché.
+	const pip = 100000.0
+	k := int64(110000)
 	for i := range out {
-		p = math.Max(p+rng.NormFloat64()*0.0002, 0.5)
+		k += int64(math.Round(rng.NormFloat64() * 20))
+		if k < 50000 {
+			k = 50000
+		}
+		price := func(ticks int64) float64 { return float64(k+ticks) / pip }
 		out[i] = core.Bar{
 			Time:    start.Add(time.Duration(i) * time.Minute),
-			BidOpen: p, BidHigh: p + 0.0002, BidLow: p - 0.0002, BidClose: p,
-			AskOpen: p + 0.0001, AskHigh: p + 0.0003, AskLow: p - 0.0001, AskClose: p + 0.0001,
+			BidOpen: price(0), BidHigh: price(20), BidLow: price(-20), BidClose: price(0),
+			AskOpen: price(10), AskHigh: price(30), AskLow: price(-10), AskClose: price(10),
 			Volume: 3,
 		}
 	}
@@ -143,5 +154,80 @@ func TestResampleDoesNotOverAllocate(t *testing.T) {
 	if cap(out) > 4*len(out)+8 {
 		t.Fatalf("capacité %d pour %d bougies : la réserve ne suit pas l'unité",
 			cap(out), len(out))
+	}
+}
+
+// --- Stockage : Parquet contre l'ancien format maison ---------------------
+//
+// Les deux chiffres qui décident sont la TAILLE et la LECTURE : un
+// historique complet fait plusieurs gigaoctets, et le walk-forward relit
+// chaque année à chaque entraînement. L'écriture, elle, se produit une
+// fois derrière un téléchargement réseau qui dure des minutes.
+
+func benchHeader() FileHeader {
+	return FileHeader{Symbol: "EURUSD", Year: 2022, Scale: 100000}
+}
+
+func BenchmarkStoreWriteParquet(b *testing.B) {
+	s := benchM1(benchBars)
+	path := filepath.Join(b.TempDir(), "EURUSD_m1_2022.parquet")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := WriteSeries(path, benchHeader(), s); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+	if info, err := os.Stat(path); err == nil {
+		b.ReportMetric(float64(info.Size())/1e6, "Mo/fichier")
+	}
+}
+
+func BenchmarkStoreReadParquet(b *testing.B) {
+	s := benchM1(benchBars)
+	path := filepath.Join(b.TempDir(), "EURUSD_m1_2022.parquet")
+	if err := WriteSeries(path, benchHeader(), s); err != nil {
+		b.Fatal(err)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, _, err := ReadSeries(path, time.Time{}, time.Time{}); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkStoreReadParquetOneMonth : la lecture bornée ne doit pas
+// coûter la lecture de l'année. C'est ce que l'ancien format obtenait par
+// seek, et que les groupes de lignes doivent rendre.
+func BenchmarkStoreReadParquetOneMonth(b *testing.B) {
+	s := benchM1(benchBars)
+	path := filepath.Join(b.TempDir(), "EURUSD_m1_2022.parquet")
+	if err := WriteSeries(path, benchHeader(), s); err != nil {
+		b.Fatal(err)
+	}
+	from := s[0].Time.AddDate(0, 6, 0)
+	to := from.AddDate(0, 1, 0)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, _, err := ReadSeries(path, from, to); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkStoreReadLegacy(b *testing.B) {
+	s := benchM1(benchBars)
+	path := filepath.Join(b.TempDir(), "EURUSD_m1_2022.gwb")
+	writeLegacySeries(b, path, benchHeader(), s)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, _, err := ReadSeries(path, time.Time{}, time.Time{}); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+	if info, err := os.Stat(path); err == nil {
+		b.ReportMetric(float64(info.Size())/1e6, "Mo/fichier")
 	}
 }

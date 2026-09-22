@@ -37,7 +37,10 @@ Golden-Waterfall/
 │   ├── data/
 │   │   ├── instrument.go       Symboles, décimales, devises base/cotation.
 │   │   ├── dukascopy.go        Téléchargeur bi5 (LZMA), backoff 429.
-│   │   ├── store.go            Format .gwb + inventaire + relecture bornée.
+│   │   ├── store.go            Inventaire + relecture bornée, tous formats.
+│   │   ├── parquet.go          Le stockage : lecture, écriture, import.
+│   │   ├── gwb.go              L'ANCIEN format, en lecture seule.
+│   │   ├── migrate.go          .gwb → Parquet, vérifié avant suppression.
 │   │   └── timeframe.go        M1…MN1, planchers de bucket, agrégation.
 │   │
 │   ├── strategy/
@@ -130,6 +133,27 @@ inopérante en silence.
 ### 5. Paper → live = un seul réglage
 
 `broker.mode` dans `config.yaml`. Rien d'autre.
+
+### 5 bis. Le dimensionnement REFUSE plutôt que de deviner
+
+`risk_per_trade_pct` (0,5 % par défaut) calcule la taille pour que la
+distance jusqu'au stop coûte ce pourcentage de l'équité. Quand l'équité,
+le stop ou la conversion de devise manquent, l'entrée est **refusée avec
+son motif** — jamais repliée sur une taille arbitraire.
+
+Deux clés distinctes, et elles ne veulent pas dire la même chose :
+`max_position_size` est une GARDE (aucune entrée ne la dépasse, quel que
+soit le mode), `fixed_position_size` est la taille employée quand le
+risque par trade vaut 0. Les confondre — ce qu'elles faisaient — obligeait
+à relever le plafond pour activer le risque par trade, ce qui décuplait la
+taille fixe dès qu'on le désactivait.
+
+Conséquence à connaître : sur un compte en dollars, une paire croisée
+(EURGBP, AUDJPY…) a son P&L dans une devise tierce. Sans taux, il n'y a
+pas de budget de risque, et **toutes** ses entrées sont refusées. Ce n'est
+pas masqué : le démarrage l'écrit au journal, `gw config` compte les
+instruments dimensionnables, le sélecteur de paires annote chacun, et les
+écrans Backtest et Entraînement affichent les refus par motif.
 
 ### 6. L'interface ne ment jamais
 

@@ -15,6 +15,7 @@ import (
 	"github.com/BLKMLO/Golden-Waterfall/internal/data"
 	"github.com/BLKMLO/Golden-Waterfall/internal/export"
 	"github.com/BLKMLO/Golden-Waterfall/internal/feature"
+	"github.com/BLKMLO/Golden-Waterfall/internal/risk"
 	"github.com/BLKMLO/Golden-Waterfall/internal/strategy"
 	"github.com/BLKMLO/Golden-Waterfall/internal/training"
 	"github.com/BLKMLO/Golden-Waterfall/internal/tui/component"
@@ -317,8 +318,8 @@ func sizeCard(cfg config.RiskConfig) component.StatCard {
 	}
 	return component.StatCard{
 		Label: "Taille",
-		Value: component.Num(cfg.MaxPositionSize, 2),
-		Note:  "fixe",
+		Value: component.Num(cfg.FixedPositionSize, 2),
+		Note:  "fixe · plafond " + component.Num(cfg.MaxPositionSize, 0),
 	}
 }
 
@@ -355,6 +356,19 @@ func (v *Backtest) renderStats(res *backtest.Result, took time.Duration, width, 
 		extra += fmt.Sprintf(" · %d ordre(s) refusé(s) faute de marge", s.RejectedOrders)
 	}
 	body += "\n" + th.Muted.Render(component.Truncate(extra, width-6))
+	if s.SizeCapped > 0 {
+		body += "\n" + th.Warning.Render(component.Truncate(fmt.Sprintf(
+			"⚠ %d entrée(s) ramenée(s) au plafond max_position_size : elles ne risquaient "+
+				"plus le pourcentage demandé.", s.SizeCapped), width-6))
+	}
+	// Un refus de DIMENSIONNEMENT ne se voit pas dans les chiffres : la
+	// stratégie paraît simplement muette. Sur une paire croisée non
+	// convertible vers la devise du compte, ce sont TOUTES les entrées
+	// qui disparaissent ainsi.
+	if n, detail := risk.SizingRefusals(s.Rejections); n > 0 {
+		body += "\n" + th.Warning.Render(component.Truncate(fmt.Sprintf(
+			"⚠ %d entrée(s) non dimensionnée(s), donc refusée(s) : %s", n, detail), width-6))
+	}
 	if !s.CostsModelled {
 		body += "\n" + th.Warning.Render(
 			"⚠ L'historique n'a pas de côté ask : AUCUN coût de transaction n'est modélisé. "+

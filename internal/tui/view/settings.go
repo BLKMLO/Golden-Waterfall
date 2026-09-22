@@ -41,6 +41,9 @@ type Settings struct {
 
 	editing bool   // saisie libre en cours
 	buffer  string // texte en cours de saisie
+	// picker : sélecteur de paires ouvert par-dessus l'écran. Une liste
+	// de trente et une paires ne se modifie pas dans un champ de texte.
+	picker  *SymbolPicker
 	confirm string // chemin du réglage en attente de confirmation
 	invalid string // message de validation, s'il y en a un
 	dirty   bool
@@ -58,6 +61,9 @@ func (v *Settings) Busy() bool    { return false }
 func (v *Settings) Init() tea.Cmd { return nil }
 
 func (v *Settings) Keys() [][2]string {
+	if v.picker != nil {
+		return v.picker.Keys()
+	}
 	if v.editing {
 		return [][2]string{{"entrée", "valider"}, {"échap", "annuler"}}
 	}
@@ -80,7 +86,8 @@ const (
 	kindNumber
 	kindText
 	kindBool
-	kindList // liste de symboles, saisie libre séparée par des virgules
+	kindList    // liste libre, séparée par des virgules
+	kindSymbols // liste de PAIRES, éditée par le sélecteur
 )
 
 // settingField décrit UN réglage : comment le lire, comment l'écrire, et
@@ -203,14 +210,20 @@ func settingsFields() []settingField {
 
 		// --- Risque ---
 		{
-			Section: "Risque", Path: "risk.max_position_size", Label: "Taille maximale", Kind: kindNumber, Step: 1000, Digits: 0,
-			Help: "Plafond d'une entrée, en unités de devise de base. 10 000 = mini-lot.",
+			Section: "Risque", Path: "risk.max_position_size", Label: "Plafond de taille", Kind: kindNumber, Step: 10000, Digits: 0,
+			Help: "GARDE : aucune entrée ne dépassera cette taille, quel que soit le mode. 100 000 = lot standard.",
 			Get:  func(c *config.Config) string { return component.Num(c.Risk.MaxPositionSize, 0) },
 			Set:  func(c *config.Config, s string) error { return setFloat(&c.Risk.MaxPositionSize, s) },
 		},
 		{
+			Section: "Risque", Path: "risk.fixed_position_size", Label: "Taille fixe", Kind: kindNumber, Step: 1000, Digits: 0,
+			Help: "Taille employée quand le risque par trade vaut 0. 10 000 = mini-lot.",
+			Get:  func(c *config.Config) string { return component.Num(c.Risk.FixedPositionSize, 0) },
+			Set:  func(c *config.Config, s string) error { return setFloat(&c.Risk.FixedPositionSize, s) },
+		},
+		{
 			Section: "Risque", Path: "risk.risk_per_trade_pct", Label: "Risque par trade", Kind: kindNumber, Step: 0.25, Digits: 2,
-			Help: "% de l'équité risqué jusqu'au stop. 0 = taille fixe. Change le système : à mesurer en walk-forward.",
+			Help: "% de l'équité risqué jusqu'au stop. 0 = taille fixe. Sur une paire non convertible, TOUTES les entrées sont refusées.",
 			Get:  func(c *config.Config) string { return component.Num(c.Risk.RiskPerTradePct, 2) },
 			Set:  func(c *config.Config, s string) error { return setFloat(&c.Risk.RiskPerTradePct, s) },
 		},
@@ -271,8 +284,8 @@ func settingsFields() []settingField {
 			Set:  func(c *config.Config, s string) error { return setInt(&c.History.Concurrency, s) },
 		},
 		{
-			Section: "Historique", Path: "history.instruments", Label: "Paires suivies", Kind: kindList,
-			Help:    "Paires téléchargées et proposées partout ailleurs. Séparées par des virgules.",
+			Section: "Historique", Path: "history.instruments", Label: "Paires suivies", Kind: kindSymbols,
+			Help:    "Paires téléchargées et proposées partout ailleurs. Entrée ouvre le sélecteur.",
 			Choices: instrumentNames,
 			Get:     func(c *config.Config) string { return strings.Join(c.History.Instruments, ", ") },
 			Set: func(c *config.Config, s string) error {
@@ -386,6 +399,16 @@ func (v *Settings) Update(msg tea.Msg) (Model, tea.Cmd) {
 	if !ok {
 		return v, nil
 	}
+	if v.picker != nil {
+		done, accepted := v.picker.Update(key)
+		if done {
+			if accepted {
+				v.apply(v.current(), strings.Join(v.picker.Selected(), ", "))
+			}
+			v.picker = nil
+		}
+		return v, nil
+	}
 	if v.editing {
 		return v, v.editKey(key)
 	}
@@ -403,6 +426,10 @@ func (v *Settings) Update(msg tea.Msg) (Model, tea.Cmd) {
 			v.step(1)
 		}
 	case "enter":
+		if v.current().Kind == kindSymbols {
+			v.openPicker()
+			return v, nil
+		}
 		v.beginEdit()
 	case "d":
 		v.restoreDefault()
@@ -412,6 +439,31 @@ func (v *Settings) Update(msg tea.Msg) (Model, tea.Cmd) {
 		v.reload()
 	}
 	return v, nil
+}
+
+// openPicker ouvre le sélecteur de paires sur le réglage courant.
+func (v *Settings) openPicker() {
+	f := v.current()
+	if v.forcedBy(f.Path) != "" {
+		v.deps.Status("réglage forcé par l'environnement : non modifiable ici")
+		return
+	}
+	p := NewSymbolPicker(v.deps.Theme, "Paires suivies", splitList(f.Get(&v.draft)))
+	// L'annotation est ce qui fait la différence entre choisir et
+	// deviner : une paire non dimensionnable verra TOUTES ses entrées
+	// refusées, et rien d'autre à l'écran ne le dirait au moment du choix.
+	p.Note = v.symbolNote
+	v.picker = p
+}
+
+// symbolNote annote une paire avec ce qui la rend inutilisable en l'état.
+func (v *Settings) symbolNote(symbol string) string {
+	th := v.deps.Theme
+	if v.draft.Risk.RiskPerTradePct > 0 &&
+		!data.ConversionFor(symbol, v.draft.Backtest.AccountCurrency).Exact {
+		return th.Warning.Render("non dimensionnable en " + v.draft.Backtest.AccountCurrency)
+	}
+	return ""
 }
 
 func (v *Settings) move(delta int) {
@@ -565,6 +617,9 @@ func (v *Settings) reload() {
 
 func (v *Settings) Render(width, height int) string {
 	th := v.deps.Theme
+	if v.picker != nil {
+		return v.picker.Render(width, height)
+	}
 	var sb strings.Builder
 
 	// Les deux panneaux fixes sont dessinés AVANT d'arbitrer la hauteur du
@@ -650,11 +705,11 @@ func (v *Settings) renderHelp(width int) string {
 	f := v.current()
 	body := th.Text.Render(component.Truncate(f.Label+" — "+f.Path, component.PanelContent(width))) +
 		"\n" + th.Muted.Render(component.Truncate(f.Help, component.PanelContent(width)))
-	if f.Kind == kindEnum || f.Kind == kindList {
+	if f.Kind == kindEnum || f.Kind == kindList || f.Kind == kindSymbols {
 		if choices := f.Choices(); len(choices) > 0 {
 			label := "valeurs : " + strings.Join(choices, " ")
-			if f.Kind == kindList {
-				label = "paires connues : " + strings.Join(choices, " ")
+			if f.Kind == kindList || f.Kind == kindSymbols {
+				label = fmt.Sprintf("%d paires connues · entrée pour choisir", len(choices))
 			}
 			body += "\n" + th.Muted.Render(component.Truncate(label, component.PanelContent(width)))
 		}
@@ -670,4 +725,4 @@ func (v *Settings) renderHelp(width int) string {
 // CapturesKeys : pendant une saisie libre, l'écran prend TOUTES les
 // touches — y compris les chiffres, qui changeraient d'onglet, et « q »,
 // qui quitterait le programme au milieu d'un mot.
-func (v *Settings) CapturesKeys() bool { return v.editing }
+func (v *Settings) CapturesKeys() bool { return v.editing || v.picker != nil }
