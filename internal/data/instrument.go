@@ -27,7 +27,9 @@ type Instrument struct {
 	Quote string
 }
 
-// Scale renvoie 10^Decimals, l'échelle utilisée aussi par le format .gwb.
+// Scale renvoie 10^Decimals. Elle sert à l'ÉCRITURE : les prix sont
+// arrondis à la précision réelle de l'instrument avant d'être compressés,
+// faute de quoi le bruit de bas de mantisse ferait tripler le fichier.
 func (i Instrument) Scale() int32 { return int32(math.Pow10(i.Decimals)) }
 
 // Instruments : ajouter un actif = ajouter une ligne ici.
@@ -123,6 +125,25 @@ type Conversion struct {
 	Exact bool
 	// baseIsAccount : le compte est libellé dans la devise de BASE.
 	baseIsAccount bool
+}
+
+// SplitByConversion partage une liste de symboles entre ceux dont le P&L
+// se convertit EXACTEMENT vers la devise du compte et les autres.
+//
+// La distinction n'est pas cosmétique depuis que le dimensionnement au
+// risque est actif par défaut : sur un symbole non convertible, le budget
+// de risque n'est pas calculable et TOUTES les entrées sont refusées.
+// Mieux vaut le lire au démarrage que le déduire d'une saison sans
+// trades.
+func SplitByConversion(symbols []string, accountCurrency string) (exact, inexact []string) {
+	for _, sym := range symbols {
+		if ConversionFor(sym, accountCurrency).Exact {
+			exact = append(exact, sym)
+		} else {
+			inexact = append(inexact, sym)
+		}
+	}
+	return exact, inexact
 }
 
 // ConversionFor calcule la conversion d'un symbole vers une devise de compte.

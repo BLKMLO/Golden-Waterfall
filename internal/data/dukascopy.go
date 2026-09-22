@@ -413,7 +413,13 @@ func NeedsDownload(historyDir, symbol string, year, currentYear int) bool {
 	if year >= currentYear {
 		return true
 	}
+	// L'année peut n'exister que dans l'ANCIEN format : chercher
+	// uniquement le Parquet ferait retélécharger, année par année, un
+	// historique déjà présent sur le disque.
 	h, err := ReadHeader(FilePath(historyDir, symbol, year))
+	if err != nil {
+		h, err = ReadHeader(legacyFilePath(historyDir, symbol, year))
+	}
 	if err != nil {
 		return true
 	}

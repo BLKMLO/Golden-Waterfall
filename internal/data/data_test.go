@@ -420,3 +420,32 @@ func TestCatalogReportsPartialYears(t *testing.T) {
 		t.Fatalf("les années incomplètes doivent être signalées : %v", inv[0].Partial)
 	}
 }
+
+// TestSplitByConversionNamesWhatCannotBeSized : depuis que le
+// dimensionnement au risque est actif par défaut, un symbole non
+// convertible voit TOUTES ses entrées refusées. Savoir lesquels, et le
+// dire avant de lancer un walk-forward de deux heures, vaut mieux que le
+// découvrir dans un agrégat vide.
+func TestSplitByConversionNamesWhatCannotBeSized(t *testing.T) {
+	symbols := []string{"EURUSD", "EURGBP", "USDJPY", "AUDJPY", "XAUUSD"}
+	exact, inexact := SplitByConversion(symbols, "USD")
+
+	want := map[string]bool{"EURUSD": true, "USDJPY": true, "XAUUSD": true}
+	for _, s := range exact {
+		if !want[s] {
+			t.Errorf("%s déclaré convertible en USD à tort", s)
+		}
+		delete(want, s)
+	}
+	if len(want) != 0 {
+		t.Errorf("paires convertibles manquées : %v", want)
+	}
+	if len(inexact) != 2 {
+		t.Fatalf("non convertibles : %v, attendu EURGBP et AUDJPY", inexact)
+	}
+	// Et l'ordre d'entrée est conservé : une liste qui se réordonne toute
+	// seule est illisible dans un avertissement.
+	if inexact[0] != "EURGBP" || inexact[1] != "AUDJPY" {
+		t.Fatalf("ordre non conservé : %v", inexact)
+	}
+}
