@@ -28,7 +28,7 @@ import (
 type Paths struct {
 	// ConfigDir contient config.yaml.
 	ConfigDir string
-	// DataDir contient history/, models/, gw.db, logs/.
+	// DataDir contient history/, models/, exports/, gw.db, logs/.
 	DataDir string
 }
 
@@ -102,6 +102,11 @@ func (p Paths) ModelsDir() string { return filepath.Join(p.DataDir, "models") }
 // DatabaseFile est la base embarquée (journal des trades, états, runs).
 func (p Paths) DatabaseFile() string { return filepath.Join(p.DataDir, "gw.db") }
 
+// ExportsDir contient les CSV produits par l'interface et par la ligne de
+// commande. Un dossier à part : ce sont les seuls fichiers que
+// l'utilisateur est censé ouvrir avec un autre outil.
+func (p Paths) ExportsDir() string { return filepath.Join(p.DataDir, "exports") }
+
 // LogFile est le journal applicatif.
 func (p Paths) LogFile() string { return filepath.Join(p.DataDir, "logs", "gw.log") }
 
@@ -109,7 +114,8 @@ func (p Paths) LogFile() string { return filepath.Join(p.DataDir, "logs", "gw.lo
 // aucun autre paquet n'a le droit de créer des dossiers à la volée.
 func (p Paths) EnsureDirs() error {
 	for _, dir := range []string{
-		p.ConfigDir, p.DataDir, p.HistoryDir(), p.ModelsDir(), filepath.Dir(p.LogFile()),
+		p.ConfigDir, p.DataDir, p.HistoryDir(), p.ModelsDir(), p.ExportsDir(),
+		filepath.Dir(p.LogFile()),
 	} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err

@@ -219,11 +219,19 @@ func (v *Training) Render(width, height int) string {
 	th := v.deps.Theme
 	var sb strings.Builder
 
-	sb.WriteString(v.renderHeader(width))
+	// Chaque bloc est MESURÉ avant d'arbitrer la place du suivant.
+	// Additionner de tête bordures, titres et enroulements faisait
+	// déborder l'écran de trois à quatorze lignes selon la taille de la
+	// fenêtre — et un corps trop haut ne perd pas son bas, il pousse
+	// l'entête et la barre de raccourcis hors de l'écran.
+	header := component.FitBlock(height/2, 1, component.DefaultStatRows,
+		func(rows int) string { return v.renderHeader(width, rows) })
+	sb.WriteString(header)
 	sb.WriteString("\n")
+	rest := height - lipgloss.Height(header)
 
 	if v.tab == 1 {
-		sb.WriteString(v.renderRuns(width, height-10))
+		sb.WriteString(v.renderRuns(width, rest))
 		return sb.String()
 	}
 
@@ -238,21 +246,22 @@ func (v *Training) Render(width, height int) string {
 	case result == nil:
 		sb.WriteString(component.Panel(th, "Résultat", th.Muted.Render(
 			"Aucun walk-forward dans cette session.\n\n"+
-				"Principe : la SECONDE MOITIÉ de l'historique est découpée en blocs de test\n"+
-				"consécutifs. Chaque pli s'entraîne sur tout ce qui précède son bloc, puis est\n"+
-				"évalué dessus. Rien n'est jamais testé sur des données vues à l'entraînement.\n\n"+
-				"Un modèle de PRODUCTION est ensuite entraîné sur tout l'historique : c'est lui\n"+
-				"qui part en live, et les plis disent s'il mérite qu'on l'y envoie.\n\n"+
-				"o affiche les entraînements déjà archivés."), width))
+				"La seconde moitié de l'historique est découpée en blocs de test\n"+
+				"consécutifs. Chaque pli s'entraîne sur tout ce qui précède son bloc,\n"+
+				"puis est évalué dessus : rien n'est jamais testé sur des données\n"+
+				"vues à l'entraînement.\n\n"+
+				"r lance l'entraînement · o affiche les runs archivés"),
+			width))
 		return sb.String()
 	}
 
-	aggregate := v.renderAggregate(result, took, width)
+	aggregate := component.FitBlock(rest-minBandHeight, 1, component.DefaultStatRows,
+		func(rows int) string { return v.renderAggregate(result, took, width, rows) })
 	sb.WriteString(aggregate)
 	sb.WriteString("\n")
-	chartHeight := height - lipgloss.Height(aggregate) - lipgloss.Height(v.renderHeader(width)) - 2
-	if chartHeight < 6 {
-		chartHeight = 6
+	chartHeight := rest - lipgloss.Height(aggregate)
+	if chartHeight < minBandHeight {
+		chartHeight = minBandHeight
 	}
 	leftWidth := width / 2
 	sb.WriteString(lipgloss.JoinHorizontal(lipgloss.Top,
@@ -261,21 +270,21 @@ func (v *Training) Render(width, height int) string {
 	return sb.String()
 }
 
-func (v *Training) renderHeader(width int) string {
+func (v *Training) renderHeader(width, rows int) string {
 	th := v.deps.Theme
 	v.mu.Lock()
 	running, p, started := v.running, v.progress, v.started
 	v.mu.Unlock()
 
 	if !running {
-		body := component.StatRow(th, []component.StatCard{
+		body := component.StatRowMax(th, []component.StatCard{
 			{Label: "Stratégie", Value: v.deps.App.Config.Strategy.Name, Style: th.Accent},
 			{Label: "Unité de temps", Value: string(v.timeframe())},
 			{Label: "Plis", Value: fmt.Sprintf("%d", v.folds)},
 			{Label: "Paires", Value: fmt.Sprintf("%d", len(v.deps.App.Config.History.Instruments))},
 			{Label: "Graine", Value: fmt.Sprintf("%d", v.deps.App.Config.Training.Seed),
 				Note: "reproductible"},
-		}, width-4)
+		}, component.PanelContent(width), rows)
 		return component.Panel(th, "Paramètres", body, width)
 	}
 
@@ -293,7 +302,7 @@ func (v *Training) renderHeader(width int) string {
 		line+"\n"+th.Muted.Render(component.Truncate(detail, width-6)), width)
 }
 
-func (v *Training) renderAggregate(res *training.Result, took time.Duration, width int) string {
+func (v *Training) renderAggregate(res *training.Result, took time.Duration, width, rows int) string {
 	th := v.deps.Theme
 	s := res.Aggregate
 	pnlStyle := th.Positive
@@ -325,7 +334,7 @@ func (v *Training) renderAggregate(res *training.Result, took time.Duration, wid
 		{Label: "Coûts", Value: component.Num(s.Costs, 2)},
 		{Label: "Durée", Value: component.Duration(took)},
 	}
-	body := component.StatRow(th, cards, component.PanelContent(width))
+	body := component.StatRowMax(th, cards, component.PanelContent(width), rows)
 	note := fmt.Sprintf("run %s · %d plis · graine %d", res.RunID, len(res.Folds), res.Seed)
 	if res.FinalDir != "" {
 		note += " · modèle de production écrit"

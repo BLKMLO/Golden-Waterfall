@@ -1,6 +1,7 @@
 package component
 
 import (
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -259,5 +260,72 @@ func TestTableKeepsCellsWithTheirColumn(t *testing.T) {
 	}
 	if strings.Contains(out, "1.10512") || strings.Contains(out, "+0.42") {
 		t.Fatalf("une valeur de colonne RETIRÉE est affichée dans une autre colonne :\n%s", out)
+	}
+}
+
+// TestFitPadsAndAnnouncesTheCut : ajuster une hauteur, c'est compléter ou
+// couper — mais couper SANS LE DIRE fait disparaître de l'information
+// exactement comme un zéro affiché à la place d'une valeur inconnue.
+func TestFitPadsAndAnnouncesTheCut(t *testing.T) {
+	th := theme.Dark()
+
+	short := Fit(th, "a\nb", 5)
+	if h := lipgloss.Height(short); h != 5 {
+		t.Fatalf("complété à %d lignes au lieu de 5", h)
+	}
+
+	long := Fit(th, "a\nb\nc\nd\ne\nf\ng", 4)
+	if h := lipgloss.Height(long); h != 4 {
+		t.Fatalf("coupé à %d lignes au lieu de 4", h)
+	}
+	if !strings.Contains(long, "masquée") {
+		t.Fatalf("la coupe doit être annoncée :\n%s", long)
+	}
+	// Quatre lignes affichées dont une d'avertissement : il en reste
+	// sept moins trois, soit quatre masquées.
+	if !strings.Contains(long, "4 ligne") {
+		t.Fatalf("le nombre de lignes masquées est faux :\n%s", long)
+	}
+}
+
+// TestFitBlockShrinksUntilItFits : un bloc paramétré par un nombre de
+// lignes est RÉDUIT jusqu'à tenir, au lieu d'être deviné par une
+// soustraction de constantes — ce qui se trompait de une à cinq lignes.
+func TestFitBlockShrinksUntilItFits(t *testing.T) {
+	calls := 0
+	render := func(rows int) string {
+		calls++
+		return strings.TrimSuffix(strings.Repeat("x\n", rows+2), "\n")
+	}
+	out := FitBlock(6, 1, 10, render)
+	if h := lipgloss.Height(out); h > 6 {
+		t.Fatalf("bloc de %d lignes pour un budget de 6", h)
+	}
+	if calls > 3 {
+		t.Fatalf("%d rendus : la réduction doit viser l'excédent, pas descendre ligne à ligne", calls)
+	}
+
+	// Budget impossible : on descend au minimum et on s'arrête là. C'est
+	// Fit, en bout de chaîne, qui annoncera ce qui ne tient pas.
+	out = FitBlock(1, 4, 10, render)
+	if h := lipgloss.Height(out); h != 6 {
+		t.Fatalf("plancher non respecté : %d lignes", h)
+	}
+}
+
+// TestStatRowMaxCountsWhatItDrops : plafonner les rangées ne doit pas
+// faire disparaître des cartes en silence.
+func TestStatRowMaxCountsWhatItDrops(t *testing.T) {
+	th := theme.Dark()
+	cards := make([]StatCard, 8)
+	for i := range cards {
+		cards[i] = StatCard{Label: fmt.Sprintf("c%d", i), Value: "1"}
+	}
+	out := StatRowMax(th, cards, 30, 1)
+	if lipgloss.Height(out) > 3 {
+		t.Fatalf("une rangée devait tenir en trois lignes :\n%s", out)
+	}
+	if !strings.Contains(out, "+7") {
+		t.Fatalf("les cartes écartées doivent être comptées :\n%s", out)
 	}
 }

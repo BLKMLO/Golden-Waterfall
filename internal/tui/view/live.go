@@ -170,8 +170,6 @@ func (v *Live) Render(width, height int) string {
 	th := v.deps.Theme
 	snap := v.snapshot
 
-	account := v.renderAccount(width)
-	positions := v.renderPositions(width, positionsHeight(len(snap.Positions)))
 	// « moteur : moteur arrêté » disait deux fois le même mot, et la
 	// ligne restait vide tant que le runtime n'avait pas d'instance.
 	engine := snap.EngineStatus
@@ -180,14 +178,42 @@ func (v *Live) Render(width, height int) string {
 	}
 	status := th.Muted.Render("Moteur : " + engine)
 
-	// La bande centrale prend TOUT ce qui reste : watchlist et graphique
-	// partagent exactement la même hauteur, quelles que soient leurs
-	// tailles de contenu.
-	used := lipgloss.Height(account) + lipgloss.Height(positions) + lipgloss.Height(status) + 2
-	mid := height - used
-	if mid < 6 {
-		mid = 6
+	// --- Répartition de la hauteur ------------------------------------
+	//
+	// Un plancher posé sur la seule bande centrale faisait déborder
+	// l'écran entier : en 80×24, la taille de terminal la plus banale qui
+	// soit, le panneau Compte étalait ses six cartes sur trois rangées et
+	// mangeait onze lignes sur dix-neuf. Un corps plus haut que la
+	// fenêtre ne perd pas ses dernières lignes — il pousse l'entête et la
+	// barre de raccourcis dehors, donc « q quitter » et le bandeau de
+	// mode.
+	//
+	// On alloue donc du plus rigide au plus souple, et on MESURE au lieu
+	// de deviner : le panneau Compte essaie trois rangées de cartes, puis
+	// deux, puis une, et garde la première qui laisse de quoi dessiner le
+	// reste. Les cartes écartées restent comptées par la carte « +N ».
+	account := component.FitBlock(
+		height-minBandHeight-minPositionsHeight-lipgloss.Height(status),
+		1, component.DefaultStatRows,
+		func(rows int) string { return v.renderAccount(width, rows) })
+
+	free := height - lipgloss.Height(account) - lipgloss.Height(status)
+	// Les positions ouvertes cèdent AVANT la bande centrale : elles
+	// tiennent en quelques lignes, alors que paires suivies et graphique
+	// n'ont plus de sens sous une demi-douzaine.
+	pos := positionsHeight(len(snap.Positions))
+	if room := free - minBandHeight; pos > room {
+		pos = room
 	}
+	if pos < minPositionsHeight {
+		pos = minPositionsHeight
+	}
+	mid := free - pos
+	if mid < minPositionsHeight {
+		mid = minPositionsHeight
+	}
+	positions := v.renderPositions(width, pos)
+
 	leftWidth := width / 2
 	left := v.renderWatchlist(leftWidth, mid)
 	right := v.renderChart(width-leftWidth, mid)
@@ -203,7 +229,7 @@ func (v *Live) Render(width, height int) string {
 	return sb.String()
 }
 
-func (v *Live) renderAccount(width int) string {
+func (v *Live) renderAccount(width, rows int) string {
 	th := v.deps.Theme
 	snap := v.snapshot
 
@@ -239,7 +265,7 @@ func (v *Live) renderAccount(width int) string {
 		{Label: "Ordres", Value: component.Count(int(snap.Stats.Orders)),
 			Note: fmt.Sprintf("%d exécutés", snap.Stats.Fills)},
 	}
-	body := component.StatRow(th, cards, component.PanelContent(width))
+	body := component.StatRowMax(th, cards, component.PanelContent(width), rows)
 	if snap.AccountErr != "" {
 		body += "\n" + th.Warning.Render("⚠ "+component.Truncate(snap.AccountErr, width-8))
 	} else if !snap.HasAccount {
@@ -248,6 +274,13 @@ func (v *Live) renderAccount(width int) string {
 	}
 	return component.Panel(th, "Compte", body, width)
 }
+
+// minBandHeight : en deçà, la bande « paires suivies + graphique » ne
+// montre plus qu'un cadre. minPositionsHeight : un cadre et une ligne.
+const (
+	minBandHeight      = 7
+	minPositionsHeight = 4
+)
 
 // positionsHeight dimensionne le panneau des positions : assez pour
 // toutes les voir jusqu'à une demi-douzaine, sans dévorer l'écran.

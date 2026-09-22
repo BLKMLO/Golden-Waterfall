@@ -33,6 +33,10 @@ make dist       # les cinq binaires (Linux ×2, macOS ×2, Windows)
 Sous-commandes non interactives : `download`, `train`, `backtest PAIRE`,
 `runs`, `paths`, `config [--default]`, `version`.
 
+`backtest` accepte `--csv` : trades, courbe de valeur et métriques partent
+dans `<données>/exports/`. Même sortie que la touche `e` de l'écran
+Backtest, et que `e` sur l'onglet trades du Journal.
+
 `download` accepte `--year A` ou `--from A --to B` pour ne prendre qu'une
 partie de l'historique. Les options sont remises devant les paires avant
 d'être parsées (`partitionArgs`) : le paquet `flag` s'arrête au premier
@@ -97,6 +101,13 @@ cessait d'être vraie.
 | `Table` : colonne retirée annoncée (`+N col.`) | TUI | Prendre une information absente pour une information inexistante |
 | Badges d'état jamais supprimés | TUI | Perdre « LIVE — ARGENT RÉEL » en réduisant la fenêtre |
 | Période de téléchargement toujours affichée | TUI Données | Croire télécharger tout l'historique |
+| `component.Fit` : lignes masquées annoncées | TUI | Perdre l'entête et « q quitter » hors de l'écran, sans un mot |
+| `StatRowMax` : cartes écartées comptées (`+N`) | TUI | Confondre « pas affiché » et « sans objet » |
+| Filtre du Journal rappelé à l'écran | TUI Journal | Prendre un filtre oublié pour un programme silencieux |
+| Cellule VIDE pour une métrique non mesurée | export CSV | Laisser un tableur additionner un zéro inventé |
+| `couts_modelises` / `devise_exacte` exportés | export CSV | Additionner des chiffres qui ne sont pas additionnables |
+| Export = copie, jamais recalcul | export CSV | Un fichier qui contredit l'écran qui l'a produit |
+| `theme.Apply` force réellement le fond | TUI | Une clé de configuration qui n'agit pas |
 
 ## Conventions
 
@@ -106,6 +117,11 @@ cessait d'être vraie.
   (`risk/manager.go`, pas `risk/risk_manager.go`).
 - **Tests en miroir** : `internal/<paquet>/<fichier>_test.go`.
 - **Aucune couleur littérale hors de `internal/tui/theme`.**
+- **Un écran MESURE sa mise en page, il ne la devine pas.** Additionner de
+  tête bordures, titres et enroulements se trompe d'une à cinq lignes.
+  `component.FitBlock(budget, min, max, render)` réduit un bloc jusqu'à ce
+  qu'il tienne ; `component.Fit` coupe en DERNIER recours, en disant
+  combien de lignes manquent.
 - **Largeurs TUI** : `component.PanelContent(width)` donne la largeur
   intérieure d'un panneau ; aucune vue ne la recalcule de tête. `Table`
   reçoit cette largeur et arbitre ses colonnes (`Flex`/`Min` pour
@@ -167,6 +183,21 @@ cessait d'être vraie.
 - **Rejeu** : horodate au temps du **marché rejoué**, jamais l'heure réelle.
 - **bbolt** verrouille le fichier : une seconde instance de `gw` échoue
   proprement (« déjà ouverte par une autre instance ? »). C'est voulu.
+- **`Resample` ne calcule un plancher qu'au CHANGEMENT de bucket.** Le
+  test « bucket ≤ t < suivant » est exactement équivalent à
+  `Floor(t) == bucket` pour toutes les unités livrées — y compris sur une
+  série hors d'ordre — et coûte deux comparaisons au lieu d'une division
+  64 bits. La capacité de sortie suit la DURÉE couverte, pas
+  `len(series)/4` : cette hypothèse ne vaut que pour M1→M5 et réservait
+  8,9 Mo pour produire 1 560 bougies en H4. Témoin de non-régression :
+  `resampleNaive` dans `data/bench_test.go`.
+- **`ui.theme` vaut « auto », « dark » ou « light ».** Les couleurs sont
+  adaptatives ; ce qui change entre clair et sombre n'est pas la palette
+  mais la réponse à « le fond est-il sombre ? ». `theme.Apply` la FIXE via
+  `lipgloss.SetHasDarkBackground` ; `theme.ByName` reste pur, un
+  accesseur à effet de bord finissant toujours par surprendre. « auto »
+  ne touche à rien : la détection a raison presque partout, et forcer
+  sans raison rend l'interface illisible chez quelqu'un d'autre.
 - **`RollingStd` recentre ses accumulateurs** dès la première fenêtre
   complète. Sans ce recentrage, la variance d'une série très décalée (un
   OBV cumulé) se calcule par soustraction de deux grands nombres presque
@@ -175,7 +206,11 @@ cessait d'être vraie.
 ## Dépendances (volontairement minimales)
 
 `bubbletea`, `lipgloss`, `yaml.v3`, `bbolt`, `ulikunitz/xz` — cinq
-directes, **aucune native**. `CGO_ENABLED=0` partout : c'est la garantie
+directes en production, **aucune native**. `muesli/termenv`, déjà
+transitive via lipgloss, est devenue directe pour les SEULS tests du
+thème : forcer un profil de couleur est la seule façon de vérifier que
+`ui.theme` change vraiment ce qui sort à l'écran, et un test qui se
+contenterait de lire un drapeau ne vaudrait rien. `CGO_ENABLED=0` partout : c'est la garantie
 de la promesse « un seul binaire ».
 
 CI : format, `go vet`, tests `-race`, **govulncheck** (vulnérabilités
@@ -197,20 +232,20 @@ Une tentative de repli sur 1.24 casse la compatibilité entre les paquets
   (config, docs, tests, `.gitignore`, ce fichier).
 - Appliquer les améliorations évidentes **sans demander**.
 
-## État du projet (21 septembre 2026)
+## État du projet (22 septembre 2026)
 
-**Complet de bout en bout, ~14 500 lignes de code + ~5 900 de tests,
-20 paquets, suite verte avec `-race`.**
+**Complet de bout en bout, ~15 200 lignes de code + ~6 700 de tests,
+21 paquets, suite verte avec `-race`.**
 
 Couverture par paquet (la plus basse d'abord) : `cmd/gw` 18 %,
-`tui/view` 41 %, `data` 57 %, `config` 57 %, `core` 62 %, `tui` 68 %,
-`training` 75 %, `indicator` 77 %, `tui/component` 77 %, `broker` 78 %,
-`app` 78 %, `storage` 79 %, `feature` 79 %, `live` 80 %, `strategy` 81 %,
-`ml/gbdt` 81 %, `backtest` 85 %, `risk` 88 %, `label` 95 %. Les chiffres
-bas ne sont pas tous des trous : dans `data` et `config`, le non-couvert
-est surtout la branche réseau Dukascopy et les erreurs d'E/S ; tous les
-invariants annoncés, eux, ont un test qui échoue s'ils cessent d'être
-vrais.
+`tui/view` 43 %, `config` 57 %, `data` 59 %, `core` 62 %, `tui` 68 %,
+`training` 75 %, `indicator` 77 %, `broker` 78 %, `app` 78 %,
+`storage` 79 %, `tui/component` 79 %, `feature` 79 %, `live` 80 %,
+`strategy` 80 %, `ml/gbdt` 81 %, `backtest` 85 %, `export` 88 %,
+`risk` 88 %, `label` 95 %, `tui/theme` 100 %. Les chiffres bas ne sont pas
+tous des trous : dans `data` et `config`, le non-couvert est surtout la
+branche réseau Dukascopy et les erreurs d'E/S ; tous les invariants
+annoncés, eux, ont un test qui échoue s'ils cessent d'être vrais.
 
 Validé réellement :
 
@@ -219,11 +254,13 @@ Validé réellement :
 - backtest CLI et TUI, courbe d'équité braille, tableau des trades ;
 - passerelle `replay` en TUI : connexion, flux, agrégation H4, signaux,
   ordres, exécutions, positions, journal des trades ;
-- rendu de la TUI vérifié sous tmux à plusieurs tailles, puis CONTRÔLÉ
-  par test : chaque écran est dessiné de 60 à 200 colonnes et aucune
-  ligne ne dépasse la largeur demandée. C'est ce contrôle qui a révélé
-  les tableaux enroulés et les badges supprimés — la relecture de code
-  ne les voyait pas.
+- rendu de la TUI CONTRÔLÉ par test en LARGEUR **et en HAUTEUR** : chaque
+  écran est dessiné de 60×18 à 200×60 et ne dépasse ni la largeur ni la
+  hauteur demandées. C'est le contrôle de hauteur, ajouté en v0.3, qui a
+  révélé que cinq écrans sur six débordaient en 80×24 ;
+- `ui.theme` vérifié sur le vrai binaire sous tmux : `GW_THEME=dark` et
+  `GW_THEME=light` produisent bien deux jeux de couleurs différents
+  (SGR 179 contre 136 pour un titre).
 
 **Reste à valider chez l'utilisateur** : premier téléchargement Dukascopy
 réel (le bac à sable de dev est limité à 429).
@@ -245,21 +282,21 @@ réel (le bac à sable de dev est limité à 429).
    design, pas de code.
 3. **Exposition croisée inter-actifs** dans le walk-forward : chaque actif
    a son propre moteur, donc les plafonds s'appliquent par actif. Limite
-   documentée, pas masquée — et depuis peu, plus masquée non plus dans les
-   chiffres : l'agrégat renvoie NaN pour le drawdown et le Sharpe, qui
-   exigeraient une courbe de valeur commune inexistante. Les calculer pour
-   de bon suppose de trancher comment le capital se partage entre actifs :
-   c'est une décision de conception, pas un calcul.
-4. **`ui.theme` ne force rien.** `Light()` renvoie `Dark()` et rien
-   n'appelle `lipgloss.SetHasDarkBackground` : les couleurs sont
-   adaptatives et la détection décide seule. La clé existe, l'écran
-   Paramètres l'expose, et elle n'a aucun effet — c'est le piège que la
-   règle « une variable exportée doit agir » interdit. Soit on force
-   réellement le mode, soit on retire la clé.
-5. **Mesurer `risk_per_trade_pct`** : le dimensionnement au risque existe
+   documentée, pas masquée — et plus masquée non plus dans les chiffres :
+   l'agrégat renvoie NaN pour le drawdown et le Sharpe, qui exigeraient
+   une courbe de valeur commune inexistante. Les calculer pour de bon
+   suppose de trancher comment le capital se partage entre actifs : c'est
+   une décision de conception, pas un calcul.
+4. **Mesurer `risk_per_trade_pct`** : le dimensionnement au risque existe
    et est testé, mais il est à 0 (désactivé) par défaut. Avant de
    l'activer, un walk-forward avant/après — il déplace drawdown, profit
    factor et SQN.
+5. **60×18 ne suffit pas à l'écran Live.** C'est le plancher en deçà
+   duquel le programme refuse de dessiner, mais entre 60×18 et 80×24 le
+   corps est coupé et `Fit` annonce les lignes masquées. Deux sorties
+   possibles : relever le plancher déclaré, ou donner aux panneaux
+   explicatifs une version courte sous 70 colonnes. Ne pas le « régler »
+   en supprimant l'avertissement.
 
 ## Journal de décisions
 
@@ -305,6 +342,33 @@ réel (le bac à sable de dev est limité à 429).
   programme dont la moitié des composants obéit à une configuration et
   l'autre moitié à une autre. L'écran écrit `config.yaml` et répète que
   cela prend effet au prochain démarrage.
+- **`ui.theme` agit ou disparaît.** La clé existait, l'écran Paramètres
+  l'exposait, et elle ne faisait RIEN : `Light()` renvoyait `Dark()` et
+  personne n'appelait `SetHasDarkBackground`. C'est le piège que la règle
+  « une variable exportée doit agir » interdit. Elle agit désormais, et
+  une troisième valeur — « auto », devenue le défaut — dit explicitement
+  « laisse la détection décider » au lieu de le faire en douce sous le nom
+  « dark ».
+- **L'export CSV ne recalcule RIEN.** Un export qui refait un cumul peut
+  présenter un chiffre différent de l'écran qui l'a produit. Il recopie,
+  champ pour champ, ce que le programme a déjà mesuré — et emporte avec
+  les chiffres les drapeaux qui disent s'ils sont additionnables.
+- **Convention CSV francophone, assumée** : séparateur `;`, décimale `,`,
+  marque d'ordre des octets. C'est ce qu'un tableur francophone ouvre d'un
+  double-clic. Le prix est que pandas demande `sep=";", decimal=","` ;
+  c'est écrit dans `docs/donnees.md` et en tête du paquet. Le choix
+  inverse aurait transformé « 1.25 » en date chez l'utilisateur du
+  projet.
+- **Ce qui est exporté est ce qui est AFFICHÉ**, filtre compris. Un
+  fichier dont le contenu ne correspond pas à l'écran qui l'a produit est
+  un piège, et la ligne d'état dit combien de trades sont partis.
+- **Un écran mesure sa mise en page.** `FitBlock` rend un panneau une
+  seconde fois plutôt que de faire confiance à une soustraction de
+  constantes. Mesuré : ≈ 0,6 ms par écran, un millième de la cadence de
+  rafraîchissement. C'est dérisoire devant un affichage faux.
+- **L'aide est une fenêtre MODALE et défilable.** Tant qu'elle couvre
+  l'écran, les touches lui appartiennent — sinon les flèches faisaient
+  défiler un tableau invisible derrière elle.
 - **README abrégé, détail dans `docs/`.** Les tableaux de garanties et de
   pannes vivent dans `docs/depannage.md` : un lecteur qui découvre le
   projet n'en a pas besoin avant d'avoir lancé le binaire.
@@ -379,13 +443,39 @@ réel (le bac à sable de dev est limité à 429).
   writes` — une panique du runtime, irrattrapable, au milieu d'un
   entraînement ou d'une séance. Corrigé par un `sync.Mutex`. Test de
   régression : `TestConcurrentEvaluateIsSafe`.
+- **Cinq écrans sur six débordaient la HAUTEUR du terminal.** En 80×24 —
+  la taille la plus banale qui soit — l'écran Live rendait 29 lignes. Un
+  corps trop haut ne perd pas ses dernières lignes : il pousse l'entête et
+  la barre de raccourcis hors de l'écran, donc « LIVE — ARGENT RÉEL » et
+  « q quitter ». L'audit de v0.2 n'avait contrôlé que la LARGEUR ; le
+  contrôle de hauteur, écrit en premier, a montré le défaut d'un coup.
+  Trois causes : `Fill` complétait sans jamais couper, chaque écran
+  devinait la hauteur de ses panneaux par une soustraction de constantes,
+  et un panneau de statistiques s'étalait sur trois rangées sans se
+  demander s'il restait de la place. Corrigé par `Fit`, `FitBlock` et
+  `StatRowMax`. Test de régression :
+  `TestScreensNeverExceedTheTerminal`.
+- **L'aide occupait cinquante-neuf lignes quelle que soit la fenêtre** :
+  sur vingt-quatre lignes, les trois quarts partaient dehors — dont la
+  ligne qui explique comment la refermer. Une aide illisible dont rien ne
+  dit qu'elle continue est pire que pas d'aide.
+- **`Resample` réservait 8,9 Mo pour produire 1 560 bougies.** La capacité
+  initiale valait `len(series)/4`, hypothèse vraie pour M1→M5 seulement.
+  La mise à zéro de cette tranche pesait un tiers du temps, le plancher
+  recalculé par bougie un autre tiers. Mesuré : M1→H4 de 21,0 à 9,0 ms,
+  M1→D1 de 26,4 à 8,5 ms. Ce n'est pas un bug d'exactitude — d'où le
+  témoin naïf ajouté en même temps que l'optimisation.
+- **`ui.theme` ne forçait rien** (voir plus haut) : une clé exposée dans
+  l'écran Paramètres, réglable, documentée, et sans le moindre effet.
 - **Recentrage de `RollingStd` jamais établi sur une série courte** : bug
   introduit pendant l'optimisation et attrapé par la comparaison avec
   l'implémentation naïve. C'est précisément à ça qu'elle sert.
 
 ### Performance (mesurée, pas supposée)
 
-Bancs d'essai : `internal/indicator/bench_test.go`, `internal/ml/gbdt/bench_test.go`.
+Bancs d'essai : `internal/indicator/bench_test.go`,
+`internal/ml/gbdt/bench_test.go`, `internal/label/bench_test.go`,
+`internal/data/bench_test.go`, `internal/tui/bench_test.go`.
 
 | Changement | Avant | Après |
 |---|---|---|
@@ -396,8 +486,15 @@ Bancs d'essai : `internal/indicator/bench_test.go`, `internal/ml/gbdt/bench_test
 | Entraînement GBDT, allocations | 226 000 | 44 000 |
 | Entraînement GBDT, temps (4 cœurs) | 4,41 s | 3,84 s |
 | Walk-forward de bout en bout, échantillon CPU | 1 980 ms | 1 130 ms |
+| `Resample` M1→H4, 372 k bougies | 21,0 ms / 8,93 Mo | **9,0 ms / 0,16 Mo** |
+| `Resample` M1→M5, 372 k bougies | 23,5 ms / 8,93 Mo | 16,1 ms / 7,14 Mo |
+| `Resample` M1→D1, 372 k bougies | 26,4 ms / 8,93 Mo | **8,5 ms / 0,03 Mo** |
 
 Ce qui a produit ces gains : file monotone pour les extrema glissants,
+capacité de sortie du ré-échantillonnage calée sur la durée couverte et
+non sur le nombre de bougies d'entrée, plancher de bucket recalculé au
+changement de bucket seulement, parcours par indice pour ne plus copier
+une `core.Bar` de cent octets par tour,
 recyclage des histogrammes du GBDT, partition en place (plus d'allocation
 par coupure), seuil en deçà duquel la parallélisation des histogrammes
 coûte plus qu'elle ne rapporte, pré-dimensionnement du chargement de

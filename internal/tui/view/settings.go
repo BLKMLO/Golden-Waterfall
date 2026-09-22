@@ -7,12 +7,14 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/BLKMLO/Golden-Waterfall/internal/broker"
 	"github.com/BLKMLO/Golden-Waterfall/internal/config"
 	"github.com/BLKMLO/Golden-Waterfall/internal/data"
 	"github.com/BLKMLO/Golden-Waterfall/internal/strategy"
 	"github.com/BLKMLO/Golden-Waterfall/internal/tui/component"
+	"github.com/BLKMLO/Golden-Waterfall/internal/tui/theme"
 )
 
 // Settings est l'écran de configuration.
@@ -325,8 +327,8 @@ func settingsFields() []settingField {
 		// --- Interface ---
 		{
 			Section: "Interface", Path: "ui.theme", Label: "Thème", Kind: kindEnum,
-			Help:    "Les couleurs s'adaptent déjà à la luminosité du terminal ; ce réglage tranche quand la détection se trompe.",
-			Choices: func() []string { return []string{"dark", "light"} },
+			Help:    "auto : la luminosité du fond est détectée. dark / light la forcent, quand la détection se trompe.",
+			Choices: func() []string { return theme.Names },
 			Get:     func(c *config.Config) string { return c.UI.Theme },
 			Set:     func(c *config.Config, s string) error { c.UI.Theme = s; return nil },
 		},
@@ -565,7 +567,14 @@ func (v *Settings) Render(width, height int) string {
 	th := v.deps.Theme
 	var sb strings.Builder
 
-	sb.WriteString(v.renderHeader(width))
+	// Les deux panneaux fixes sont dessinés AVANT d'arbitrer la hauteur du
+	// tableau : leur taille dépend de la largeur (l'avertissement et
+	// l'aide s'enroulent), et la deviner par une constante faisait
+	// déborder l'écran de cinq lignes à toutes les tailles.
+	header := v.renderHeader(width)
+	help := v.renderHelp(width)
+
+	sb.WriteString(header)
 	sb.WriteString("\n")
 
 	cols := []component.Column{
@@ -602,14 +611,16 @@ func (v *Settings) Render(width, height int) string {
 		}
 	}
 
-	tableHeight := height - 12
-	if tableHeight < 5 {
-		tableHeight = 5
-	}
-	sb.WriteString(component.Panel(th, "Réglages",
-		component.Table(th, cols, rows, cursorRow, tableHeight, component.PanelContent(width)), width))
+	// Le panneau du tableau prend EXACTEMENT ce que les deux autres
+	// laissent : deux bordures, la ligne d'entête et la ligne « N lignes »
+	// du tableau, le reste en réglages.
+	budget := height - lipgloss.Height(header) - lipgloss.Height(help)
+	sb.WriteString(component.FitBlock(budget, 2, budget, func(n int) string {
+		return component.Panel(th, "Réglages",
+			component.Table(th, cols, rows, cursorRow, n, component.PanelContent(width)), width)
+	}))
 	sb.WriteString("\n")
-	sb.WriteString(v.renderHelp(width))
+	sb.WriteString(help)
 	return sb.String()
 }
 

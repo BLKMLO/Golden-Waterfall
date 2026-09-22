@@ -78,15 +78,64 @@ func PanelH(th theme.Theme, title, content string, width, height int) string {
 	return Panel(th, title, strings.Join(lines, "\n"), width)
 }
 
-// Fill complète un bloc pour qu'il occupe exactement `height` lignes.
-// Sert à ancrer le pied de page en bas de l'écran plutôt que de le laisser
-// flotter juste sous le contenu.
-func Fill(content string, height int) string {
-	n := lipgloss.Height(content)
-	if n >= height {
-		return content
+// Fit ajuste un bloc à la hauteur EXACTE qui lui est accordée.
+//
+// Trop court : on complète par des lignes vides, pour ancrer le pied de
+// page en bas plutôt que de le laisser flotter sous le contenu.
+//
+// Trop long : on coupe, et on le DIT. Un corps d'écran plus haut que la
+// fenêtre ne perd pas ses dernières lignes — il fait défiler l'entête et
+// la barre de raccourcis hors de l'écran. L'utilisateur perd « q
+// quitter » et le bandeau de mode sans qu'aucun signe ne l'avertisse,
+// exactement le défaut que « +N col. » corrige pour les tableaux.
+func Fit(th theme.Theme, content string, height int) string {
+	if height <= 0 {
+		return ""
 	}
-	return content + strings.Repeat("\n", height-n)
+	lines := strings.Split(content, "\n")
+	if len(lines) <= height {
+		return content + strings.Repeat("\n", height-len(lines))
+	}
+	// La ligne d'avertissement prend la place d'une ligne de contenu : on
+	// la compte dans ce qui est masqué.
+	hidden := len(lines) - height + 1
+	out := make([]string, 0, height)
+	out = append(out, lines[:height-1]...)
+	out = append(out, th.Warning.Render(
+		fmt.Sprintf("… %d ligne(s) masquée(s) — agrandir la fenêtre", hidden)))
+	return strings.Join(out, "\n")
+}
+
+// FitBlock rend un bloc paramétré par un NOMBRE DE LIGNES, en réduisant
+// ce nombre jusqu'à ce que le résultat tienne dans le budget.
+//
+// Chaque écran refaisait de tête l'addition « bordures + ligne d'entête +
+// enroulements » pour deviner la hauteur d'un panneau, et se trompait de
+// une à cinq lignes : l'écran entier débordait alors la fenêtre, ce qui
+// ne coupe pas le bas du contenu mais expulse l'entête et la barre de
+// raccourcis. Mesurer coûte un rendu de plus, deux fois par seconde —
+// gratuit devant un affichage faux.
+//
+// La réduction se fait de l'excédent EXACT, donc en une ou deux passes,
+// jamais ligne à ligne.
+func FitBlock(budget, minRows, maxRows int, render func(rows int) string) string {
+	if maxRows < minRows {
+		maxRows = minRows
+	}
+	rows := maxRows
+	block := render(rows)
+	for rows > minRows {
+		excess := lipgloss.Height(block) - budget
+		if excess <= 0 {
+			break
+		}
+		rows -= excess
+		if rows < minRows {
+			rows = minRows
+		}
+		block = render(rows)
+	}
+	return block
 }
 
 // StatCard : une statistique nommée, avec sa valeur mise en évidence.
@@ -105,16 +154,31 @@ type StatCard struct {
 // carte sans objet. Sur un écran étroit, le panneau Compte perdait ainsi
 // « Bougies » et « Ordres » sans que rien ne le dise.
 //
-// Au-delà de maxStatRows rangées, le reste est résumé par une carte
-// « +N » : à ce stade, empiler encore mangerait tout l'écran.
+// Au-delà de maxRows rangées, le reste est résumé par une carte « +N » :
+// à ce stade, empiler encore mangerait tout l'écran.
 func StatRow(th theme.Theme, cards []StatCard, width int) string {
+	return StatRowMax(th, cards, width, DefaultStatRows)
+}
+
+// DefaultStatRows : le plafond quand la hauteur n'est pas un problème.
+const DefaultStatRows = 3
+
+// StatRowMax est StatRow avec un plafond de rangées CHOISI par l'appelant.
+//
+// Une rangée de cartes coûte trois lignes. Sur un terminal de 24 lignes,
+// trois rangées confisquent la moitié de l'écran au seul panneau Compte
+// et repoussent tout le reste dehors. L'écran qui connaît sa hauteur est
+// le seul à pouvoir arbitrer — et les cartes écartées restent annoncées
+// par « +N », jamais supprimées en silence.
+func StatRowMax(th theme.Theme, cards []StatCard, width, maxRows int) string {
 	if len(cards) == 0 || width < 12 {
 		return ""
 	}
-	const (
-		minCard     = 14
-		maxStatRows = 3
-	)
+	if maxRows < 1 {
+		maxRows = 1
+	}
+	const minCard = 14
+	maxStatRows := maxRows
 	perRow := width / minCard
 	if perRow < 1 {
 		perRow = 1

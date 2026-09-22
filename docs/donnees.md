@@ -88,8 +88,35 @@ Jamais à côté du binaire : celui-ci est unique et déplaçable.
 une installation portable (clé USB) ou un conteneur. `gw paths` affiche ce
 qui est réellement utilisé.
 
-Le dossier de données contient `history/`, `models/`, `gw.db` (journal des
-trades, interrupteurs, repères d'équité) et `logs/`.
+Le dossier de données contient `history/`, `models/`, `exports/`, `gw.db`
+(journal des trades, interrupteurs, repères d'équité) et `logs/`.
+
+## Exports CSV
+
+Trois endroits produisent des CSV dans `exports/` :
+
+| Où | Touche | Ce qui sort |
+|---|---|---|
+| Écran **5 Journal**, onglet trades | `e` | Le journal des trades, **filtre compris** |
+| Écran **3 Backtest** | `e` | Trades, courbe de valeur, métriques (trois fichiers) |
+| `gw backtest PAIRE --csv` | — | Les mêmes trois fichiers |
+
+**Convention de fichier, assumée** : séparateur `;`, décimale `,`, UTF-8
+précédé d'une marque d'ordre des octets. C'est ce qu'un tableur francophone
+ouvre d'un double-clic, sans boîte de dialogue d'import et sans transformer
+`1.25` en date. Pour pandas : `read_csv(path, sep=";", decimal=",")`.
+
+Deux règles y survivent telles quelles :
+
+- une métrique **non mesurée** donne une cellule **vide**, jamais un zéro —
+  un zéro serait additionné par le tableur ;
+- les drapeaux d'honnêteté (`couts_modelises`, `devise_exacte`) voyagent
+  **avec** les chiffres : sortis de l'écran qui les affiche, ils sont la
+  seule chose qui dise si ces chiffres peuvent être additionnés.
+
+L'export **ne recalcule rien**. Il recopie ce que le programme a déjà
+mesuré, champ pour champ : un fichier qui refait un cumul pourrait afficher
+un chiffre différent de l'écran qui l'a produit.
 
 ## Ordres de grandeur
 

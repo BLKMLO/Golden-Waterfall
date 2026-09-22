@@ -167,3 +167,82 @@ func TestFooterAlwaysOffersTheWayOut(t *testing.T) {
 		}
 	}
 }
+
+// screenSizes : de la plus petite taille acceptée aux grandes fenêtres.
+var screenSizes = [][2]int{
+	{60, 18}, {70, 20}, {80, 24}, {100, 30}, {120, 40}, {160, 44}, {200, 60},
+}
+
+// TestScreensNeverExceedTheTerminal est le pendant VERTICAL du contrôle de
+// largeur.
+//
+// Un corps d'écran plus haut que la fenêtre ne perd pas ses dernières
+// lignes : il fait défiler l'entête et la barre de raccourcis hors de
+// l'écran. L'utilisateur perd alors le bandeau de mode (« LIVE — ARGENT
+// RÉEL ») et « q quitter » — sans qu'aucun signe ne l'avertisse. Cinq
+// écrans sur six débordaient ainsi en 80×24, la taille de terminal la
+// plus banale qui soit.
+func TestScreensNeverExceedTheTerminal(t *testing.T) {
+	m := New(newTestApp(t))
+	for _, size := range screenSizes {
+		width, height := size[0], size[1]
+		model, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+		m = model.(*Model)
+		for i := range m.views {
+			m.active = i
+			out := m.View()
+			if h := lipgloss.Height(out); h > height {
+				t.Errorf("écran %s en %d×%d : %d lignes rendues",
+					m.views[i].Title(), width, height, h)
+			}
+			for n, line := range strings.Split(out, "\n") {
+				if w := lipgloss.Width(line); w > width {
+					t.Errorf("écran %s en %d×%d : ligne %d large de %d",
+						m.views[i].Title(), width, height, n, w)
+				}
+			}
+		}
+	}
+}
+
+// TestHelpFitsAndScrolls : l'aide occupait cinquante-neuf lignes quelle
+// que soit la fenêtre. Sur vingt-quatre lignes, les trois quarts — dont la
+// ligne qui explique comment la refermer — partaient hors de l'écran.
+func TestHelpFitsAndScrolls(t *testing.T) {
+	m := New(newTestApp(t))
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	m = model.(*Model)
+
+	for _, size := range screenSizes {
+		width, height := size[0], size[1]
+		model, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+		m = model.(*Model)
+		if h := lipgloss.Height(m.View()); h > height {
+			t.Errorf("aide en %d×%d : %d lignes rendues", width, height, h)
+		}
+	}
+
+	// Le défilement atteint bien la fin : la dernière section de l'aide
+	// (les chemins) doit devenir visible.
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
+	for i := 0; i < 20; i++ {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+		m = updated.(*Model)
+	}
+	if !strings.Contains(m.View(), "Données") {
+		t.Fatalf("le défilement n'atteint pas le bas de l'aide :\n%s", m.View())
+	}
+
+	// L'aide est MODALE : une flèche lui appartient, elle ne doit pas
+	// atteindre l'écran de dessous.
+	before := m.active
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if updated.(*Model).active != before {
+		t.Fatal("tab a changé d'écran alors que l'aide couvrait l'écran")
+	}
+	// « échap » la referme.
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if updated.(*Model).showHelp {
+		t.Fatal("« échap » doit refermer l'aide")
+	}
+}

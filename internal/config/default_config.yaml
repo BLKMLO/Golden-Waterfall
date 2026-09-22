@@ -163,7 +163,10 @@ training:
   seed: 42
 
 ui:
-  theme: "dark"
+  # "auto" : la luminosité du fond est DÉTECTÉE par le terminal, ce qui est
+  # juste presque partout. "dark" et "light" la FORCENT — utile quand la
+  # détection se trompe (multiplexeur, session distante, terminal ancien).
+  theme: "auto"
   refresh_millis: 500
   chart_timeframe: "H1"
 

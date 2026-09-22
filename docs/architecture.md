@@ -68,11 +68,13 @@ Golden-Waterfall/
 │   │
 │   ├── storage/store.go        Base embarquée : trades, états, repères.
 │   │
+│   ├── export/csv.go           Sortie CSV. Ne calcule RIEN : recopie.
+│   │
 │   └── tui/
 │       ├── tui.go              Routeur : onglets, entête, pied, aide.
 │       ├── theme/              TOUTES les couleurs et styles du programme.
 │       ├── component/          Formats, tableaux, panneaux, graphiques.
-│       └── view/               Les cinq écrans.
+│       └── view/               Les six écrans.
 │
 └── docs/
 ```
@@ -137,6 +139,14 @@ Détaillée dans le README. En pratique, dans le code :
 `Info.Simulated`, `SymbolState.Notice` existent tous pour que l'écran
 puisse dire ce qu'il ne sait pas.
 
+La règle vaut aussi pour la **place** : ce qui ne tient pas est ANNONCÉ,
+jamais escamoté. Une colonne retirée d'un tableau se dit (`+N col.`), une
+carte de statistique écartée se compte (`+N`), et un contenu plus haut que
+la fenêtre est coupé avec le nombre de lignes masquées
+(`component.Fit`). Sans ce dernier garde-fou, un écran trop haut ne perd
+pas son bas : il pousse l'entête et la barre de raccourcis hors de
+l'écran, donc le bandeau de mode et « q quitter ».
+
 ## Le modèle d'exécution du backtest
 
 Chaque hypothèse est EXPLICITE (c'est la raison d'avoir écrit le moteur
@@ -185,6 +195,11 @@ cotation, `CurrencyExact` vaut `false`, et l'interface le dit.
   Un commentaire dit POURQUOI, pas QUOI.
 - **Tests en miroir** : `internal/<paquet>/<fichier>_test.go`.
 - **Aucune couleur littérale hors de `tui/theme`.**
+- **Un écran MESURE sa mise en page, il ne la devine pas.** Les hauteurs
+  de panneau se composent de bordures, de titres et d'enroulements dont
+  l'addition de tête se trompe d'une à cinq lignes.
+  `component.FitBlock(budget, min, max, render)` réduit un bloc jusqu'à ce
+  qu'il tienne ; un rendu de plus coûte moins cher qu'un affichage faux.
 - **Aucun `panic` sur une donnée** : une donnée fautive est une erreur
   remontée. Les seuls `panic` tolérés signalent une incohérence de code
   (un nom de colonne absent de sa propre liste).
@@ -198,6 +213,7 @@ cotation, `CurrencyExact` vaut `false`, et l'interface le dit.
 | Nouvel instrument | une ligne dans `data.Instruments` | Le reste de `data` |
 | Nouvel indicateur | `indicator/` (causal, NaN pendant la chauffe) | `feature` si la définition d'un modèle publié change |
 | Nouvel écran | `tui/view/<nom>.go` + une ligne dans `tui.New()` | Les autres écrans |
+| Nouveau format de sortie | `export/<format>.go` | Ce qui a produit les chiffres |
 | Nouveau réglage | `config.Config` + `Validate()` + `default_config.yaml` | Toute lecture directe d'env ailleurs — interdite |
 
 ⚠ **Ne jamais modifier une définition de modèle publiée** (features,

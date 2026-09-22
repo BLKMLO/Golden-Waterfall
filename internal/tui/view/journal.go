@@ -3,11 +3,14 @@ package view
 import (
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/BLKMLO/Golden-Waterfall/internal/core"
+	"github.com/BLKMLO/Golden-Waterfall/internal/export"
 	"github.com/BLKMLO/Golden-Waterfall/internal/tui/component"
 )
 
@@ -31,6 +34,13 @@ type Journal struct {
 	trades      []core.Trade
 	tradesErr   string
 	tradesFresh bool
+
+	// Filtre texte. Le niveau minimum ne suffit pas : sur un millier de
+	// lignes, retrouver ce qu'une paire a fait demande de chercher son
+	// nom, pas de baisser un seuil de gravité.
+	filter    string
+	searching bool
+	buffer    string
 }
 
 // NewJournal construit l'écran de journal.
@@ -44,20 +54,74 @@ func (v *Journal) Init() tea.Cmd { return nil }
 
 func (v *Journal) Keys() [][2]string {
 	return [][2]string{
+		{"/", "filtrer"},
 		{"f", "niveau minimum"},
 		{"s", "suivre / figer"},
 		{"t", "journal / trades"},
+		{"e", "exporter les trades"},
 		{"↑↓ pgup pgdn", "défiler"},
 	}
+}
+
+// CapturesKeys : pendant une saisie de filtre, l'écran prend TOUTES les
+// touches. Sans cela, taper « 3 » dans le filtre changerait d'onglet et
+// « q » quitterait le programme au milieu d'un mot.
+func (v *Journal) CapturesKeys() bool { return v.searching }
+
+// searchKey traite la saisie du filtre.
+func (v *Journal) searchKey(msg tea.KeyMsg) {
+	switch msg.Type {
+	case tea.KeyEnter:
+		v.filter, v.searching, v.offset = strings.TrimSpace(v.buffer), false, 0
+		if v.filter == "" {
+			v.deps.Status("filtre effacé")
+		} else {
+			v.deps.Status("filtre : " + v.filter)
+		}
+	case tea.KeyEsc:
+		v.searching, v.buffer = false, ""
+		v.deps.Status("recherche abandonnée — le filtre précédent reste actif")
+	case tea.KeyBackspace:
+		if r := []rune(v.buffer); len(r) > 0 {
+			v.buffer = string(r[:len(r)-1])
+		}
+	case tea.KeyRunes, tea.KeySpace:
+		v.buffer += string(msg.Runes)
+		if msg.Type == tea.KeySpace {
+			v.buffer += " "
+		}
+	}
+}
+
+// matches : la comparaison est insensible à la casse, parce que personne
+// ne tape « EURUSD » en majuscules pour chercher une ligne de journal.
+func (v *Journal) matches(text string) bool {
+	if v.filter == "" {
+		return true
+	}
+	return strings.Contains(strings.ToLower(text), strings.ToLower(v.filter))
 }
 
 func (v *Journal) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if v.searching {
+			v.searchKey(msg)
+			return v, nil
+		}
 		if msg.String() == "t" {
 			v.tradesFresh = false // forcer une relecture au changement d'onglet
 		}
 		switch msg.String() {
+		case "/":
+			v.searching, v.buffer = true, v.filter
+		case "esc":
+			if v.filter != "" {
+				v.filter, v.offset = "", 0
+				v.deps.Status("filtre effacé")
+			}
+		case "e":
+			v.exportTrades()
 		case "f":
 			// Cycle debug → info → warn → error → debug.
 			switch v.level {
@@ -124,6 +188,47 @@ func (v *Journal) Update(msg tea.Msg) (Model, tea.Cmd) {
 	return v, nil
 }
 
+// exportTrades écrit le journal des trades en CSV.
+//
+// Ce qui est exporté est ce qui est AFFICHÉ, filtre compris : un fichier
+// dont le contenu ne correspond pas à l'écran qui l'a produit est un
+// piège, et la ligne d'état dit combien de trades sont partis.
+func (v *Journal) exportTrades() {
+	if !v.tradesFresh {
+		v.reloadTrades()
+	}
+	if v.tradesErr != "" {
+		v.deps.Status("export impossible : " + v.tradesErr)
+		return
+	}
+	trades := v.visibleTrades()
+	if len(trades) == 0 {
+		v.deps.Status("aucun trade à exporter")
+		return
+	}
+	path := filepath.Join(v.deps.App.Config.Paths.ExportsDir(),
+		export.Name("trades", time.Now()))
+	if err := export.Trades(path, trades); err != nil {
+		v.deps.Status("export impossible : " + err.Error())
+		return
+	}
+	v.deps.Status(fmt.Sprintf("%d trades exportés → %s", len(trades), path))
+}
+
+// visibleTrades applique le filtre texte au journal des trades.
+func (v *Journal) visibleTrades() []core.Trade {
+	if v.filter == "" {
+		return v.trades
+	}
+	out := make([]core.Trade, 0, len(v.trades))
+	for _, t := range v.trades {
+		if v.matches(t.Symbol + " " + string(t.Side) + " " + t.ExitReason + " " + t.Strategy) {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 func (v *Journal) reloadTrades() {
 	trades, err := v.deps.App.Store.Trades(maxJournalTrades)
 	if err != nil {
@@ -150,7 +255,7 @@ func (v *Journal) renderLog(width, height int) string {
 
 	filtered := make([]core.LogLine, 0, len(lines))
 	for _, l := range lines {
-		if l.Level >= v.level {
+		if l.Level >= v.level && v.matches(l.String()) {
 			filtered = append(filtered, l)
 		}
 	}
@@ -191,7 +296,13 @@ func (v *Journal) renderLog(width, height int) string {
 		sb.WriteString(style.Render(component.Truncate(l.String(), width-6)) + "\n")
 	}
 	if len(filtered) == 0 {
-		sb.WriteString(th.Muted.Render("(aucune ligne à ce niveau)"))
+		// Dire POURQUOI la liste est vide : un filtre oublié ressemble
+		// trait pour trait à un programme silencieux.
+		reason := "(aucune ligne à ce niveau)"
+		if v.filter != "" {
+			reason = fmt.Sprintf("(aucune ligne à ce niveau contenant « %s » — échap efface le filtre)", v.filter)
+		}
+		sb.WriteString(th.Muted.Render(reason))
 	}
 
 	mode := "figé"
@@ -200,8 +311,25 @@ func (v *Journal) renderLog(width, height int) string {
 	}
 	title := fmt.Sprintf("Journal applicatif · niveau ≥ %s · %s · %d/%d lignes",
 		v.level.String(), mode, len(filtered), len(lines))
-	body := sb.String() + "\n" + th.Muted.Render("fichier : "+v.deps.App.Config.Paths.LogFile())
+	body := sb.String() + "\n" + v.filterLine(width) +
+		th.Muted.Render("fichier : "+v.deps.App.Config.Paths.LogFile())
 	return component.Panel(th, title, body, width)
+}
+
+// filterLine affiche la saisie en cours ou le filtre actif. Elle renvoie
+// une chaîne VIDE quand il n'y a rien à dire, pour ne pas voler une ligne
+// à l'affichage.
+func (v *Journal) filterLine(width int) string {
+	th := v.deps.Theme
+	switch {
+	case v.searching:
+		return th.Accent.Render("/"+component.Truncate(v.buffer, width-8)+"▏") +
+			th.Muted.Render("  entrée valide · échap annule") + "\n"
+	case v.filter != "":
+		return th.Info.Render("filtre : "+component.Truncate(v.filter, width-24)) +
+			th.Muted.Render("  échap efface") + "\n"
+	}
+	return ""
 }
 
 func (v *Journal) renderTrades(width, height int) string {
@@ -212,7 +340,7 @@ func (v *Journal) renderTrades(width, height int) string {
 	if v.tradesErr != "" {
 		return component.Panel(th, "Trades", th.Negative.Render("journal illisible : "+v.tradesErr), width)
 	}
-	trades := v.trades
+	trades := v.visibleTrades()
 
 	cols := []component.Column{
 		{Title: "#", Width: 6, Right: true, Priority: 4},
@@ -244,10 +372,14 @@ func (v *Journal) renderTrades(width, height int) string {
 		})
 	}
 	body := component.Table(th, cols, rows, -1, height-5, component.PanelContent(width))
-	body += "\n" + th.Muted.Render(
+	body += "\n" + v.filterLine(width) + th.Muted.Render(
 		"Ce journal ne contient QUE des exécutions rapportées par une passerelle. "+
-			"Aucun trade simulé n'y figure.")
-	return component.Panel(th, fmt.Sprintf("Trades exécutés (%d)", len(trades)), body, width)
+			"Aucun trade simulé n'y figure. · e exporte en CSV")
+	title := fmt.Sprintf("Trades exécutés (%d)", len(trades))
+	if v.filter != "" {
+		title = fmt.Sprintf("Trades exécutés (%d sur %d)", len(trades), len(v.trades))
+	}
+	return component.Panel(th, title, body, width)
 }
 
 func maxInt(a, b int) int {

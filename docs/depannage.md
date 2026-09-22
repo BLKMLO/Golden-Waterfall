@@ -50,5 +50,5 @@ affiche les emplacements exacts de la machine.
 | Windows | `%AppData%\GoldenWaterfall` | `%LocalAppData%\GoldenWaterfall` |
 
 Le dossier de données contient l'historique, les modèles entraînés, la base
-des trades et les journaux. `GW_CONFIG_DIR` et `GW_DATA_DIR` forcent ces
+des trades, les exports CSV (`exports/`) et les journaux. `GW_CONFIG_DIR` et `GW_DATA_DIR` forcent ces
 emplacements, pour une installation portable ou un conteneur.
