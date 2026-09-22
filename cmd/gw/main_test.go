@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/BLKMLO/Golden-Waterfall/internal/config"
 )
 
 // isolate redirige configuration et données vers un dossier jetable : une
@@ -162,5 +164,90 @@ func TestHelpMentionsPartialDownload(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("l'aide ne documente pas %s", want)
 		}
+	}
+}
+
+// TestHelpMentionsTheNewCommands : une sous-commande absente de l'aide
+// n'existe pas pour l'utilisateur.
+func TestHelpMentionsTheNewCommands(t *testing.T) {
+	isolate(t)
+	out, err := capture(t, func() error { return run([]string{"help"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"migrate", "import", "risk-per-trade", "PAIRE…"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("l'aide ne mentionne pas « %s » :\n%s", want, out)
+		}
+	}
+}
+
+// TestTrainArgsSeparatePairsFromFlags : `gw train EURUSD --folds 3` doit
+// marcher dans les deux ordres. Le paquet flag s'arrête au premier
+// argument positionnel et ignorerait les options placées après.
+func TestTrainArgsSeparatePairsFromFlags(t *testing.T) {
+	takes := map[string]bool{"folds": true, "tf": true, "risk-per-trade": true}
+	flags, pairs := partitionArgs(
+		[]string{"EURUSD", "--folds", "3", "GBPUSD", "--risk-per-trade", "0"}, takes)
+	if strings.Join(flags, " ") != "--folds 3 --risk-per-trade 0" {
+		t.Fatalf("options : %v", flags)
+	}
+	if strings.Join(pairs, " ") != "EURUSD GBPUSD" {
+		t.Fatalf("paires : %v", pairs)
+	}
+}
+
+// TestSizingLabelSaysWhichRegime : annoncer « taille 100 000 » quand le
+// dimensionnement au risque est actif annoncerait une quantité que le
+// moteur ne prendra presque jamais.
+func TestSizingLabelSaysWhichRegime(t *testing.T) {
+	fixed := sizingLabel(config.RiskConfig{MaxPositionSize: 100000, FixedPositionSize: 10000})
+	if !strings.Contains(fixed, "fixe") || !strings.Contains(fixed, "10000") {
+		t.Fatalf("taille fixe : %q", fixed)
+	}
+	sized := sizingLabel(config.RiskConfig{
+		MaxPositionSize: 100000, FixedPositionSize: 10000, RiskPerTradePct: 0.5})
+	if !strings.Contains(sized, "0.50 %") || !strings.Contains(sized, "plafond") {
+		t.Fatalf("risque par trade : %q", sized)
+	}
+	if strings.Contains(sized, "fixe") {
+		t.Fatalf("le régime au risque ne doit pas parler de taille fixe : %q", sized)
+	}
+}
+
+// TestMigrateSaysWhenThereIsNothingToDo : un silence, sur une commande
+// qui touche des gigaoctets, se lit comme un échec.
+func TestMigrateSaysWhenThereIsNothingToDo(t *testing.T) {
+	isolate(t)
+	out, err := capture(t, func() error { return run([]string{"migrate"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "rien à convertir") {
+		t.Fatalf("sortie : %q", out)
+	}
+}
+
+// TestImportRequiresASymbol : sans paire, on ne saurait pas où ranger le
+// fichier — et le deviner d'après son nom serait le meilleur moyen de
+// verser de l'EURUSD dans du GBPUSD.
+func TestImportRequiresASymbol(t *testing.T) {
+	isolate(t)
+	if _, err := capture(t, func() error { return run([]string{"import", "x.parquet"}) }); err == nil {
+		t.Fatal("un import sans --symbol doit être refusé")
+	}
+}
+
+// TestBacktestAcceptsFlagsAfterThePair : « gw backtest EURUSD --csv » est
+// l'usage que le README documente. Le paquet flag s'arrêtant au premier
+// argument positionnel, l'option était ignorée et la commande refusée.
+func TestBacktestAcceptsFlagsAfterThePair(t *testing.T) {
+	isolate(t)
+	_, err := capture(t, func() error { return runBacktest([]string{"EURUSD", "--csv"}) })
+	if err == nil {
+		t.Skip("aucun modèle : la commande devait échouer plus loin")
+	}
+	if strings.Contains(err.Error(), "usage :") {
+		t.Fatalf("l'option placée après la paire est ignorée : %v", err)
 	}
 }
