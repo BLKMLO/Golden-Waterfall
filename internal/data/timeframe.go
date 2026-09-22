@@ -96,6 +96,54 @@ func (t Timeframe) Floor(ts time.Time) time.Time {
 	}
 }
 
+// nextBucket renvoie le DÉBUT du bucket suivant.
+//
+// Séparé de Floor parce que c'est lui qui permet à Resample de ne pas
+// recalculer un plancher par bougie : tant que l'horodatage reste dans
+// [bucket, nextBucket[, il appartient au bucket courant.
+func (t Timeframe) nextBucket(bucket time.Time) time.Time {
+	switch t {
+	case D1:
+		return bucket.AddDate(0, 0, 1)
+	case W1:
+		return bucket.AddDate(0, 0, 7)
+	case MN1:
+		return bucket.AddDate(0, 1, 0)
+	default:
+		d := t.Duration()
+		if d <= 0 {
+			// Unité sans durée : chaque bougie devient son propre bucket,
+			// ce que l'intervalle vide obtient naturellement.
+			return bucket
+		}
+		return bucket.Add(d)
+	}
+}
+
+// estimateBuckets borne la capacité initiale de la tranche de sortie.
+//
+// Elle n'est PAS déduite de len(series)/4 : cette hypothèse ne vaut que
+// pour M1→M5. En M1→H4 elle réservait 93 000 bougies pour en produire
+// 1 560, soit 8,9 Mo mis à zéro à chaque appel — l'essentiel du coût
+// mesuré. La durée couverte par la série est la seule estimation qui
+// suive l'unité demandée ; elle reste plafonnée par le nombre de bougies
+// d'entrée, une agrégation ne pouvant jamais en produire davantage.
+func estimateBuckets(series core.Series, tf Timeframe) int {
+	est := len(series)
+	d := tf.Duration()
+	if d <= 0 || len(series) < 2 {
+		return est
+	}
+	span := series[len(series)-1].Time.Sub(series[0].Time)
+	if span <= 0 {
+		return 1
+	}
+	if n := int(span/d) + 2; n < est {
+		return n
+	}
+	return est
+}
+
 // Resample agrège une série M1 vers une unité supérieure.
 //
 // OHLC : premier / max / min / dernier ; volume : somme. Les côtés bid et
@@ -103,13 +151,19 @@ func (t Timeframe) Floor(ts time.Time) time.Time {
 // conversion. Les buckets sans aucune bougie M1 (week-ends, fériés) ne
 // sont PAS créés : un marché fermé n'a pas de bougie, et en fabriquer une
 // plate inventerait des données.
+//
+// Le plancher n'est calculé qu'au CHANGEMENT de bucket, pas à chaque
+// bougie : le test d'appartenance bucket ≤ t < suivant est exactement
+// équivalent à Floor(t) == bucket pour toutes les unités livrées, y
+// compris hors d'ordre, et coûte deux comparaisons au lieu d'une division
+// sur 64 bits.
 func Resample(series core.Series, tf Timeframe) core.Series {
 	if tf == M1 || len(series) == 0 {
 		return series
 	}
-	out := make(core.Series, 0, len(series)/4+1)
+	out := make(core.Series, 0, estimateBuckets(series, tf))
 	var cur core.Bar
-	var bucket time.Time
+	var bucket, next time.Time
 	open := false
 
 	flush := func() {
@@ -118,13 +172,16 @@ func Resample(series core.Series, tf Timeframe) core.Series {
 			open = false
 		}
 	}
-	for _, bar := range series {
-		b := tf.Floor(bar.Time)
-		if !open || !b.Equal(bucket) {
+	// Parcours par indice : une core.Bar fait une centaine d'octets, et la
+	// copier par valeur à chaque tour pesait 15 % du temps mesuré.
+	for i := range series {
+		bar := &series[i]
+		if !open || bar.Time.Before(bucket) || !bar.Time.Before(next) {
 			flush()
-			bucket = b
+			bucket = tf.Floor(bar.Time)
+			next = tf.nextBucket(bucket)
 			cur = core.Bar{
-				Time:     b,
+				Time:     bucket,
 				BidOpen:  bar.BidOpen,
 				BidHigh:  bar.BidHigh,
 				BidLow:   bar.BidLow,
