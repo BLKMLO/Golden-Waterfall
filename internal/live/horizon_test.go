@@ -74,6 +74,12 @@ func newHorizonEngine(t *testing.T, entry time.Time) (*Engine, *recordingGateway
 	gw := &recordingGateway{pos: []core.Position{{Symbol: "TEST", Quantity: 1000, AveragePrice: 100}}}
 	logger := slog.New(slog.DiscardHandler)
 	cfg := config.Default()
+	// Taille FIXE : ces tests portent sur les barrières et le compte
+	// rendu d'exécution, pas sur le dimensionnement. Sur un symbole
+	// fictif, le risque par trade refuserait toute entrée faute de
+	// conversion de devise — ce qui est le comportement voulu, mais pas
+	// ce qui est mesuré ici.
+	cfg.Risk.RiskPerTradePct = 0
 	// muteStrategy n'est JAMAIS prête : si une sortie part quand même,
 	// c'est bien que l'horizon ne dépend pas du modèle.
 	eng := NewEngine(gw, muteStrategy{}, risk.New(cfg.Risk, cfg.Backtest.AccountCurrency, logger),
@@ -173,6 +179,12 @@ func newEntryEngine(t *testing.T, supports bool) (*Engine, *recordingGateway) {
 	rec := &recordingGateway{}
 	logger := slog.New(slog.DiscardHandler)
 	cfg := config.Default()
+	// Taille FIXE : ces tests portent sur les barrières et le compte
+	// rendu d'exécution, pas sur le dimensionnement. Sur un symbole
+	// fictif, le risque par trade refuserait toute entrée faute de
+	// conversion de devise — ce qui est le comportement voulu, mais pas
+	// ce qui est mesuré ici.
+	cfg.Risk.RiskPerTradePct = 0
 	eng := NewEngine(bracketGateway{recordingGateway: rec, supports: supports},
 		entryStrategy{}, risk.New(cfg.Risk, cfg.Backtest.AccountCurrency, logger), store, core.NewBus(), logger, data.H4)
 	eng.SetEnabled(true)

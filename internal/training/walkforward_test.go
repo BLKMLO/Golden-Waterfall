@@ -62,7 +62,9 @@ func testSetup(t *testing.T) (config.Config, *Runner) {
 	if err := cfg.Paths.EnsureDirs(); err != nil {
 		t.Fatal(err)
 	}
+	cfg.Risk.RiskPerTradePct = 0
 	cfg.Risk.MaxPositionSize = 1000
+	cfg.Risk.FixedPositionSize = 1000
 	cfg.Risk.MaxOpenPositions = 2
 	cfg.Backtest.InitialCapital = 10000
 	rm := risk.New(cfg.Risk, cfg.Backtest.AccountCurrency, slog.New(slog.DiscardHandler))

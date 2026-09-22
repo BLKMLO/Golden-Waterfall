@@ -3,6 +3,7 @@ package risk
 import (
 	"log/slog"
 	"math"
+	"strings"
 	"sync"
 	"testing"
 
@@ -18,8 +19,9 @@ func newManager(cfg config.RiskConfig) *Manager {
 
 func baseConfig() config.RiskConfig {
 	return config.RiskConfig{
-		MaxPositionSize: 2, MaxPositionsPerSymbol: 1,
-		MaxOpenPositions: 3, MaxDailyLossPct: 2,
+		MaxPositionSize: 1_000_000, FixedPositionSize: 2,
+		MaxPositionsPerSymbol: 1,
+		MaxOpenPositions:      3, MaxDailyLossPct: 2,
 	}
 }
 
@@ -241,6 +243,10 @@ func TestRiskSizingKeepsTheLossConstant(t *testing.T) {
 	}
 }
 
+// TestRiskSizingIsCappedByMaxPositionSize : le plafond s'applique ET se
+// COMPTE. Un plafond trop bas neutralise le dimensionnement au risque à
+// chaque entrée ; sans compteur, l'écran continuerait d'annoncer « 0,5 %
+// par trade » en toute bonne foi.
 func TestRiskSizingIsCappedByMaxPositionSize(t *testing.T) {
 	cfg := sizingConfig(50) // budget énorme, exprès
 	cfg.MaxPositionSize = 10000
@@ -252,15 +258,48 @@ func TestRiskSizingIsCappedByMaxPositionSize(t *testing.T) {
 	if got := d.Order.Quantity; got != 10000 {
 		t.Fatalf("%g unités : max_position_size reste un PLAFOND", got)
 	}
+	if !d.Capped {
+		t.Fatal("une taille ramenée au plafond doit être signalée")
+	}
+	if m.Capped() != 1 {
+		t.Fatalf("%d entrée(s) plafonnée(s) comptée(s), 1 attendue", m.Capped())
+	}
 }
 
+// TestRiskSizingDisabledKeepsFixedSize : à 0, la taille vaut
+// `fixed_position_size` — et surtout PAS `max_position_size`, qui n'est
+// qu'une garde. Confondre les deux obligeait à relever le plafond pour
+// activer le risque par trade, ce qui décuplait la taille fixe dès qu'on
+// le désactivait.
 func TestRiskSizingDisabledKeepsFixedSize(t *testing.T) {
 	cfg := sizingConfig(0) // désactivé
-	cfg.MaxPositionSize = 7777
+	cfg.FixedPositionSize = 7777
+	cfg.MaxPositionSize = 1_000_000
 	m := newManager(cfg)
 	d := m.Evaluate(entry("EURUSD", 1.1000, 1.0900), nil, &core.AccountState{Equity: 10000})
 	if !d.Accepted() || d.Order.Quantity != 7777 {
-		t.Fatalf("à 0, la taille doit rester exactement max_position_size : %+v", d)
+		t.Fatalf("à 0, la taille doit valoir fixed_position_size : %+v", d)
+	}
+	if d.Capped || m.Capped() != 0 {
+		t.Fatal("rien n'a été plafonné ici")
+	}
+}
+
+// TestFixedSizeIsStillCappedAndCounted : le plafond est une garde, pas un
+// réglage du seul mode « risque ». Une taille fixe qui le dépasse est
+// rabotée — et comptée, sinon le programme n'enverrait pas la taille
+// demandée sans que rien ne le dise.
+func TestFixedSizeIsStillCappedAndCounted(t *testing.T) {
+	cfg := sizingConfig(0)
+	cfg.FixedPositionSize = 50000
+	cfg.MaxPositionSize = 20000
+	m := newManager(cfg)
+	d := m.Evaluate(entry("EURUSD", 1.1000, 1.0900), nil, &core.AccountState{Equity: 10000})
+	if !d.Accepted() || d.Order.Quantity != 20000 {
+		t.Fatalf("la taille fixe doit être rabotée au plafond : %+v", d)
+	}
+	if !d.Capped || m.Capped() != 1 {
+		t.Fatalf("le rabotage doit être compté : capped=%v total=%d", d.Capped, m.Capped())
 	}
 }
 
@@ -313,5 +352,34 @@ func TestRiskSizingConvertsWhenAccountIsTheBaseCurrency(t *testing.T) {
 	// quantité = plancher(100 / 0,009090…) = 11 000.
 	if got := d.Order.Quantity; got != 11000 {
 		t.Fatalf("%g unités, 11 000 attendues (distance convertie en euros)", got)
+	}
+}
+
+// TestSizingRefusalsSeparatesWhatItShould : un refus de DIMENSIONNEMENT
+// ne se voit pas dans les chiffres — la stratégie paraît simplement
+// muette. Le distinguer d'un refus normal (signal neutre, plafond de
+// positions) est ce qui permet à l'écran de le dire.
+func TestSizingRefusalsSeparatesWhatItShould(t *testing.T) {
+	counts := map[string]int{
+		ReasonHold:            900, // normal, et de loin le plus fréquent
+		ReasonSymbolFull:      12,  // normal
+		ReasonUnconvertible:   40,
+		ReasonNoEquity:        7,
+		ReasonRiskBudgetSmall: 1,
+	}
+	n, detail := SizingRefusals(counts)
+	if n != 48 {
+		t.Fatalf("%d refus de dimensionnement, 48 attendus (40 + 7 + 1)", n)
+	}
+	if strings.Contains(detail, ReasonHold) || strings.Contains(detail, ReasonSymbolFull) {
+		t.Fatalf("un refus normal s'est glissé dans le détail : %s", detail)
+	}
+	// Du plus fréquent au moins fréquent : c'est l'ordre qui fait agir.
+	if !strings.HasPrefix(detail, "40 × ") || !strings.HasSuffix(detail, "1 × "+ReasonRiskBudgetSmall) {
+		t.Fatalf("détail mal ordonné : %s", detail)
+	}
+
+	if n, detail := SizingRefusals(map[string]int{ReasonHold: 5}); n != 0 || detail != "" {
+		t.Fatalf("sans refus de dimensionnement, il n'y a rien à dire : %d %q", n, detail)
 	}
 }

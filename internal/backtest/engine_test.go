@@ -41,7 +41,14 @@ func testConfig() config.Config {
 	cfg := config.Default()
 	cfg.Backtest.InitialCapital = 10000
 	cfg.Backtest.Leverage = 30
-	cfg.Risk.MaxPositionSize = 1000
+	// Taille FIXE pour ces tests : ils mesurent l'exécution (barrières,
+	// gaps, coûts), pas le dimensionnement. Une taille qui varierait avec
+	// l'équité rendrait chaque P&L attendu illisible.
+	cfg.Risk.RiskPerTradePct = 0
+	// Le plafond est volontairement hors de portée : ces tests mesurent
+	// l'exécution, pas la garde. Un test qui veut la garde la rabaisse.
+	cfg.Risk.MaxPositionSize = 1_000_000
+	cfg.Risk.FixedPositionSize = 1000
 	cfg.Risk.MaxPositionsPerSymbol = 1
 	cfg.Risk.MaxOpenPositions = 1
 	cfg.Costs.CommissionPerUnit = 0
@@ -101,7 +108,7 @@ func TestTakeProfitFillsAtExactBarrier(t *testing.T) {
 	if tr.ExitReason != "tp" {
 		t.Fatalf("motif de sortie %q", tr.ExitReason)
 	}
-	if want := (102 - 100) * cfg.Risk.MaxPositionSize; math.Abs(tr.PnL-want) > 1e-9 {
+	if want := (102 - 100) * cfg.Risk.FixedPositionSize; math.Abs(tr.PnL-want) > 1e-9 {
 		t.Fatalf("P&L %v, attendu %v (aucun coût sans côté ask)", tr.PnL, want)
 	}
 }
@@ -154,7 +161,7 @@ func TestShortBarriersAreMirrored(t *testing.T) {
 	if tr.ExitPrice != 98 || tr.ExitReason != "tp" {
 		t.Fatalf("sortie short incorrecte : %+v", tr)
 	}
-	if want := (100 - 98) * cfg.Risk.MaxPositionSize; math.Abs(tr.PnL-want) > 1e-9 {
+	if want := (100 - 98) * cfg.Risk.FixedPositionSize; math.Abs(tr.PnL-want) > 1e-9 {
 		t.Fatalf("un short gagne quand le prix BAISSE : P&L %v, attendu %v", tr.PnL, want)
 	}
 }
@@ -261,12 +268,12 @@ func TestSpreadIsMeasuredAndCharged(t *testing.T) {
 		t.Fatal("les coûts doivent être déclarés modélisés")
 	}
 	// Un aller-retour paie EXACTEMENT un spread par unité.
-	wantCost := spread * cfg.Risk.MaxPositionSize
+	wantCost := spread * cfg.Risk.FixedPositionSize
 	if math.Abs(res.Trades[0].Cost-wantCost) > 1e-9 {
 		t.Fatalf("coût de l'aller-retour %v, attendu un spread complet %v",
 			res.Trades[0].Cost, wantCost)
 	}
-	grossPnL := (102 - 100) * cfg.Risk.MaxPositionSize
+	grossPnL := (102 - 100) * cfg.Risk.FixedPositionSize
 	if math.Abs(res.Trades[0].PnL-(grossPnL-wantCost)) > 1e-9 {
 		t.Fatalf("le P&L doit être NET de coûts : %v", res.Trades[0].PnL)
 	}
@@ -305,7 +312,7 @@ func TestCommissionIsChargedPerSide(t *testing.T) {
 	res, _ := newEngine(cfg).Run(context.Background(), Request{
 		Symbol: "TEST", Series: series, From: 0, Strategy: strat, Timeframe: data.H1,
 	})
-	want := 2 * 0.001 * cfg.Risk.MaxPositionSize // deux côtés
+	want := 2 * 0.001 * cfg.Risk.FixedPositionSize // deux côtés
 	if math.Abs(res.Trades[0].Cost-want) > 1e-9 {
 		t.Fatalf("commission de l'aller-retour %v, attendue %v", res.Trades[0].Cost, want)
 	}
@@ -315,7 +322,7 @@ func TestInsufficientMarginIsCountedNotSilent(t *testing.T) {
 	cfg := testConfig()
 	cfg.Backtest.InitialCapital = 100
 	cfg.Backtest.Leverage = 1 // compte cash strict
-	cfg.Risk.MaxPositionSize = 1000
+	cfg.Risk.FixedPositionSize = 1000
 	series := makeBars([][4]float64{
 		{100, 100, 100, 100},
 		{100, 100, 100, 100},
@@ -449,7 +456,7 @@ func TestCurrencyConversionUnblocksQuoteHeavyPairs(t *testing.T) {
 	cfg.Backtest.AccountCurrency = "USD"
 	cfg.Backtest.InitialCapital = 10000
 	cfg.Backtest.Leverage = 30
-	cfg.Risk.MaxPositionSize = 10000
+	cfg.Risk.FixedPositionSize = 10000
 
 	// USDJPY autour de 150 : 10 000 unités = 1,5 M JPY de notionnel, mais
 	// seulement 10 000 USD — soit 333 USD de marge à 30×.
@@ -490,7 +497,7 @@ func TestCurrencyConversionUnblocksQuoteHeavyPairs(t *testing.T) {
 func TestQuoteCurrencyAccountNeedsNoConversion(t *testing.T) {
 	cfg := testConfig()
 	cfg.Backtest.AccountCurrency = "USD"
-	cfg.Risk.MaxPositionSize = 10000
+	cfg.Risk.FixedPositionSize = 10000
 	series := makeBars([][4]float64{
 		{1.10, 1.10, 1.10, 1.10},
 		{1.10, 1.10, 1.10, 1.10},
@@ -728,6 +735,85 @@ func TestRiskSizingFlowsThroughTheEngine(t *testing.T) {
 	// quantité = plancher(budget / distance) = plancher(100 / 2) = 50.
 	if got := res.Trades[0].Quantity; got != 50 {
 		t.Fatalf("%g unités, 50 attendues (budget 100 USD, stop à 2)", got)
+	}
+}
+
+// TestRiskSizingInvertsTheDependencyOnVolatility : c'est LA raison d'être
+// du réglage, et elle se mesure.
+//
+// À taille fixe, la perte au stop suit la volatilité : elle double quand
+// l'ATR double, sans que personne ne l'ait décidé. Au risque par trade,
+// c'est la TAILLE qui bouge et la perte qui reste constante. Les deux
+// régimes sont ici mis face au même marché, une fois calme et une fois
+// agité.
+func TestRiskSizingInvertsTheDependencyOnVolatility(t *testing.T) {
+	// Même scénario, deux distances au stop : 2 puis 8.
+	run := func(riskPct, stop float64) core.Trade {
+		t.Helper()
+		cfg := testConfig()
+		cfg.Backtest.InitialCapital = 10000
+		cfg.Risk.MaxPositionSize = 1_000_000
+		cfg.Risk.FixedPositionSize = 100
+		cfg.Risk.RiskPerTradePct = riskPct
+		series := makeBars([][4]float64{
+			{100, 100, 100, 100},
+			{100, 100, 100, 100},
+			{100, 100, stop - 1, stop - 1}, // le stop est touché
+			{100, 100, 100, 100},
+		}, 0)
+		strat := &scriptedStrategy{script: map[int]core.Signal{
+			1: {Action: core.EnterLong, Price: 100, TakeProfit: 200, StopLoss: stop},
+		}}
+		res, err := newEngine(cfg).Run(context.Background(), Request{
+			Symbol: "EURUSD", Series: series, From: 0, Strategy: strat, Timeframe: data.H1,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(res.Trades) != 1 {
+			t.Fatalf("%d trade(s) (risque %g, stop %g)", len(res.Trades), riskPct, stop)
+		}
+		return res.Trades[0]
+	}
+
+	// --- Taille fixe : la perte suit la volatilité ---
+	calme := run(0, 98) // distance 2
+	agite := run(0, 92) // distance 8, quatre fois plus
+	if calme.Quantity != agite.Quantity {
+		t.Fatalf("à taille fixe, la quantité ne doit pas bouger : %g puis %g",
+			calme.Quantity, agite.Quantity)
+	}
+	ratio := math.Abs(agite.PnL) / math.Abs(calme.PnL)
+	if math.Abs(ratio-4) > 0.01 {
+		t.Fatalf("à taille fixe, la perte devrait quadrupler avec la distance : ×%.2f", ratio)
+	}
+
+	// --- Risque par trade : la taille bouge, la perte reste ---
+	calme = run(1, 98)
+	agite = run(1, 92)
+	if calme.Quantity <= agite.Quantity {
+		t.Fatalf("au risque par trade, la taille doit BAISSER quand la distance grandit : %g puis %g",
+			calme.Quantity, agite.Quantity)
+	}
+	// La perte visée est le BUDGET (1 % de 10 000 = 100). Elle ne peut
+	// pas le dépasser — la quantité est un plancher — et elle s'en écarte
+	// au plus d'une unité de distance, ce qui est le prix d'une quantité
+	// entière. C'est l'invariant exact, pas « la perte est constante » :
+	// l'annoncer plus fort que la mesure serait le défaut qu'on traque.
+	const budget = 100.0
+	for name, tr := range map[string]core.Trade{"calme": calme, "agité": agite} {
+		loss := math.Abs(tr.PnL)
+		if loss > budget+1e-9 {
+			t.Fatalf("%s : perte %.2f au-dessus du budget %.0f", name, loss, budget)
+		}
+		distance := 100 - 98.0
+		if name == "agité" {
+			distance = 100 - 92.0
+		}
+		if budget-loss >= distance {
+			t.Fatalf("%s : perte %.2f, budget %.0f — l'écart dépasse une unité de stop (%.0f)",
+				name, loss, budget, distance)
+		}
 	}
 }
 

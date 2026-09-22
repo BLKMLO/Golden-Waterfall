@@ -170,6 +170,7 @@ func Stats(path string, s backtest.Stats) error {
 	add("drawdown_max_pct", num(s.MaxDrawdownPct, 4))
 	add("sharpe", num(s.Sharpe, 4))
 	add("ordres_refuses", strconv.Itoa(s.RejectedOrders))
+	add("tailles_plafonnees", strconv.Itoa(s.SizeCapped))
 	for _, k := range sortedKeys(s.Rejections) {
 		add("refus_"+k, strconv.Itoa(s.Rejections[k]))
 	}

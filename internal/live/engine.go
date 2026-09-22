@@ -268,7 +268,11 @@ func (e *Engine) onBarClosed(ctx context.Context, symbol string, bar core.Bar) {
 		acc.DayStartEquity = e.dayStartEquity(acc.Equity)
 		account = &acc
 	} else {
-		e.logger.Warn("équité indisponible : la limite de perte journalière n'est pas appliquée",
+		// Conséquence directe du dimensionnement au risque : sans équité,
+		// il n'y a pas de budget, donc pas d'entrée du tout — et pas
+		// seulement une limite journalière en moins.
+		e.logger.Warn("équité indisponible : limite de perte journalière non appliquée, "+
+			"et AUCUNE entrée si le dimensionnement au risque est actif",
 			"symbole", symbol, "erreur", err)
 	}
 
