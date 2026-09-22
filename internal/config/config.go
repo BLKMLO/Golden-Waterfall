@@ -138,7 +138,9 @@ type TrainingConfig struct {
 
 // UIConfig : réglages d'affichage de la TUI.
 type UIConfig struct {
-	// Theme vaut "dark" ou "light".
+	// Theme vaut "auto", "dark" ou "light". "auto" laisse le terminal
+	// décider ; les deux autres FORCENT l'interprétation, ce qui sert
+	// quand la détection se trompe (multiplexeur, terminal distant).
 	Theme string `yaml:"theme"`
 	// RefreshMillis : cadence de rafraîchissement des vues temps réel.
 	RefreshMillis int `yaml:"refresh_millis"`
@@ -178,7 +180,7 @@ func Default() Config {
 			},
 		},
 		Training: TrainingConfig{Folds: 5, Timeframe: "H4", Workers: 0, Seed: 42},
-		UI:       UIConfig{Theme: "dark", RefreshMillis: 500, ChartTimeframe: "H1"},
+		UI:       UIConfig{Theme: "auto", RefreshMillis: 500, ChartTimeframe: "H1"},
 		Logging:  LoggingConfig{Level: "info", BufferSize: 1000},
 	}
 }
@@ -388,8 +390,8 @@ func (c Config) Validate() error {
 	if c.UI.RefreshMillis < 50 {
 		add("ui.refresh_millis doit être >= 50 (en deçà, la TUI brûle du CPU pour rien)")
 	}
-	if c.UI.Theme != "dark" && c.UI.Theme != "light" {
-		add("ui.theme doit valoir \"dark\" ou \"light\" (reçu %q)", c.UI.Theme)
+	if c.UI.Theme != "auto" && c.UI.Theme != "dark" && c.UI.Theme != "light" {
+		add("ui.theme doit valoir \"auto\", \"dark\" ou \"light\" (reçu %q)", c.UI.Theme)
 	}
 	if _, err := core.ParseLevel(c.Logging.Level); err != nil {
 		add("logging.level : %v", err)

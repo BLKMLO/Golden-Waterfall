@@ -87,18 +87,59 @@ func Dark() Theme {
 	return build("dark", p)
 }
 
-// Light renvoie le même thème : les couleurs étant adaptatives, la
-// distinction se fait à l'exécution selon le terminal. Le réglage
-// ui.theme force l'interprétation quand la détection se trompe.
+// Light renvoie la MÊME palette : chaque couleur porte déjà ses deux
+// versions (AdaptiveColor). Ce qui change entre clair et sombre n'est pas
+// la palette, c'est la réponse à « le fond est-il sombre ? » — et c'est
+// Apply qui la fixe.
 func Light() Theme {
 	t := Dark()
-	t.Name = "light"
+	t.Name = NameLight
 	return t
 }
 
-// ByName renvoie un thème par son nom.
+// Les trois valeurs acceptées par ui.theme.
+const (
+	// NameAuto laisse lipgloss interroger le terminal.
+	NameAuto = "auto"
+	// NameDark et NameLight forcent la réponse, détection ignorée.
+	NameDark  = "dark"
+	NameLight = "light"
+)
+
+// Names liste les valeurs acceptées, dans l'ordre où l'écran Paramètres
+// les fait défiler.
+var Names = []string{NameAuto, NameDark, NameLight}
+
+// Apply fixe la luminosité de fond que lipgloss utilisera pour résoudre
+// les AdaptiveColor, et renvoie ce qui a été forcé.
+//
+// Sans cet appel, ui.theme ne faisait RIEN : ByName renvoyait deux thèmes
+// aux couleurs identiques et la détection décidait seule. Une clé de
+// configuration qui n'agit pas est exactement le piège que la règle « une
+// variable exportée doit agir » interdit — on la fait agir, ou on la
+// retire.
+//
+// « auto » ne touche à rien : c'est la détection qui a raison dans la
+// grande majorité des cas, et forcer sans raison est le meilleur moyen de
+// rendre l'interface illisible chez quelqu'un d'autre.
+func Apply(name string) (forced bool, dark bool) {
+	switch name {
+	case NameDark:
+		lipgloss.SetHasDarkBackground(true)
+		return true, true
+	case NameLight:
+		lipgloss.SetHasDarkBackground(false)
+		return true, false
+	default:
+		return false, lipgloss.HasDarkBackground()
+	}
+}
+
+// ByName renvoie un thème par son nom. Elle ne force RIEN : c'est Apply
+// qui a cet effet de bord, et un accesseur qui modifie un état global
+// finit toujours par surprendre.
 func ByName(name string) Theme {
-	if name == "light" {
+	if name == NameLight {
 		return Light()
 	}
 	return Dark()
