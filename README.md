@@ -102,9 +102,9 @@ simulé** : toute la chaîne fonctionne, aucun argent n'est engagé.
 |---|---|
 | **1 Live** | Compte, paires suivies, positions, graphique en chandeliers |
 | **2 Données** | Inventaire de l'historique local, téléchargement complet ou par période |
-| **3 Backtest** | Rejeu d'une paire, courbe d'équité, liste des trades |
+| **3 Backtest** | Rejeu d'une paire, courbe d'équité, liste des trades, export CSV (`e`) |
 | **4 Entraînement** | Walk-forward, plis, agrégat out-of-sample, runs archivés |
-| **5 Journal** | Journal applicatif et journal des trades exécutés |
+| **5 Journal** | Journal applicatif et journal des trades exécutés, filtre texte (`/`), export CSV (`e`) |
 | **6 Paramètres** | Compte et courtier, risque, stratégie, historique, interface |
 
 `tab` change d'écran, `?` affiche l'aide complète, `q` quitte — et refuse tant
@@ -133,6 +133,7 @@ gw download EURUSD --year 2019     # une paire, une année
 gw download EURUSD --from 2019 --to 2021
 gw train                           # walk-forward + modèle de production
 gw backtest EURUSD                 # rejeu d'une paire
+gw backtest EURUSD --csv           # + trades, équité et métriques en CSV
 gw runs                            # entraînements archivés
 gw paths                           # où vivent configuration et données
 gw config --default                # le modèle de configuration commenté
