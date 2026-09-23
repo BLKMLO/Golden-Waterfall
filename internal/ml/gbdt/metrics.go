@@ -42,6 +42,27 @@ func logLossFromScores(scores, y []float64) float64 {
 	return sum / float64(len(scores))
 }
 
+// weightedLogLoss : perte logistique pondérée, sur des scores. Sans poids,
+// c'est exactement logLossFromScores — même chemin, mêmes bits.
+func weightedLogLoss(scores []float64, d *Dataset) float64 {
+	if d.W == nil {
+		return logLossFromScores(scores, d.Y)
+	}
+	if len(scores) == 0 {
+		return math.NaN()
+	}
+	var sum, total float64
+	for i, z := range scores {
+		l := softplus(z)
+		if d.Y[i] == 1 {
+			l = softplus(-z)
+		}
+		sum += d.W[i] * l
+		total += d.W[i]
+	}
+	return sum / total
+}
+
 func softplus(z float64) float64 {
 	if z > 30 {
 		return z

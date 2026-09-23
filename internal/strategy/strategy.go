@@ -1,9 +1,21 @@
-// Package strategy définit le CONTRAT que toute stratégie doit respecter,
-// le registre qui les rend interchangeables, et les implémentations.
+// Package strategy définit le CONTRAT que toute stratégie doit respecter
+// et le registre qui les rend interchangeables. Il ne contient AUCUNE
+// implémentation : chaque génération de moteur vit dans son propre
+// sous-paquet (`strategy/colibri`, puis le suivant), et le catalogue
+// `internal/strategies` est le seul endroit qui les nomme.
 //
 // Le moteur ne connaît que ce contrat : il pousse des bougies CLOSES et
 // récupère des signaux. Une stratégie ne parle jamais au broker ni à la
 // base — c'est ce qui la rend testable et remplaçable.
+//
+// # Ce qu'une stratégie DÉCLARE au lieu que les moteurs le supposent
+//
+// Backtest, walk-forward, live, TUI et CLI ne connaissent d'une stratégie
+// que sa Description : le contexte de chauffe qu'elle exige
+// (ContextBars) et l'horizon au-delà duquel ses positions doivent être
+// liquidées (MaxHold). Aucun d'eux n'importe le paquet d'une stratégie ;
+// remplacer Colibri par la génération suivante ne touche donc ni aux
+// moteurs ni à l'interface.
 //
 // # Pourquoi des bougies et non des ticks
 //
@@ -22,6 +34,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/BLKMLO/Golden-Waterfall/internal/core"
 	"github.com/BLKMLO/Golden-Waterfall/internal/data"
@@ -36,7 +49,22 @@ type Description struct {
 	// seuils). Source unique de vérité — l'interface ne les code jamais
 	// en dur, elle les lit ici.
 	Definition map[string]any
+	// ContextBars : bougies d'historique à fournir AVANT la première
+	// bougie décidée, pour que les indicateurs (récursifs compris) soient
+	// stabilisés. Le walk-forward, le backtest, la TUI et le live le lisent
+	// ici ; aucun ne le code en dur.
+	ContextBars int
+	// MaxHold : barrière VERTICALE — durée au-delà de laquelle une
+	// position ouverte sur un signal de cette stratégie est liquidée, en
+	// backtest comme en live. 0 = aucune sortie forcée par le temps.
+	MaxHold time.Duration
 }
+
+// ModelManifest : fichier que toute stratégie entraînable DOIT écrire dans
+// chaque dossier de modèle. Le catalogue des entraînements reconnaît un
+// modèle à sa présence, sans rien savoir des autres fichiers — qui
+// appartiennent à la stratégie.
+const ModelManifest = "metadata.json"
 
 // WarmupRequest : ce que le moteur fournit avant la première décision.
 type WarmupRequest struct {

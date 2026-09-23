@@ -12,7 +12,6 @@ import (
 	"github.com/BLKMLO/Golden-Waterfall/internal/config"
 	"github.com/BLKMLO/Golden-Waterfall/internal/core"
 	"github.com/BLKMLO/Golden-Waterfall/internal/data"
-	"github.com/BLKMLO/Golden-Waterfall/internal/label"
 	"github.com/BLKMLO/Golden-Waterfall/internal/risk"
 	"github.com/BLKMLO/Golden-Waterfall/internal/storage"
 	"github.com/BLKMLO/Golden-Waterfall/internal/strategy"
@@ -99,9 +98,8 @@ func TestHorizonForcesExitEvenWhenStrategyIsNotReady(t *testing.T) {
 	entry := time.Date(2024, 3, 4, 0, 0, 0, 0, time.UTC)
 	eng, gw := newHorizonEngine(t, entry)
 
-	// Bougie AU-DELÀ de l'horizon : la dernière à commencer dans la
-	// fenêtre est celle qui précède l'échéance de MaxHoldDays.
-	bar := core.Bar{Time: label.Deadline(entry), BidOpen: 100, BidHigh: 100, BidLow: 100, BidClose: 100}
+	// Bougie AU-DELÀ de l'horizon que la stratégie déclare.
+	bar := core.Bar{Time: entry.Add(testHorizon), BidOpen: 100, BidHigh: 100, BidLow: 100, BidClose: 100}
 	eng.onBarClosed(context.Background(), "TEST", bar)
 
 	orders := gw.placed()
@@ -130,7 +128,7 @@ func TestDisarmedKillSwitchForcesNothing(t *testing.T) {
 	eng, gw := newHorizonEngine(t, entry)
 	eng.SetEnabled(false)
 
-	bar := core.Bar{Time: label.Deadline(entry), BidOpen: 100, BidHigh: 100, BidLow: 100, BidClose: 100}
+	bar := core.Bar{Time: entry.Add(testHorizon), BidOpen: 100, BidHigh: 100, BidLow: 100, BidClose: 100}
 	eng.onBarClosed(context.Background(), "TEST", bar)
 
 	// « Kill-switch désarmé » doit vouloir dire « le programme ne touche

@@ -15,6 +15,10 @@ import (
 	"github.com/BLKMLO/Golden-Waterfall/internal/data"
 	"github.com/BLKMLO/Golden-Waterfall/internal/risk"
 	_ "github.com/BLKMLO/Golden-Waterfall/internal/strategy"
+
+	// Les moteurs de décision livrés (Colibri) : sans ce catalogue, le
+	// registre serait vide dans ce binaire de test.
+	_ "github.com/BLKMLO/Golden-Waterfall/internal/strategies"
 )
 
 // writeHistory écrit un historique synthétique dans le dossier de données

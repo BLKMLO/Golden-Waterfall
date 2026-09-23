@@ -113,14 +113,22 @@ qu'un entraînement tourne.
 ## Le moteur Colibri
 
 Le logiciel s'appelle **Golden Waterfall** ; son moteur de décision s'appelle
-**Colibri**. Un classifieur binaire apprend, sur des bougies étiquetées par
-**triple barrière**, la probabilité que la barrière haute soit touchée avant la
-basse : probabilité élevée → long, faible → short, entre les deux →
-abstention. Le classifieur est un **gradient boosting écrit en Go**, ce qui
-permet au programme de tenir dans un fichier unique et rend l'entraînement
-reproductible au bit près.
+**Colibri**. Le moteur est un **module remplaçable** : les moteurs de backtest
+et de live, le walk-forward et l'interface ne connaissent que le contrat
+`strategy.Strategy`, et la génération suivante se branchera sans les toucher
+([`docs/architecture.md`](docs/architecture.md)).
 
-Features, labeling, révisions et garde-fous anti-fuite :
+Colibri apprend, sur des bougies étiquetées par **barrières à ± 1,5 ATR**, la
+probabilité qu'un trade finisse gagnant, avec un **gradient boosting écrit en
+Go** — un fichier unique, un entraînement reproductible au bit près. Depuis
+v0.4.1, la révision par défaut **`colibri_v1_2`** apprend l'issue NETTE de coûts
+que le moteur d'exécution produirait vraiment, une tête par sens, et n'entre
+que si l'espérance nette dépasse 0,10 R. `colibri_v1_0` et `v1_1` restent
+disponibles et inchangées. v1_2 n'est pas meilleure partout : sur un des
+quatre marchés synthétiques de sa mesure, v1_1 fait mieux — c'est écrit, et
+seul un `gw train` sur votre historique tranchera.
+
+Features, cible, décision, mesures et limites :
 [`docs/colibri.md`](docs/colibri.md) et [`docs/gbdt.md`](docs/gbdt.md).
 
 ## Ligne de commande
@@ -153,7 +161,7 @@ Paramètres le signale) : `GW_CONFIG_DIR`, `GW_DATA_DIR`, `GW_BROKER`,
 | Document | Contenu |
 |---|---|
 | [docs/architecture.md](docs/architecture.md) | Arborescence, règles, où ajouter du code |
-| [docs/colibri.md](docs/colibri.md) | Features, labeling, seuils, révisions |
+| [docs/colibri.md](docs/colibri.md) | Features, cible, décision, révisions, mesures |
 | [docs/gbdt.md](docs/gbdt.md) | Le gradient boosting maison : algorithme et choix |
 | [docs/donnees.md](docs/donnees.md) | Dukascopy, stockage Parquet, import, unités de temps |
 | [docs/brokers.md](docs/brokers.md) | Contrat de passerelle, rejeu, brancher un courtier |
@@ -169,12 +177,14 @@ make lint   # format + analyse         make dist   # les cinq binaires
 
 Aucun test n'appelle le réseau. La suite vérifie les propriétés dont dépend
 l'honnêteté des résultats, pas seulement que le code s'exécute : stabilité par
-préfixe des features, fenêtre avant incomplète = pas de label, blocs de
-walk-forward disjoints, spread mesuré, refus comptés, entraînement
-reproductible.
+préfixe des features ET des décisions, cible identique à l'issue du moteur
+d'exécution, fenêtre avant incomplète = pas de label, blocs de walk-forward
+disjoints, spread mesuré, refus comptés, entraînement reproductible. Toute
+stratégie inscrite au catalogue passe d'office le banc de conformité
+(`internal/strategy/strategytest`).
 
 Pour publier : onglet **Actions** → **Release** → **Run workflow** avec le
-numéro (`v0.2.0`), ou pousser un tag `v*`.
+numéro (`v0.4.1`), ou pousser un tag `v*`.
 
 ## Avertissement
 

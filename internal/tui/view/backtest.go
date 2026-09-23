@@ -14,7 +14,6 @@ import (
 	"github.com/BLKMLO/Golden-Waterfall/internal/config"
 	"github.com/BLKMLO/Golden-Waterfall/internal/data"
 	"github.com/BLKMLO/Golden-Waterfall/internal/export"
-	"github.com/BLKMLO/Golden-Waterfall/internal/feature"
 	"github.com/BLKMLO/Golden-Waterfall/internal/risk"
 	"github.com/BLKMLO/Golden-Waterfall/internal/strategy"
 	"github.com/BLKMLO/Golden-Waterfall/internal/training"
@@ -205,18 +204,21 @@ func (v *Backtest) run() tea.Cmd {
 			return nil
 		}
 		series := data.Resample(raw, tf)
-		if len(series) <= feature.ContextBars+10 {
-			emit(backtestDoneMsg{err: fmt.Errorf(
-				"%s : seulement %d bougies en %s, il en faut plus que le contexte de chauffe (%d)",
-				symbol, len(series), tf, feature.ContextBars)})
-			return nil
-		}
 		strat, err := strategy.New(strategyName)
 		if err != nil {
 			emit(backtestDoneMsg{err: err})
 			return nil
 		}
 		defer strat.Shutdown()
+		// Le contexte de chauffe est celui que la stratégie DÉCLARE :
+		// l'écran ne le connaît pas d'avance.
+		contextBars := strat.Describe().ContextBars
+		if len(series) <= contextBars+10 {
+			emit(backtestDoneMsg{err: fmt.Errorf(
+				"%s : seulement %d bougies en %s, il en faut plus que le contexte de chauffe (%d)",
+				symbol, len(series), tf, contextBars)})
+			return nil
+		}
 		if err := strat.Warmup(ctx, strategy.WarmupRequest{
 			Symbol: symbol, Series: series, Timeframe: tf, ModelDir: modelDir,
 		}); err != nil {
@@ -224,7 +226,7 @@ func (v *Backtest) run() tea.Cmd {
 			return nil
 		}
 		res, err := a.Backtest.Run(ctx, backtest.Request{
-			Symbol: symbol, Series: series, From: feature.ContextBars,
+			Symbol: symbol, Series: series, From: contextBars,
 			Strategy: strat, Timeframe: tf,
 		})
 		emit(backtestDoneMsg{result: res, err: err, took: time.Since(started)})

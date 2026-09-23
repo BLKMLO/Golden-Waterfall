@@ -16,6 +16,52 @@ type Dataset struct {
 	X     []float64
 	Y     []float64
 	Names []string
+	// W : poids par ligne, optionnel (nil = toutes les lignes pèsent 1).
+	// Posé par SetWeights, jamais deviné.
+	W []float64
+}
+
+// SetWeights attache un poids par ligne.
+//
+// Les poids sont RENORMALISÉS à une moyenne de 1 : la régularisation L2
+// et le seuil de masse de courbure (MinSumHessianInLeaf) sont exprimés en
+// unités d'échantillon, et des poids de moyenne 0,1 les rendraient
+// silencieusement dix fois plus forts. Seule la RÉPARTITION du poids entre
+// les lignes change, pas l'échelle du problème.
+func (d *Dataset) SetWeights(w []float64) error {
+	if len(w) != d.Rows {
+		return fmt.Errorf("%d poids pour %d lignes", len(w), d.Rows)
+	}
+	var sum float64
+	for i, v := range w {
+		if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
+			return fmt.Errorf("poids invalide à la ligne %d : %g", i, v)
+		}
+		sum += v
+	}
+	if sum <= 0 {
+		return fmt.Errorf("somme des poids nulle")
+	}
+	scale := float64(d.Rows) / sum
+	d.W = make([]float64, d.Rows)
+	for i, v := range w {
+		d.W[i] = v * scale
+	}
+	return nil
+}
+
+// weightedPositiveRate : proportion PONDÉRÉE de positifs, point de départ
+// du boosting quand des poids sont posés.
+func (d *Dataset) weightedPositiveRate() float64 {
+	if d.W == nil {
+		return d.PositiveRate()
+	}
+	var pos, total float64
+	for i, v := range d.Y {
+		pos += v * d.W[i]
+		total += d.W[i]
+	}
+	return pos / total
 }
 
 // NewDataset assemble un jeu et vérifie sa cohérence.

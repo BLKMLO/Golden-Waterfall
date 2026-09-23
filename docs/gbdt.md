@@ -68,6 +68,32 @@ Dans ce projet, la validation est toujours la **queue du bloc
 d'entraînement**, donc strictement dans le passé du bloc out-of-sample :
 l'arrêt anticipé ne voit jamais l'avenir.
 
+**9. Poids d'échantillon** (optionnels, `Dataset.SetWeights`). Gradient
+et courbure de chaque ligne sont multipliés par son poids ; le taux de base
+de départ et la perte de validation deviennent pondérés. Les poids sont
+**renormalisés à une moyenne de 1** : `λ` et `min_sum_hessian_in_leaf`
+sont exprimés en unités d'échantillon, et des poids de moyenne 0,1 les
+rendraient dix fois plus forts sans que personne l'ait décidé. Sans poids,
+le chemin de calcul est inchangé au bit près. Colibri v1_2 s'en sert pour
+l'unicité des labels (`docs/colibri.md`).
+
+**10. Calibrage par rétrécissement** (`FitShrinkage`), en dehors de
+l'entraînement : `p = σ(c + A · (score − c))`, où `c` est le score de base
+du modèle (le taux de positifs de son entraînement) et `A ∈ [0, 1]` est
+ajusté sur une validation, par section dorée (la perte est convexe en A).
+Le calibrage ne peut que RETIRER de la confiance :
+
+- `A` plafonné à 1 : la validation a déjà servi à choisir le nombre
+  d'arbres, elle est biaisée en faveur du modèle ; mesuré sur une marche
+  au hasard, un calibrage libre y trouvait des pentes de 1,2 à 2,2 qui
+  transformaient le bruit en signaux ;
+- **pas d'ordonnée libre** : un calibrage de Platt complet a été essayé
+  puis écarté. Ajustée sur la période la plus récente, son ordonnée
+  absorbait la tendance de ces quelques mois et alternait de signe d'un
+  pli à l'autre (+0,27, −0,24, +0,19, −0,32 en log-odds) — un pari
+  directionnel plus grand que tout le pouvoir de discrimination du
+  modèle.
+
 ## Ce qui est volontairement absent
 
 GOSS, EFB, l'apprentissage distribué, les objectifs multiclasses et la

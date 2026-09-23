@@ -1,17 +1,17 @@
-// Package label produit la CIBLE d'apprentissage de Colibri par la
-// méthode des triples barrières.
+// Package label produit des CIBLES d'apprentissage par la méthode des
+// barrières. C'est une bibliothèque : elle ne porte aucune constante de
+// définition. Chaque révision de stratégie fournit ses propres barrières,
+// son horizon et son ATR — les mêmes qu'elle enverra à l'exécution.
 //
-// Pour chaque bougie t, trois barrières sont placées depuis son close :
-//   - HAUTE     : close_t + mult · ATR_t   (un long y gagnerait) ;
-//   - BASSE     : close_t − mult · ATR_t   (un long y perdrait) ;
-//   - VERTICALE : horizon de MaxHoldDays jours calendaires.
+// Deux étiquetages cohabitent :
 //
-// Le label est BINAIRE et SYMÉTRIQUE : 1 si la barrière haute est touchée
-// en premier, 0 sinon. Un même modèle sert donc les deux sens :
-// P(haute d'abord) élevée → long, faible → short. Si l'horizon expire sans
-// barrière touchée, on étiquette par le signe du retour sur l'horizon.
+//   - TripleBarrier : label SYMÉTRIQUE historique (1 si la barrière haute
+//     est touchée d'abord, 0 sinon), celui de colibri_v1_0 et v1_1. Il est
+//     figé : le modifier changerait des modèles publiés.
+//   - Sided : un label PAR CÔTÉ (long, short), net de coûts, qui rejoue la
+//     règle d'exécution du moteur de backtest bougie pour bougie.
 //
-// ⚠ Le label REGARDE VERS L'AVANT — c'est sa nature, c'est la cible. Il
+// ⚠ Un label REGARDE VERS L'AVANT — c'est sa nature, c'est la cible. Il
 // n'est défini que pour les bougies disposant d'une fenêtre avant
 // COMPLÈTE : une bougie dont l'horizon dépasse la fin de la série reçoit
 // NaN, jamais un label calculé sur une fenêtre tronquée. Les features,
@@ -23,46 +23,7 @@ import (
 	"time"
 
 	"github.com/BLKMLO/Golden-Waterfall/internal/core"
-	"github.com/BLKMLO/Golden-Waterfall/internal/feature"
 )
-
-// Constantes de DÉFINITION du modèle Colibri (barrières identiques au
-// labeling et à l'exécution). Pas des réglages runtime.
-const (
-	BarrierATRMult = 1.5
-	MaxHoldDays    = 5
-)
-
-// Horizon est la durée de la barrière VERTICALE.
-func Horizon() time.Duration { return time.Duration(MaxHoldDays) * 24 * time.Hour }
-
-// Deadline renvoie l'échéance de la barrière verticale d'une entrée.
-func Deadline(entry time.Time) time.Time { return entry.Add(Horizon()) }
-
-// Expired : la bougie qui COMMENCE à `barTime` est-elle la dernière à
-// commencer avant l'échéance ?
-//
-// Cette fonction vit ICI, avec les constantes de définition du modèle,
-// parce que les DEUX exécuteurs l'appellent — le moteur de backtest et le
-// moteur live. Une règle de barrière écrite deux fois finit par diverger,
-// et c'est précisément la divergence que tout le projet cherche à
-// empêcher.
-//
-// Formulée sur la bougie courante et la cadence du flux, elle désigne la
-// même bougie que la fenêtre (t, t+horizon] de l'étiquetage, tout en
-// restant calculable en direct : le live ne connaît pas l'horodatage de la
-// bougie suivante. Sans cadence exploitable (unité de temps absente), on
-// se rabat sur le dépassement strict — une bougie de retard, jamais une
-// bougie d'avance.
-func Expired(barTime time.Time, barDuration time.Duration, deadline time.Time) bool {
-	if deadline.IsZero() {
-		return false
-	}
-	if barDuration <= 0 {
-		return barTime.After(deadline)
-	}
-	return barTime.Add(barDuration).After(deadline)
-}
 
 // Barrier nomme la barrière touchée en premier (diagnostic).
 type Barrier string
@@ -74,34 +35,36 @@ const (
 	BarrierTime Barrier = "time"
 )
 
-// Labels est le résultat de l'étiquetage, aligné sur la série d'entrée.
+// Labels est le résultat de l'étiquetage symétrique, aligné sur la série.
 type Labels struct {
 	// Value vaut 1, 0, ou NaN quand le label est indéfini (ATR manquant,
 	// fenêtre avant incomplète).
 	Value []float64
 	// Which indique la barrière retenue, pour le diagnostic.
 	Which []Barrier
-	// ATR au moment t, réutilisé tel quel par l'inférence.
+	// ATR au moment t, tel que fourni par l'appelant.
 	ATR []float64
 }
 
 // Defined indique si la bougie porte un label exploitable.
 func (l Labels) Defined(i int) bool { return !math.IsNaN(l.Value[i]) }
 
-// TripleBarrier étiquette chaque bougie par la première barrière touchée.
+// TripleBarrier étiquette chaque bougie par la première barrière touchée,
+// barrières à ± atrMult × atr[t] du close, horizon calendaire `horizon`.
 //
 // Départage quand les DEUX barrières tombent dans la MÊME bougie : on
-// retient la BASSE (label 0). C'est exactement la convention du moteur
-// d'exécution, qui suppose le stop touché d'abord faute de connaître
-// l'ordre intrabar réel. Entraîner sur une règle plus optimiste
-// apprendrait au modèle des gains que l'exécution ne délivre jamais : la
-// cible doit décrire ce que le programme obtiendra vraiment.
-func TripleBarrier(series core.Series, atrMult float64, maxHoldDays int) Labels {
+// retient la BASSE (label 0). C'est la convention du moteur d'exécution
+// pour un LONG, qui suppose le stop touché d'abord faute de connaître
+// l'ordre intrabar réel.
+//
+// Si l'horizon expire sans barrière touchée, on étiquette par le signe du
+// retour sur l'horizon.
+func TripleBarrier(series core.Series, atr []float64, atrMult float64, horizon time.Duration) Labels {
 	n := len(series)
 	out := Labels{
 		Value: make([]float64, n),
 		Which: make([]Barrier, n),
-		ATR:   feature.ATR(series),
+		ATR:   atr,
 	}
 	for i := range out.Value {
 		out.Value[i] = math.NaN()
@@ -114,7 +77,6 @@ func TripleBarrier(series core.Series, atrMult float64, maxHoldDays int) Labels 
 	low := series.Lows()
 	closes := series.Closes()
 	times := series.Times()
-	horizon := time.Duration(maxHoldDays) * 24 * time.Hour
 	last := times[n-1]
 
 	// Fin de fenêtre (barrière verticale) : pour chaque t, la dernière
@@ -143,16 +105,16 @@ func TripleBarrier(series core.Series, atrMult float64, maxHoldDays int) Labels 
 	}
 
 	for t := 0; t < n; t++ {
-		atr := out.ATR[t]
-		if math.IsNaN(atr) || atr <= 0 {
+		a := atr[t]
+		if math.IsNaN(a) || a <= 0 {
 			continue
 		}
 		end := ends[t]
 		if end <= t {
 			continue
 		}
-		upper := closes[t] + atrMult*atr
-		lower := closes[t] - atrMult*atr
+		upper := closes[t] + atrMult*a
+		lower := closes[t] - atrMult*a
 
 		hit := false
 		for j := t + 1; j <= end; j++ {
@@ -180,9 +142,4 @@ func TripleBarrier(series core.Series, atrMult float64, maxHoldDays int) Labels 
 		}
 	}
 	return out
-}
-
-// Default applique les constantes de définition du modèle.
-func Default(series core.Series) Labels {
-	return TripleBarrier(series, BarrierATRMult, MaxHoldDays)
 }

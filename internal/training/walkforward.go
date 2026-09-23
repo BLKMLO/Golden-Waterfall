@@ -29,7 +29,6 @@ import (
 	"github.com/BLKMLO/Golden-Waterfall/internal/config"
 	"github.com/BLKMLO/Golden-Waterfall/internal/core"
 	"github.com/BLKMLO/Golden-Waterfall/internal/data"
-	"github.com/BLKMLO/Golden-Waterfall/internal/feature"
 	"github.com/BLKMLO/Golden-Waterfall/internal/risk"
 	"github.com/BLKMLO/Golden-Waterfall/internal/strategy"
 )
@@ -125,6 +124,16 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 			req.Progress(p)
 		}
 	}
+	// La stratégie est instanciée AVANT de lire quoi que ce soit : un nom
+	// inconnu doit échouer tout de suite, et le contexte qu'elle exige
+	// décide de ce qui est « assez d'historique ». Le walk-forward ne
+	// suppose rien d'elle.
+	probe, err := strategy.New(req.Strategy)
+	if err != nil {
+		return nil, err
+	}
+	contextBars := probe.Describe().ContextBars
+	probe.Shutdown()
 
 	// --- 1. Chargement et ré-échantillonnage -------------------------------
 	report(Progress{Phase: "chargement", Message: "lecture de l'historique"})
@@ -138,7 +147,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 			return nil, err
 		}
 		s := data.Resample(raw, req.Timeframe)
-		if len(s) < feature.ContextBars*4 {
+		if len(s) < contextBars*4 {
 			return nil, fmt.Errorf("%s : %d bougies en %s, trop peu pour un walk-forward "+
 				"(descendre d'unité de temps ou élargir la période)", sym, len(s), req.Timeframe)
 		}
@@ -207,7 +216,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 			defer func() { <-sem }()
 
 			fold, results, err := r.runFold(ctx, req, k, bounds[k], commonStart, series,
-				symbols, filepath.Join(runRoot, fmt.Sprintf("fold-%d", k+1)), threadsPerFold)
+				symbols, filepath.Join(runRoot, fmt.Sprintf("fold-%d", k+1)), threadsPerFold, contextBars)
 			if err != nil {
 				fold.Err = err.Error()
 			}
@@ -348,7 +357,7 @@ func commonRange(series map[string]core.Series) (start, end time.Time) {
 // runFold entraîne puis évalue UN pli.
 func (r *Runner) runFold(ctx context.Context, req Request, k int, b foldBounds,
 	globalStart time.Time, series map[string]core.Series, symbols []string,
-	modelDir string, threads int) (Fold, []*backtest.Result, error) {
+	modelDir string, threads, contextBars int) (Fold, []*backtest.Result, error) {
 
 	fold := Fold{
 		Index:      k + 1,
@@ -364,7 +373,7 @@ func (r *Runner) runFold(ctx context.Context, req Request, k int, b foldBounds,
 	for _, sym := range symbols {
 		s := series[sym]
 		end := s.IndexAtOrAfter(b.testStart)
-		if end < feature.ContextBars {
+		if end < contextBars {
 			continue
 		}
 		trainSets[sym] = s.Slice(0, end)
@@ -450,7 +459,7 @@ func (r *Runner) runFold(ctx context.Context, req Request, k int, b foldBounds,
 		}
 		// Contexte de chauffe pris AVANT le bloc de test : il stabilise
 		// les indicateurs récursifs sans jamais être évalué ni tradé.
-		ctxFrom := testFrom - feature.ContextBars
+		ctxFrom := testFrom - contextBars
 		if ctxFrom < 0 {
 			ctxFrom = 0
 		}

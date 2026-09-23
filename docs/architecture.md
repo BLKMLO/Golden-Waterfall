@@ -25,14 +25,19 @@ Golden-Waterfall/
 │   │   ├── bar.go              Bar (bid+ask) et Series.
 │   │   ├── domain.go           Signal, OrderRequest, Position, Trade,
 │   │   │                       ExecutionReport, AccountState.
+│   │   ├── horizon.go          Règles de sortie PARTAGÉES : barrière
+│   │   │                       verticale, fin de semaine ISO, spread médian.
 │   │   ├── bus.go              Pub/sub qui ne bloque JAMAIS un producteur.
 │   │   └── log.go              Journal fichier + tampon mémoire pour la TUI.
 │   │
 │   ├── indicator/              RSI, ATR, ADX, MACD, stochastique, Bollinger,
 │   │                           OBV… tous STRICTEMENT causaux.
-│   ├── feature/                Les 34 features de Colibri + la matrice dense.
-│   ├── label/                  Triple barrière (la CIBLE d'apprentissage).
-│   ├── ml/gbdt/                Gradient boosting histogramme, Go pur.
+│   ├── feature/                La matrice dense (générique, sans feature).
+│   ├── label/                  Bibliothèque de CIBLES par barrières :
+│   │                           symétrique (v1), par côté alignée sur
+│   │                           l'exécution, unicité des labels.
+│   ├── ml/gbdt/                Gradient boosting histogramme, Go pur :
+│   │                           poids d'échantillon, calibrage par rétrécissement.
 │   │
 │   ├── data/
 │   │   ├── instrument.go       Symboles, décimales, devises base/cotation.
@@ -44,9 +49,17 @@ Golden-Waterfall/
 │   │   └── timeframe.go        M1…MN1, planchers de bucket, agrégation.
 │   │
 │   ├── strategy/
-│   │   ├── strategy.go         CONTRAT + registre plugin.
-│   │   ├── colibri.go        Inférence (chauffe, décision, barrières).
-│   │   └── colibri_train.go  Entraînement, artefacts, AUC out-of-sample.
+│   │   ├── strategy.go         CONTRAT + registre. AUCUNE implémentation.
+│   │   ├── strategytest/       Banc de CONFORMITÉ commun à toute stratégie.
+│   │   └── colibri/            Génération Colibri, TOUT ce qui lui est propre :
+│   │       ├── revision.go     Définitions figées v1_0, v1_1, v1_2.
+│   │       ├── features_v*.go  Jeux de features (v1 : 34, v2 : 33).
+│   │       ├── strategy.go     Chauffe, décision (seuils ou espérance).
+│   │       ├── train.go        Cible, purge, poids, entraînement, AUC OOS.
+│   │       └── model.go        Manifeste, chargement vérifié colonne à colonne.
+│   │
+│   ├── strategies/             CATALOGUE : le seul paquet qui nomme une
+│   │                           implémentation (importé par app).
 │   │
 │   ├── risk/manager.go         Le SEUL module qui transforme un signal en ordre.
 │   │
@@ -107,6 +120,31 @@ invente jamais pour combler le vide.
 Un module n'en instancie jamais un autre. Pour savoir de quoi dépend quoi,
 un seul fichier suffit ; et remplacer une brique (base, passerelle,
 stratégie) ne touche qu'à cet endroit.
+
+### 2 bis. Une stratégie est un module remplaçable
+
+Les moteurs (backtest, live), le walk-forward, la TUI et la CLI ne
+connaissent d'une stratégie que le contrat `strategy.Strategy` et sa
+`Description` : **aucun n'importe le paquet d'une stratégie**. Ce qu'ils
+supposaient autrefois de Colibri est désormais DÉCLARÉ par la stratégie :
+
+| Autrefois codé en dur | Désormais déclaré |
+|---|---|
+| `feature.ContextBars` (chauffe) | `Description.ContextBars` |
+| `label.MaxHoldDays` (barrière verticale) | `Description.MaxHold` |
+| `model.json` + `metadata.json` (catalogue) | `strategy.ModelManifest` seul |
+
+Les règles d'exécution que la stratégie a besoin de connaître pour
+étiqueter sa cible (fin de semaine ISO, barrière verticale, spread médian)
+vivent dans `core/horizon.go`, appelées à l'identique par le moteur et par
+la stratégie.
+
+Remplacer Colibri par la génération suivante : écrire
+`strategy/<oiseau>/`, ajouter une ligne dans `strategies/strategies.go`,
+choisir le nom dans `strategy.name`. Le banc de conformité
+(`strategytest`) tourne d'office sur toute stratégie du catalogue :
+silence sans modèle, entraînement puis rechargement, manifeste présent,
+barrières du bon côté, et **stabilité par préfixe des décisions**.
 
 ### 3. Le bus découple, sans jamais bloquer
 
@@ -182,8 +220,12 @@ plutôt que d'en embarquer un généraliste) :
   franchies dans la même bougie → le **stop** l'emporte (l'ordre intrabar
   réel est inconnu, on se pénalise) — exactement la convention du
   labeling, si bien que le modèle apprend ce que l'exécution délivre ;
+- **barrière verticale** : l'horizon que la stratégie DÉCLARE
+  (`Description.MaxHold`) ; aucune si elle n'en déclare pas ;
 - **clôture de fin de semaine ISO** et **liquidation finale** au close ;
-  une bougie de clôture forcée ne rouvre rien ;
+  une bougie de clôture forcée ne rouvre rien, et **aucune entrée n'est
+  ouverte sur la dernière bougie de la semaine** (elle serait portée tout
+  le week-end — corrigé en v0.4.1) ;
 - **coûts** : spread MESURÉ (médiane de `ask_close − bid_close`) facturé
   par côté, plus commission optionnelle. Un aller-retour paie exactement
   un spread. Sans côté ask : aucun coût, et `CostsModelled = false` ;
@@ -232,14 +274,18 @@ cotation, `CurrencyExact` vaut `false`, et l'interface le dit.
 
 | Besoin | Où | Ne pas toucher |
 |---|---|---|
-| Nouvelle stratégie | `strategy/<nom>.go` + `Register()` dans un `init()` | Moteurs, risque, brokers |
+| Nouvelle stratégie | `strategy/<oiseau>/` + `Register()` dans un `init()` + une ligne dans `strategies/` | Moteurs, walk-forward, TUI, CLI, risque, brokers |
+| Nouvelle révision d'une stratégie | une nouvelle valeur `revision` dans son paquet | Les révisions publiées |
 | Nouveau broker | `broker/<nom>.go` + `Register()` dans un `init()` | Stratégies, risque, TUI |
 | Nouvel instrument | une ligne dans `data.Instruments` | Le reste de `data` |
-| Nouvel indicateur | `indicator/` (causal, NaN pendant la chauffe) | `feature` si la définition d'un modèle publié change |
+| Nouvel indicateur | `indicator/` (causal, NaN pendant la chauffe) | Un jeu de features publié |
 | Nouvel écran | `tui/view/<nom>.go` + une ligne dans `tui.New()` | Les autres écrans |
 | Nouveau format de sortie | `export/<format>.go` | Ce qui a produit les chiffres |
 | Nouveau réglage | `config.Config` + `Validate()` + `default_config.yaml` | Toute lecture directe d'env ailleurs — interdite |
 
 ⚠ **Ne jamais modifier une définition de modèle publiée** (features,
-barrières, seuils). Toute évolution crée une **nouvelle version** de
-stratégie, sinon les modèles archivés ne veulent plus rien dire.
+barrières, seuils). Toute évolution crée une **nouvelle révision** de
+stratégie, sinon les modèles archivés ne veulent plus rien dire. La
+refonte modulaire de v0.4.1 l'a vérifié : colibri_v1_0 et v1_1 produisent,
+après déplacement de leur code, des modèles, signaux et AUC **identiques
+au bit près** à ceux d'avant.

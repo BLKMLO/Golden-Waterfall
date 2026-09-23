@@ -32,7 +32,6 @@ import (
 	"github.com/BLKMLO/Golden-Waterfall/internal/config"
 	"github.com/BLKMLO/Golden-Waterfall/internal/data"
 	"github.com/BLKMLO/Golden-Waterfall/internal/export"
-	"github.com/BLKMLO/Golden-Waterfall/internal/feature"
 	"github.com/BLKMLO/Golden-Waterfall/internal/risk"
 	"github.com/BLKMLO/Golden-Waterfall/internal/strategy"
 	"github.com/BLKMLO/Golden-Waterfall/internal/training"
@@ -412,7 +411,7 @@ func runBacktest(args []string) error {
 		return err
 	}
 	res, err := a.Backtest.Run(ctx, backtest.Request{
-		Symbol: symbol, Series: series, From: feature.ContextBars, Strategy: strat, Timeframe: tf,
+		Symbol: symbol, Series: series, From: strat.Describe().ContextBars, Strategy: strat, Timeframe: tf,
 	})
 	if err != nil {
 		return err
