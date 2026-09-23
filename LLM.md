@@ -11,8 +11,8 @@
 
 - **Golden Waterfall** = le LOGICIEL (binaire `gw`, TUI, paquets
   `internal/`). Toute l'identité visible dit « Golden Waterfall ».
-- **Colibri** = uniquement le **moteur de décision**
-  (`internal/strategy/colibri*.go`, `internal/feature/colibri.go`).
+- **Colibri** = uniquement le **moteur de décision**, entièrement dans
+  `internal/strategy/colibri/` (features, cible, décision, modèles).
   Ne jamais appeler le logiciel « Colibri ».
 - **Chaque GÉNÉRATION de moteur porte un nom d'oiseau.** Colibri est la
   première. La suivante, quand elle changera d'approche, prendra un autre
@@ -80,6 +80,17 @@ numéro de version, ou pousser un tag `v*`.
    barrières, seuils) : toute évolution crée une nouvelle **révision** de
    stratégie, et tout changement d'approche une nouvelle **génération**
    (nouveau nom d'oiseau).
+8. **Une stratégie est un module remplaçable.** Moteurs (backtest, live),
+   walk-forward, TUI et CLI ne connaissent que `strategy.Strategy` et sa
+   `Description` ; AUCUN n'importe le paquet d'une stratégie. Ce qu'ils
+   supposaient de Colibri, la stratégie le DÉCLARE : `ContextBars`
+   (chauffe), `MaxHold` (barrière verticale, 0 = aucune), et le manifeste
+   `strategy.ModelManifest` (seul fichier que le catalogue regarde). Les
+   règles d'exécution dont une cible a besoin (fin de semaine ISO,
+   barrière verticale, spread médian) vivent dans `core/horizon.go`. Le
+   catalogue `internal/strategies` est le SEUL paquet qui nomme une
+   implémentation ; toute stratégie qui y figure passe d'office le banc
+   `strategy/strategytest`.
 
 ## L'honnêteté, en pratique dans le code
 
@@ -125,6 +136,10 @@ cessait d'être vraie.
 | `FileHeader.Imported` | data | Déclarer complète une année dont personne n'a compté les jours |
 | Colonnes appariées PAR LEUR NOM | data | Lire des prix crédibles et faux dans un fichier tiers |
 | Relecture bougie à bougie avant suppression | data (migrate) | Effacer un historique sur une conversion non vérifiée |
+| Stabilité par préfixe des DÉCISIONS (`strategytest`) | toute stratégie | Une décision qui dépend des bougies futures alors que chaque feature est causale |
+| Cible v1_2 confrontée au moteur de backtest | colibri | Apprendre des gains que l'exécution ne verse pas |
+| `costs_modelled`, `purged`, `calibrated` au manifeste | colibri | Croire nette une cible brute, ou calibrée une probabilité brute |
+| Modèle rangé PAR PAIRE dans une instance | colibri | Décider EURUSD avec le modèle d'USDJPY |
 
 ## Conventions
 
@@ -147,8 +162,10 @@ cessait d'être vraie.
   qui saisit du texte l'annonce par `view.KeyCapturer` ; seul Ctrl+C reste
   global.
 - **Aucun `panic` sur une donnée** ; seulement sur une incohérence de code.
-- Nouvelle stratégie / nouvelle passerelle : `Register()` dans un `init()`,
-  aucun autre fichier à modifier.
+- Nouvelle passerelle : `Register()` dans un `init()`, aucun autre fichier
+  à modifier. Nouvelle stratégie : son paquet `strategy/<oiseau>/`,
+  `Register()` dans un `init()`, et UNE ligne dans
+  `internal/strategies/strategies.go`.
 - **Une optimisation se mesure.** Un banc d'essai avant, un après, et pour
   une réécriture numérique une comparaison contre une implémentation naïve
   de référence (`indicator_test.go`). Sans ça, ce n'est qu'une croyance.
@@ -184,22 +201,48 @@ cessait d'être vraie.
 - **Anti-fuite** : le test de **stabilité par préfixe**
   (`Compute(s)[:k] == Compute(s[:k])`) est le garde-fou central. Ne jamais
   le désactiver.
-- **Labeling** : deux barrières dans la même bougie → **la basse**, comme
-  l'exécution. Fenêtre avant incomplète → **pas de label**.
-- **La barrière VERTICALE vit dans `label`** (`Horizon`, `Deadline`,
-  `Expired`) et les DEUX moteurs l'appellent. Écrite deux fois, une règle
-  de barrière finit par diverger — c'est exactement ce que le projet
-  cherche à empêcher. `Expired` est formulée sur la bougie courante et la
-  cadence du flux, jamais sur l'horodatage de la bougie suivante : le live
-  ne l'aurait pas.
-- **Divergence connue entre cible et exécution** : l'étiquetage accorde
-  cinq jours calendaires, la clôture de fin de semaine ISO plafonne la
-  détention à moins de cinq jours (lundi → vendredi). La barrière
-  verticale ne se déclenche donc jamais sur des données forex réelles ;
-  elle protège le live, qui n'a pas de règle de week-end. Aligner
-  vraiment les deux suppose de modéliser le week-end DANS l'étiquetage,
-  donc une nouvelle révision (`colibri_v1_1`) — jamais une retouche du
-  modèle publié.
+- **Labeling symétrique (v1_0, v1_1)** : deux barrières dans la même
+  bougie → **la basse**. Juste pour un long, FAUX pour un short : le
+  moteur compte ce cas perdant pour le short aussi (stop prioritaire),
+  alors que la cible le lui donnait gagnant. Corrigé en v1_2 par une tête
+  par sens (`label.Sided`) — jamais par une retouche des révisions
+  publiées. Fenêtre avant incomplète → **pas de label**, toutes révisions.
+- **Les règles de sortie vivent dans `core/horizon.go`**
+  (`HoldDeadline`, `HoldExpired`, `LastBarsOfWeek`, `MedianSpread`) et les
+  moteurs ET l'étiquetage v1_2 les appellent. Écrite deux fois, une règle
+  de barrière finit par diverger. `HoldExpired` est formulée sur la bougie
+  courante et la cadence du flux, jamais sur l'horodatage de la bougie
+  suivante : le live ne l'aurait pas. La bougie qui COMMENCE à l'échéance
+  ferme la position.
+- **Cible et exécution** : en v1_0/v1_1, l'étiquetage accorde cinq jours
+  calendaires alors que la clôture de fin de semaine ISO ferme avant — la
+  barrière verticale ne se déclenche jamais sur des données forex. En
+  v1_2, `label.ExecutionWindow` prend la PREMIÈRE des deux règles du
+  moteur, et `TestSidedTargetIsWhatTheEngineDelivers` confronte la cible
+  au vrai moteur de backtest sur 60 entrées. ⚠ Le LIVE n'a toujours pas de
+  règle de fin de semaine (une bougie n'y est close qu'au premier tick du
+  bucket suivant, donc la dernière du vendredi à la réouverture) : la
+  divergence subsiste là, et la barrière de cinq jours y reste le seul
+  filet.
+- **Aucune entrée sur la dernière bougie de la semaine** (backtest,
+  depuis v0.4.1) : elle était portée tout le week-end, la clôture de fin
+  de semaine ne se rejouant qu'à la semaine suivante.
+- **Calibrage v1_2 = rétrécissement vers le taux de base**
+  (`gbdt.FitShrinkage`, `A ∈ [0, 1]`, centre FIXE). Deux versions plus
+  libres ont été MESURÉES puis écartées : pente libre (1,2 à 2,2 sur une
+  marche au hasard — amplifiait le bruit) et ordonnée libre (absorbait la
+  tendance de la validation, signe alterné d'un pli à l'autre). Un
+  calibrage ne retire que de la confiance ; il n'ajoute jamais d'opinion.
+- **La marge 0,10 R de v1_2 est choisie sur SYNTHÉTIQUE** (ablation,
+  `GW_ABLATION=1`, 4 marchés × 8 graines) : seule marge au moins aussi
+  bonne que v1_1 en P&L total ET moins perdante qu'elle sans signal —
+  critère formulé APRÈS la mesure. ⚠ **v1_2 ne domine pas v1_1** : sur le
+  marché au signal le plus facile (rappel horaire, AUC 0,586), v1_1 fait
+  mieux (PF 1,46 contre 1,36). Tableau complet : `docs/colibri.md`.
+- **Correction de fuite ≠ heuristique.** La purge est gardée même sans
+  effet mesurable (une fuite ne se garde pas parce qu'elle ne coûte rien
+  ici) ; les poids d'unicité, heuristique, ont été écartés parce que la
+  mesure ne les soutenait pas.
 - **Stops et gaps** : un stop déclenché est un ordre AU MARCHÉ, rempli au
   pire de la barrière et de l'ouverture. Une limite, elle, garde son prix
   exact : un ordre à cours limité ne s'exécute jamais moins bien, et lui
@@ -290,17 +333,19 @@ Une tentative de repli sur 1.24 casse la compatibilité entre les paquets
   (config, docs, tests, `.gitignore`, ce fichier).
 - Appliquer les améliorations évidentes **sans demander**.
 
-## État du projet (22 septembre 2026)
+## État du projet (23 septembre 2026, v0.4.1)
 
-**Complet de bout en bout, ~17 000 lignes de code + ~7 700 de tests,
-21 paquets, suite verte avec `-race`.**
+**Complet de bout en bout, ~18 500 lignes de code + ~8 700 de tests,
+24 paquets, suite verte avec `-race`.**
 
-Couverture par paquet (la plus basse d'abord) : `cmd/gw` 22 %,
-`tui/view` 48 %, `config` 58 %, `core` 62 %, `tui` 68 %, `data` 70 %,
-`training` 75 %, `broker` 75 %, `indicator` 77 %, `storage` 79 %,
-`tui/component` 79 %, `feature` 79 %, `app` 79 %, `live` 80 %,
-`strategy` 81 %, `ml/gbdt` 81 %, `backtest` 85 %, `export` 88 %,
-`risk` 90 %, `label` 95 %, `tui/theme` 100 %.
+Couverture par paquet (la plus basse d'abord, mesurée en v0.4.1) :
+`cmd/gw` 26 %, `tui/view` 48 %, `config` 58 %, `core` 67 %, `tui` 68 %,
+`data` 70 %, `broker` 75 %, `training` 75 %, `indicator` 77 %,
+`storage` 79 %, `tui/component` 79 %, `app` 79 %, `live` 80 %,
+`ml/gbdt` 83 %, `backtest` 84 %, `strategy/colibri` 87 %, `export` 88 %,
+`risk` 90 %, `label` 97 %, `tui/theme` 100 %. Sans instruction propre
+(couverts par les tests des autres) : `feature`, `strategy`,
+`strategytest` ; `strategies` n'a que le banc de conformité.
 
 Validé réellement :
 
@@ -322,6 +367,12 @@ réel (le bac à sable de dev est limité à 429), et surtout la MESURE de
 
 **Reste à faire**, par ordre de valeur :
 
+0. **Mesurer `colibri_v1_2` sur historique réel** contre `v1_1` (deux
+   `gw train` sur les mêmes paires, `gw runs` compare). Toutes les mesures
+   de v0.4.1 sont SYNTHÉTIQUES : la marge 0,10 R, le rejet des poids
+   d'unicité et celui du calibrage libre en dépendent. Un résultat réel
+   qui les contredit donne une révision `colibri_v1_3`, jamais une
+   retouche de v1_2.
 1. **Triangulation des devises.** C'est devenu la limite la plus coûteuse
    du programme : sur un compte en dollars, 21 des 31 instruments par
    défaut ne sont pas convertibles, leur P&L reste en devise de cotation
@@ -468,7 +519,46 @@ réel (le bac à sable de dev est limité à 429), et surtout la MESURE de
   pannes vivent dans `docs/depannage.md` : un lecteur qui découvre le
   projet n'en a pas besoin avant d'avoir lancé le binaire.
 
+- **Stratégie modulaire (v0.4.1).** Colibri vivait dans trois paquets
+  partagés (`feature`, `label`, `strategy`) et les moteurs importaient ses
+  constantes : `label.MaxHoldDays` dans le backtest et le live,
+  `feature.ContextBars` dans le walk-forward, la TUI et la CLI, et le
+  catalogue cherchait `model.json`. Remplacer le moteur aurait demandé de
+  réécrire les moteurs. Désormais tout Colibri est dans
+  `strategy/colibri/`, la stratégie DÉCLARE contexte et horizon, et le
+  catalogue `internal/strategies` est le seul endroit qui la nomme. La
+  refonte a été vérifiée par une empreinte : modèles, signaux et AUC de
+  v1_0 et v1_1 identiques AU BIT PRÈS avant et après.
+- **Un banc de conformité plutôt qu'une liste de consignes.** Ce qu'une
+  stratégie doit à ses moteurs (silence sans modèle, manifeste, barrières
+  du bon côté, stabilité par préfixe des décisions) est un test que le
+  catalogue fait tourner sur chacune. Une consigne s'oublie ; un test
+  qui échoue, non.
+- **`colibri_v1_2`, par défaut pour les nouvelles installations.** Une
+  config existante qui nomme `colibri_v1_1` le garde : ses modèles ne se
+  chargeraient pas sous un autre nom. Ce que v1_2 change et pourquoi :
+  `docs/colibri.md`, section « Ce que l'analyse de v1.1 a trouvé ».
+- **Mesurer avant de garder un ingrédient.** v1_2 a été construite par
+  ablation (`GW_ABLATION=1`), et deux ingrédients écrits, testés et
+  théoriquement fondés n'y sont pas entrés : les poids d'unicité (égaux
+  ou moins bons sur les quatre marchés) et le calibrage libre (pente :
+  amplifiait le bruit ; ordonnée : pariait sur la tendance récente). Les
+  poids restent disponibles, inactifs, documentés comme tels.
+
 ### Bugs corrigés (et pourquoi ils comptaient)
+
+- **Le short apprenait des gains fictifs** (v1_0, v1_1 — non corrigé EN
+  PLACE, puisque publiées) : la cible symétrique comptait « deux
+  barrières dans la même bougie » comme un short gagnant, que le moteur
+  compte perdant. Corrigé par la cible par côté de v1_2.
+- **Entrée possible sur la dernière bougie de la semaine** (backtest) :
+  la position traversait le week-end, précisément ce que la clôture de fin
+  de semaine interdit. Change les résultats de backtest de toutes les
+  stratégies, dans le sens prudent.
+- **Un modèle par paire écrasé par le suivant** (live, `colibri_v1_0`) :
+  une seule instance de stratégie chauffait toutes les paires et ne
+  gardait qu'UN modèle — le dernier chargé décidait pour toutes. Test de
+  régression : `TestPerSymbolModelsDoNotOverwriteEachOther`.
 
 - **Course de données dans le bus** : `Publish` parcourait la tranche
   d'abonnés pendant qu'un `Close` la réécrivait, et pouvait envoyer sur un
