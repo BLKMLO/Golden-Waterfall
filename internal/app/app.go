@@ -26,6 +26,9 @@ import (
 	// init(). Sans cet import, le registre serait vide et le programme
 	// annoncerait « passerelle inconnue » pour une passerelle qui existe.
 	_ "github.com/BLKMLO/Golden-Waterfall/internal/broker"
+	// Même principe pour les moteurs de décision : le catalogue est le
+	// seul paquet qui nomme une implémentation de stratégie.
+	_ "github.com/BLKMLO/Golden-Waterfall/internal/strategies"
 )
 
 // App tient les objets partagés de toute l'application.

@@ -15,6 +15,10 @@ import (
 
 	_ "github.com/BLKMLO/Golden-Waterfall/internal/broker"
 	_ "github.com/BLKMLO/Golden-Waterfall/internal/strategy"
+
+	// Les moteurs de décision livrés (Colibri) : sans ce catalogue, le
+	// registre serait vide dans ce binaire de test.
+	_ "github.com/BLKMLO/Golden-Waterfall/internal/strategies"
 )
 
 func setupRuntime(t *testing.T) (*Runtime, config.Config, *storage.Store) {

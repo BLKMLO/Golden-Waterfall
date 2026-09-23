@@ -22,7 +22,7 @@ func TestLoadCreatesDefaultFileOnFirstRun(t *testing.T) {
 	if _, err := os.Stat(p.ConfigFile()); err != nil {
 		t.Fatal("le fichier de configuration doit être créé au premier lancement")
 	}
-	if cfg.Strategy.Name != "colibri_v1_1" {
+	if cfg.Strategy.Name != "colibri_v1_2" {
 		t.Fatalf("stratégie par défaut inattendue : %q", cfg.Strategy.Name)
 	}
 	raw, _ := os.ReadFile(p.ConfigFile())

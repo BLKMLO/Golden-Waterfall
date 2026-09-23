@@ -10,17 +10,22 @@ import (
 	"github.com/BLKMLO/Golden-Waterfall/internal/broker"
 	"github.com/BLKMLO/Golden-Waterfall/internal/core"
 	"github.com/BLKMLO/Golden-Waterfall/internal/data"
-	"github.com/BLKMLO/Golden-Waterfall/internal/feature"
-	"github.com/BLKMLO/Golden-Waterfall/internal/label"
 	"github.com/BLKMLO/Golden-Waterfall/internal/risk"
 	"github.com/BLKMLO/Golden-Waterfall/internal/storage"
 	"github.com/BLKMLO/Golden-Waterfall/internal/strategy"
 )
 
-// bufferBars : bougies conservées par symbole pour recalculer les features
-// causales à chaque clôture. Confortablement au-dessus du contexte exigé
-// par les indicateurs récursifs.
-const bufferBars = feature.ContextBars + 120
+// bufferMargin : bougies conservées AU-DELÀ du contexte que la stratégie
+// déclare, pour qu'un trou de flux ou une bougie en retard ne fasse pas
+// retomber le tampon sous le minimum à la clôture suivante.
+const bufferMargin = 120
+
+// BufferBars : bougies conservées par symbole pour recalculer les features
+// causales à chaque clôture — le contexte DÉCLARÉ par la stratégie, plus
+// une marge. Le moteur ne suppose rien de la stratégie qu'il fait tourner.
+func BufferBars(strat strategy.Strategy) int {
+	return strat.Describe().ContextBars + bufferMargin
+}
 
 // Engine applique, en temps réel, exactement la même chaîne que le
 // backtest.
@@ -38,6 +43,10 @@ type Engine struct {
 	logger   *slog.Logger
 	agg      *Aggregator
 	tf       data.Timeframe
+	// buffer : taille du tampon par symbole (BufferBars) et maxHold :
+	// barrière verticale, tous deux lus UNE fois dans la Description.
+	buffer  int
+	maxHold time.Duration
 
 	mu       sync.RWMutex
 	enabled  bool
@@ -89,6 +98,8 @@ func NewEngine(gw broker.Gateway, strat strategy.Strategy, rm *risk.Manager,
 		logger:   logger,
 		agg:      NewAggregator(tf),
 		tf:       tf,
+		buffer:   BufferBars(strat),
+		maxHold:  strat.Describe().MaxHold,
 		buffers:  map[string]core.Series{},
 		inFlight: map[string]string{},
 		openLeg:  map[string]*openLeg{},
@@ -126,8 +137,8 @@ func (e *Engine) Stats() Stats {
 // la première bougie live soit décidée avec des indicateurs déjà
 // stabilisés — et non après plusieurs jours de chauffe en aveugle.
 func (e *Engine) Seed(symbol string, series core.Series) {
-	if len(series) > bufferBars {
-		series = series.Slice(len(series)-bufferBars, len(series))
+	if len(series) > e.buffer {
+		series = series.Slice(len(series)-e.buffer, len(series))
 	}
 	buf := make(core.Series, len(series))
 	copy(buf, series)
@@ -173,8 +184,8 @@ func (e *Engine) HandleTick(ctx context.Context, tick core.Tick) {
 func (e *Engine) onBarClosed(ctx context.Context, symbol string, bar core.Bar) {
 	e.mu.Lock()
 	buf := append(e.buffers[symbol], bar)
-	if len(buf) > bufferBars {
-		buf = buf[len(buf)-bufferBars:]
+	if len(buf) > e.buffer {
+		buf = buf[len(buf)-e.buffer:]
 	}
 	e.buffers[symbol] = buf
 	e.stats.Bars++
@@ -184,10 +195,10 @@ func (e *Engine) onBarClosed(ctx context.Context, symbol string, bar core.Bar) {
 	leg := e.openLeg[symbol]
 	e.mu.Unlock()
 
-	// Barrière VERTICALE : la position a-t-elle dépassé l'horizon sur
-	// lequel le modèle a été entraîné ? La règle est celle du paquet
-	// `label`, la même qu'au backtest et qu'à l'étiquetage.
-	overdue := leg != nil && label.Expired(bar.Time, e.tf.Duration(), label.Deadline(leg.time))
+	// Barrière VERTICALE : la position a-t-elle dépassé l'horizon que la
+	// stratégie déclare ? La règle est celle de `core`, la même qu'au
+	// backtest.
+	overdue := leg != nil && core.HoldExpired(bar.Time, e.tf.Duration(), core.HoldDeadline(leg.time, e.maxHold))
 
 	if !enabled {
 		// Le kill-switch veut dire « ne touche plus à mon compte » : on ne
@@ -231,7 +242,7 @@ func (e *Engine) onBarClosed(ctx context.Context, symbol string, bar core.Bar) {
 			Time:     bar.Time,
 		}
 		e.logger.Info("horizon atteint : sortie demandée",
-			"symbole", symbol, "entree", leg.time, "horizon", label.Horizon())
+			"symbole", symbol, "entree", leg.time, "horizon", e.maxHold)
 	} else {
 		if ready, reason := e.strategy.Ready(); !ready {
 			e.logger.Debug("bougie ignorée : stratégie non prête", "symbole", symbol, "raison", reason)

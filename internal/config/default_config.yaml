@@ -35,8 +35,11 @@ broker:
   replay_speed: 120
 
 strategy:
-  # Moteur de décision actif (clé du registre de stratégies).
-  name: "colibri_v1_1"
+  # Moteur de décision actif (clé du registre de stratégies) : colibri_v1_0,
+  # colibri_v1_1 ou colibri_v1_2. Un modèle n'est chargé que par la
+  # révision qui l'a entraîné : changer ce nom demande un nouvel
+  # entraînement. `gw config` liste les stratégies disponibles.
+  name: "colibri_v1_2"
   # Kill-switch GLOBAL. Le trading par paire se règle depuis la TUI et est
   # persisté : une paire ne trade que si CE drapeau ET son interrupteur
   # sont actifs.

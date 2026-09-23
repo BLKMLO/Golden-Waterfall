@@ -56,9 +56,10 @@ func (t Tick) Price() float64 { return t.Bid }
 // Signal est la décision émise par une stratégie, à valider par le risque.
 //
 // StopLoss / TakeProfit sont les niveaux de PRIX des barrières proposées
-// (triple-barrier de Colibri : TP/SL proportionnels à l'ATR). Une
-// stratégie sans barrières les laisse à zéro ; le RiskManager les reporte
-// tels quels sur l'ordre.
+// (chez Colibri : à ± k × ATR). Une stratégie sans barrières les laisse à
+// zéro ; le RiskManager les reporte tels quels sur l'ordre. La barrière
+// VERTICALE, elle, n'est pas portée par le signal : c'est une propriété
+// de la stratégie, déclarée une fois (strategy.Description.MaxHold).
 type Signal struct {
 	Strategy   string
 	Symbol     string

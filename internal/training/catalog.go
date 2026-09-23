@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"time"
+
+	"github.com/BLKMLO/Golden-Waterfall/internal/strategy"
 )
 
 // RunSummary : ce que l'interface affiche pour un entraînement archivé.
@@ -161,11 +163,12 @@ func SelectModel(modelsDir, strategyName, symbol string) (string, string) {
 	return "", fmt.Sprintf("aucun modèle %q ne couvre %s", strategyName, symbol)
 }
 
+// hasModel : un dossier porte un modèle s'il contient le MANIFESTE que
+// toute stratégie entraînable écrit. Les autres fichiers appartiennent à
+// la stratégie — le catalogue n'a pas à savoir qu'une révision range un
+// modèle, et la suivante deux.
 func hasModel(dir string) bool {
-	if _, err := os.Stat(filepath.Join(dir, "model.json")); err != nil {
-		return false
-	}
-	_, err := os.Stat(filepath.Join(dir, "metadata.json"))
+	_, err := os.Stat(filepath.Join(dir, strategy.ModelManifest))
 	return err == nil
 }
 

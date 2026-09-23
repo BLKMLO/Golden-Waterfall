@@ -1,11 +1,13 @@
-// Package feature transforme une série de bougies en matrice de features
-// prête pour l'apprentissage.
+// Package feature fournit la MATRICE dense (lignes = bougies, colonnes =
+// features nommées) que toute stratégie à apprentissage produit et que le
+// GBDT consomme. Il ne définit aucune feature : chaque stratégie calcule
+// les siennes dans son propre paquet (Colibri : strategy/colibri).
 //
-// Garantie anti-fuite : toute feature à la bougie t n'utilise que des
-// données <= t (cf. package indicator). Elle est vérifiée par un test de
-// STABILITÉ PAR PRÉFIXE : Compute(série)[:k] doit être identique à
-// Compute(série[:k]). Une feature qui regarderait vers l'avant ferait
-// échouer ce test — c'est le garde-fou le moins cher et le plus efficace
+// Garantie attendue de toute stratégie qui la remplit : une feature à la
+// bougie t n'utilise que des données <= t (cf. package indicator), ce que
+// vérifie un test de STABILITÉ PAR PRÉFIXE — calcul(série)[:k] identique
+// à calcul(série[:k]). Une feature qui regarderait vers l'avant ferait
+// échouer ce test : c'est le garde-fou le moins cher et le plus efficace
 // contre la fuite temporelle.
 package feature
 
@@ -87,8 +89,8 @@ func (m *Matrix) RowComplete(row int) bool {
 	return true
 }
 
-// AppendColumn ajoute une colonne (utilisé par Colibri v1.1 pour la
-// feature catégorielle `symbol`). Réalloue : à ne pas faire en boucle.
+// AppendColumn ajoute une colonne (Colibri s'en sert pour la feature
+// catégorielle `symbol`). Réalloue : à ne pas faire en boucle.
 func (m *Matrix) AppendColumn(name string, values []float64) *Matrix {
 	out := NewMatrix(m.Rows, append(append([]string(nil), m.Names...), name))
 	for r := 0; r < m.Rows; r++ {

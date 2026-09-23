@@ -169,7 +169,7 @@ func Default() Config {
 			Name: "replay", Mode: "paper", Host: "127.0.0.1", Port: 7497,
 			Timeframe: "H4", ReplaySpeed: 120,
 		},
-		Strategy: StrategyConfig{Name: "colibri_v1_1", Enabled: false},
+		Strategy: StrategyConfig{Name: "colibri_v1_2", Enabled: false},
 		Risk: RiskConfig{
 			MaxPositionSize: 100000, FixedPositionSize: 10000,
 			RiskPerTradePct:       0.5,

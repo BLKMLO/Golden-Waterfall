@@ -178,7 +178,7 @@ func (r *Runtime) Connect(ctx context.Context) error {
 	}
 
 	for _, sym := range symbols {
-		series, histErr := r.warmupSeries(sym, tf)
+		series, histErr := r.warmupSeries(sym, tf, BufferBars(strat))
 		switch {
 		case histErr != nil:
 			// Pas d'historique local : la paire reste SUIVIE (les prix
@@ -248,7 +248,7 @@ func (r *Runtime) Connect(ctx context.Context) error {
 // dès que l'historique n'a pas été rafraîchi depuis un moment ; mieux vaut
 // chauffer sur des bougies anciennes — en le signalant — que démarrer
 // complètement aveugle.
-func (r *Runtime) warmupSeries(symbol string, tf data.Timeframe) (core.Series, error) {
+func (r *Runtime) warmupSeries(symbol string, tf data.Timeframe, bufferBars int) (core.Series, error) {
 	span := time.Duration(bufferBars*3) * tf.Duration()
 	if span < 30*24*time.Hour {
 		span = 30 * 24 * time.Hour

@@ -141,7 +141,7 @@ func Train(ctx context.Context, train *Dataset, valid *Dataset, p Params,
 		categorical[f] = true
 	}
 
-	rate := train.PositiveRate()
+	rate := train.weightedPositiveRate()
 	// Une classe absente rend le problème dégénéré : autant le dire tout
 	// de suite plutôt que de renvoyer un modèle constant déguisé.
 	if rate <= 0 || rate >= 1 {
@@ -200,6 +200,12 @@ func Train(ctx context.Context, train *Dataset, valid *Dataset, p Params,
 			if hess[i] < 1e-16 {
 				hess[i] = 1e-16
 			}
+			if train.W != nil {
+				// Poids d'échantillon : gradient et courbure d'une ligne
+				// comptent pour son poids, ni plus ni moins.
+				grad[i] *= train.W[i]
+				hess[i] *= train.W[i]
+			}
 		}
 
 		rows := sampleRows(train.Rows, p, round, rng)
@@ -210,14 +216,14 @@ func Train(ctx context.Context, train *Dataset, valid *Dataset, p Params,
 		for i := 0; i < train.Rows; i++ {
 			scores[i] += tree.predict(train.Row(i))
 		}
-		trainLoss := logLossFromScores(scores, train.Y)
+		trainLoss := weightedLogLoss(scores, train)
 
 		validLoss := math.NaN()
 		if valid != nil {
 			for i := 0; i < valid.Rows; i++ {
 				validScores[i] += tree.predict(valid.Row(i))
 			}
-			validLoss = logLossFromScores(validScores, valid.Y)
+			validLoss = weightedLogLoss(validScores, valid)
 			if validLoss < bestLoss-1e-9 {
 				bestLoss, bestIter, sinceBest = validLoss, round, 0
 			} else {

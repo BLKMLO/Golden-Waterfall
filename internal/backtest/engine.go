@@ -23,11 +23,13 @@
 //     s'exécute jamais moins bien, et lui accorder le gap serait
 //     s'attribuer une chance qu'on ne peut pas prouver.
 //   - BARRIÈRE VERTICALE : la position est liquidée au close de la
-//     DERNIÈRE bougie commencée dans l'horizon `label.MaxHoldDays`. C'est
-//     la troisième barrière de l'étiquetage : sans elle, le moteur tenait
-//     des positions que la cible d'apprentissage avait déjà clôturées.
+//     DERNIÈRE bougie commencée dans l'horizon que la stratégie DÉCLARE
+//     (`Description.MaxHold`). Le moteur ne connaît pas cet horizon : il
+//     le lit, si bien qu'aucune stratégie n'est câblée ici.
 //   - CLÔTURE DE FIN DE SEMAINE ISO et LIQUIDATION FINALE au close : aucun
-//     portage de week-end, aucune position résiduelle fantôme.
+//     portage de week-end, aucune position résiduelle fantôme. Et donc
+//     AUCUNE ENTRÉE sur la dernière bougie de la semaine : elle serait
+//     portée tout le week-end, la seule chose que cette règle interdit.
 //   - COÛTS : le spread est MESURÉ dans les données (médiane de
 //     ask_close − bid_close) et facturé par côté, si bien qu'un
 //     aller-retour paie exactement un spread ; s'y ajoute une commission
@@ -50,8 +52,6 @@ import (
 	"github.com/BLKMLO/Golden-Waterfall/internal/config"
 	"github.com/BLKMLO/Golden-Waterfall/internal/core"
 	"github.com/BLKMLO/Golden-Waterfall/internal/data"
-	"github.com/BLKMLO/Golden-Waterfall/internal/indicator"
-	"github.com/BLKMLO/Golden-Waterfall/internal/label"
 	"github.com/BLKMLO/Golden-Waterfall/internal/risk"
 	"github.com/BLKMLO/Golden-Waterfall/internal/strategy"
 )
@@ -146,32 +146,11 @@ func NewEngine(cfg config.Config, rm *risk.Manager) *Engine {
 
 // MeasureSpread renvoie le spread MÉDIAN observé (ask_close − bid_close).
 //
-// On retient la médiane et non la moyenne : le spread s'élargit brutalement
-// à l'ouverture, sur les annonces et le week-end ; une moyenne serait tirée
-// par ces pointes et surestimerait le coût du régime normal.
-//
 // Retourne false si la série n'a pas de côté ask : dans ce cas AUCUN
-// spread n'est modélisé, et le résultat le dit.
-func MeasureSpread(series core.Series) (float64, bool) {
-	spreads := make([]float64, 0, len(series))
-	for _, b := range series {
-		if !b.HasAsk() {
-			continue
-		}
-		s := b.AskClose - b.BidClose
-		if s > 0 {
-			spreads = append(spreads, s)
-		}
-	}
-	if len(spreads) == 0 {
-		return 0, false
-	}
-	m := indicator.Median(spreads)
-	if math.IsNaN(m) || m <= 0 {
-		return 0, false
-	}
-	return m, true
-}
+// spread n'est modélisé, et le résultat le dit. La mesure elle-même vit
+// dans `core` : une stratégie qui veut étiqueter sa cible NETTE de coûts
+// doit facturer exactement le spread que ce moteur facturera.
+func MeasureSpread(series core.Series) (float64, bool) { return series.MedianSpread() }
 
 // position : état interne d'une position simulée.
 type position struct {
@@ -184,8 +163,7 @@ type position struct {
 	takeProfit float64
 	entryCost  float64
 	// deadline : instant au-delà duquel la barrière VERTICALE liquide la
-	// position, calculé comme à l'étiquetage (entrée + MaxHoldDays jours
-	// calendaires).
+	// position (entrée + horizon déclaré par la stratégie). Zéro = aucune.
 	deadline time.Time
 }
 
@@ -243,8 +221,9 @@ func (e *Engine) Run(ctx context.Context, req Request) (*Result, error) {
 	// bougie commencée dans l'horizon, sans jamais lire l'horodatage de la
 	// bougie suivante — le moteur live ne l'aurait pas.
 	barDuration := req.Timeframe.Duration()
+	maxHold := req.Strategy.Describe().MaxHold
 
-	weekEnd := lastBarsOfWeek(series)
+	weekEnd := core.LastBarsOfWeek(series)
 	cash := e.cfg.Backtest.InitialCapital
 	leverage := e.cfg.Backtest.Leverage
 	var pos *position
@@ -279,7 +258,7 @@ func (e *Engine) Run(ctx context.Context, req Request) (*Result, error) {
 		// 2. Barrière VERTICALE — testée APRÈS les horizontales, comme à
 		// l'étiquetage : sur la bougie d'échéance, un stop ou une limite
 		// touchés l'emportent encore.
-		if pos != nil && i > pos.entryIndex && label.Expired(bar.Time, barDuration, pos.deadline) {
+		if pos != nil && i > pos.entryIndex && core.HoldExpired(bar.Time, barDuration, pos.deadline) {
 			tr, cost := closePosition(pos, req.Symbol, bar.Close(), bar.Time, "time", costPerUnitPerSide, conv)
 			cash += tr.PnL
 			totalCosts += cost
@@ -306,7 +285,10 @@ func (e *Engine) Run(ctx context.Context, req Request) (*Result, error) {
 
 		// 4. Décision. Une bougie de clôture forcée ne rouvre RIEN : ce
 		// serait reprendre immédiatement le risque qu'on vient de couper.
-		if !forcedExit && i < len(series)-1 {
+		// La dernière bougie de la semaine non plus, même sans position à
+		// fermer : l'entrée serait portée tout le week-end, puisque la
+		// clôture de fin de semaine ne se rejoue qu'à la semaine suivante.
+		if !forcedExit && !weekEnd[i] && i < len(series)-1 {
 			sig, err := req.Strategy.OnBar(ctx, req.Symbol, series, i)
 			if err != nil {
 				return nil, fmt.Errorf("stratégie sur %s à %s : %w", req.Symbol, bar.Time, err)
@@ -345,7 +327,7 @@ func (e *Engine) Run(ctx context.Context, req Request) (*Result, error) {
 						stopLoss:   dec.Order.StopLoss,
 						takeProfit: dec.Order.TakeProfit,
 						entryCost:  cost,
-						deadline:   label.Deadline(bar.Time),
+						deadline:   core.HoldDeadline(bar.Time, maxHold),
 					}
 				}
 			}
@@ -432,25 +414,6 @@ func closePosition(pos *position, symbol string, price float64, when time.Time,
 		Cost:       exitCost + pos.entryCost,
 		ExitReason: reason,
 	}, exitCost
-}
-
-// lastBarsOfWeek marque, pour chaque bougie, si elle est la dernière de sa
-// semaine ISO.
-//
-// Le forex n'a pas de bougie le week-end : une semaine se termine quand la
-// bougie SUIVANTE bascule sur une autre semaine ISO — robuste aux
-// frontières d'année. La dernière bougie de la série reste false : la
-// liquidation finale la couvre déjà (pas de double clôture).
-func lastBarsOfWeek(series core.Series) []bool {
-	flags := make([]bool, len(series))
-	for i := 0; i+1 < len(series); i++ {
-		y1, w1 := series[i].Time.UTC().ISOWeek()
-		y2, w2 := series[i+1].Time.UTC().ISOWeek()
-		if y1 != y2 || w1 != w2 {
-			flags[i] = true
-		}
-	}
-	return flags
 }
 
 // Downsample réduit une courbe à au plus `max` points en conservant le

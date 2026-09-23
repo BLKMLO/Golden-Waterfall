@@ -21,10 +21,13 @@ import (
 // dépendre d'un modèle entraîné.
 type scriptedStrategy struct {
 	script map[int]core.Signal
+	// maxHold : barrière verticale DÉCLARÉE. Zéro = aucune, comme pour
+	// toute stratégie qui n'en annonce pas.
+	maxHold time.Duration
 }
 
 func (s *scriptedStrategy) Describe() strategy.Description {
-	return strategy.Description{Name: "scriptee", Version: "test"}
+	return strategy.Description{Name: "scriptee", Version: "test", MaxHold: s.maxHold}
 }
 func (s *scriptedStrategy) Warmup(context.Context, strategy.WarmupRequest) error { return nil }
 func (s *scriptedStrategy) Shutdown() error                                      { return nil }
@@ -650,7 +653,7 @@ func TestVerticalBarrierClosesAtHorizon(t *testing.T) {
 	// touchés, seule la barrière verticale peut fermer la position.
 	strat := &scriptedStrategy{script: map[int]core.Signal{
 		0: {Action: core.EnterLong, TakeProfit: 500, StopLoss: 1},
-	}}
+	}, maxHold: 5 * 24 * time.Hour}
 	res, err := newEngine(cfg).Run(context.Background(), Request{
 		Symbol: "TEST", Series: series, From: 0, Strategy: strat, Timeframe: data.D1,
 	})
@@ -667,7 +670,56 @@ func TestVerticalBarrierClosesAtHorizon(t *testing.T) {
 	// Entrée au close du 1er janvier, horizon de 5 jours calendaires : la
 	// dernière bougie COMMENCÉE dans la fenêtre est celle du 6 janvier.
 	if want := start.AddDate(0, 0, 5); !tr.ExitTime.Equal(want) {
-		t.Fatalf("liquidation à %s, %s attendu (entrée + MaxHoldDays)", tr.ExitTime, want)
+		t.Fatalf("liquidation à %s, %s attendu (entrée + horizon déclaré)", tr.ExitTime, want)
+	}
+}
+
+// TestNoDeclaredHorizonMeansNoTimeExit : le moteur n'invente pas de
+// barrière verticale. Une stratégie qui n'en déclare pas n'en reçoit pas.
+func TestNoDeclaredHorizonMeansNoTimeExit(t *testing.T) {
+	start := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	var series core.Series
+	for i := 0; i < 7; i++ {
+		series = append(series, core.Bar{
+			Time:    start.AddDate(0, 0, i),
+			BidOpen: 100, BidHigh: 100.2, BidLow: 99.8, BidClose: 100,
+		})
+	}
+	strat := &scriptedStrategy{script: map[int]core.Signal{
+		0: {Action: core.EnterLong, TakeProfit: 500, StopLoss: 1},
+	}}
+	res, err := newEngine(testConfig()).Run(context.Background(), Request{
+		Symbol: "TEST", Series: series, From: 0, Strategy: strat, Timeframe: data.D1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Trades) != 1 || res.Trades[0].ExitReason != "final" {
+		t.Fatalf("sans horizon déclaré, seule la liquidation finale ferme : %+v", res.Trades)
+	}
+}
+
+// TestNoEntryOnLastBarOfTheWeek : une entrée sur la dernière bougie de la
+// semaine serait portée tout le week-end — la clôture de fin de semaine ne
+// se rejoue qu'à la semaine suivante. Le moteur ne l'ouvre donc pas.
+func TestNoEntryOnLastBarOfTheWeek(t *testing.T) {
+	series := core.Series{
+		{Time: time.Date(2024, 1, 5, 20, 0, 0, 0, time.UTC), BidOpen: 100, BidHigh: 100, BidLow: 100, BidClose: 100},
+		{Time: time.Date(2024, 1, 5, 21, 0, 0, 0, time.UTC), BidOpen: 100, BidHigh: 100, BidLow: 100, BidClose: 100},
+		{Time: time.Date(2024, 1, 8, 0, 0, 0, 0, time.UTC), BidOpen: 90, BidHigh: 90, BidLow: 90, BidClose: 90},
+		{Time: time.Date(2024, 1, 8, 1, 0, 0, 0, time.UTC), BidOpen: 90, BidHigh: 90, BidLow: 90, BidClose: 90},
+	}
+	strat := &scriptedStrategy{script: map[int]core.Signal{
+		1: {Action: core.EnterLong, TakeProfit: 200, StopLoss: 95},
+	}}
+	res, err := newEngine(testConfig()).Run(context.Background(), Request{
+		Symbol: "TEST", Series: series, From: 0, Strategy: strat, Timeframe: data.H1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Trades) != 0 {
+		t.Fatalf("aucune position ne doit traverser le week-end : %+v", res.Trades)
 	}
 }
 

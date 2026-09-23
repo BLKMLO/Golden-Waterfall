@@ -17,7 +17,7 @@ import (
 //
 // Le côté BID est le côté de RÉFÉRENCE : indicateurs, features, labels et
 // barrières sont calculés dessus. Le côté ASK ne sert qu'à MESURER le
-// spread réel (voir backtest.MeasureSpread) ; il vaut zéro quand la source
+// spread réel (voir Series.MedianSpread) ; il vaut zéro quand la source
 // n'a pas fourni les deux côtés, et dans ce cas aucun coût n'est modélisé
 // — plutôt qu'un zéro trompeur.
 type Bar struct {

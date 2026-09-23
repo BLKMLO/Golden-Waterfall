@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/BLKMLO/Golden-Waterfall/internal/broker"
 	"github.com/BLKMLO/Golden-Waterfall/internal/config"
@@ -28,11 +29,15 @@ type stubGateway struct{ broker.Gateway }
 
 func (stubGateway) Connected() bool { return true }
 
+// testHorizon : barrière verticale déclarée par les stratégies de test.
+const testHorizon = 5 * 24 * time.Hour
+
 // muteStrategy : stratégie qui ne décide jamais rien.
 type muteStrategy struct{}
 
 func (muteStrategy) Describe() strategy.Description {
-	return strategy.Description{Name: "muette", Version: "test"}
+	// Horizon DÉCLARÉ : le moteur n'en connaît aucun par lui-même.
+	return strategy.Description{Name: "muette", Version: "test", MaxHold: testHorizon}
 }
 func (muteStrategy) Warmup(ctx context.Context, req strategy.WarmupRequest) error { return nil }
 func (muteStrategy) Shutdown() error                                              { return nil }

@@ -40,7 +40,7 @@ func BenchmarkTripleBarrierAgite(b *testing.B) {
 	s := benchSeries(labelBars, 0.0004)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		Default(s)
+		std(s)
 	}
 }
 
@@ -50,6 +50,6 @@ func BenchmarkTripleBarrierCalme(b *testing.B) {
 	s := benchSeries(labelBars, 0.000002)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		Default(s)
+		std(s)
 	}
 }

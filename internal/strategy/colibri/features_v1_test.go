@@ -1,4 +1,4 @@
-package feature
+package colibri
 
 import (
 	"math"
@@ -44,14 +44,14 @@ func synthetic(n int, seed int64) core.Series {
 //
 // Si une feature regardait vers l'avant, sa valeur à l'indice k changerait
 // selon qu'on lui donne la suite de la série ou non. En exigeant
-// Compute(série)[:k] == Compute(série[:k]), on rend ce type de fuite
+// computeV1(série)[:k] == computeV1(série[:k]), on rend ce type de fuite
 // impossible à introduire sans casser le test.
 func TestPrefixStability(t *testing.T) {
 	series := synthetic(600, 11)
-	full := Compute(series)
+	full := computeV1(series)
 
 	for _, k := range []int{120, 300, 455, 599} {
-		partial := Compute(series.Slice(0, k))
+		partial := computeV1(series.Slice(0, k))
 		if partial.Rows != k {
 			t.Fatalf("préfixe %d : %d lignes calculées", k, partial.Rows)
 		}
@@ -74,29 +74,29 @@ func TestPrefixStability(t *testing.T) {
 }
 
 func TestColumnsAreStable(t *testing.T) {
-	if len(Columns) != 34 {
-		t.Fatalf("Colibri définit 34 features causales, %d déclarées", len(Columns))
+	if len(columnsV1) != 34 {
+		t.Fatalf("Colibri définit 34 features causales, %d déclarées", len(columnsV1))
 	}
 	seen := map[string]bool{}
-	for _, c := range Columns {
+	for _, c := range columnsV1 {
 		if seen[c] {
 			t.Fatalf("colonne dupliquée : %q", c)
 		}
 		seen[c] = true
 	}
-	m := Compute(synthetic(200, 3))
-	if m.Cols != len(Columns) {
-		t.Fatalf("matrice à %d colonnes pour %d noms", m.Cols, len(Columns))
+	m := computeV1(synthetic(200, 3))
+	if m.Cols != len(columnsV1) {
+		t.Fatalf("matrice à %d colonnes pour %d noms", m.Cols, len(columnsV1))
 	}
 	for i, name := range m.Names {
-		if name != Columns[i] {
-			t.Fatalf("ordre des colonnes modifié à l'indice %d : %q au lieu de %q", i, name, Columns[i])
+		if name != columnsV1[i] {
+			t.Fatalf("ordre des colonnes modifié à l'indice %d : %q au lieu de %q", i, name, columnsV1[i])
 		}
 	}
 }
 
 func TestWarmupRowsAreNaNThenComplete(t *testing.T) {
-	m := Compute(synthetic(400, 7))
+	m := computeV1(synthetic(400, 7))
 	if m.RowComplete(0) {
 		t.Fatal("la première ligne ne peut pas être complète : toutes les fenêtres sont vides")
 	}
@@ -113,9 +113,9 @@ func TestWarmupRowsAreNaNThenComplete(t *testing.T) {
 	if firstComplete < 0 {
 		t.Fatal("aucune ligne complète : les features ne se stabilisent jamais")
 	}
-	if firstComplete > ContextBars {
+	if firstComplete > contextBars {
 		t.Fatalf("première ligne complète à l'indice %d, au-delà du contexte annoncé (%d)",
-			firstComplete, ContextBars)
+			firstComplete, contextBars)
 	}
 }
 
@@ -131,7 +131,7 @@ func TestNoInfiniteValues(t *testing.T) {
 			BidOpen: 1.2, BidHigh: 1.2, BidLow: 1.2, BidClose: 1.2,
 		}
 	}
-	m := Compute(series)
+	m := computeV1(series)
 	for i, v := range m.Data {
 		if math.IsInf(v, 0) {
 			t.Fatalf("valeur infinie en colonne %q (ligne %d)", m.Names[i%m.Cols], i/m.Cols)
@@ -146,7 +146,7 @@ func TestCalendarFeaturesFollowISOConvention(t *testing.T) {
 		Time:    time.Date(2020, 1, 6, 14, 0, 0, 0, time.UTC),
 		BidOpen: 1, BidHigh: 1, BidLow: 1, BidClose: 1,
 	}}
-	m := Compute(series)
+	m := computeV1(series)
 	get := func(name string) float64 {
 		idx, err := m.ColumnIndex(name)
 		if err != nil {
@@ -170,7 +170,7 @@ func TestCalendarFeaturesFollowISOConvention(t *testing.T) {
 
 func TestATRIsPositiveAndCausal(t *testing.T) {
 	series := synthetic(300, 5)
-	atr := ATR(series)
+	atr := atrOf(series)
 	if len(atr) != len(series) {
 		t.Fatalf("ATR de longueur %d pour %d bougies", len(atr), len(series))
 	}
@@ -181,7 +181,7 @@ func TestATRIsPositiveAndCausal(t *testing.T) {
 	if math.IsNaN(last) || last <= 0 {
 		t.Fatalf("ATR final invalide : %v", last)
 	}
-	partial := ATR(series.Slice(0, 150))
+	partial := atrOf(series.Slice(0, 150))
 	for i := 0; i < 150; i++ {
 		if math.IsNaN(atr[i]) && math.IsNaN(partial[i]) {
 			continue

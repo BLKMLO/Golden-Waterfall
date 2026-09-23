@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/BLKMLO/Golden-Waterfall/internal/core"
+	"github.com/BLKMLO/Golden-Waterfall/internal/indicator"
 )
 
 // bars construit une série horaire à partir de quadruplets OHLC.
@@ -25,6 +26,13 @@ func bars(ohlc [][4]float64) core.Series {
 	return out
 }
 
+// std applique les paramètres de colibri_v1_0/v1_1 (1,5 × ATR(14),
+// cinq jours) : ceux sur lesquels ces tests ont été écrits.
+func std(series core.Series) Labels {
+	atr := indicator.ATR(series.Highs(), series.Lows(), series.Closes(), 14)
+	return TripleBarrier(series, atr, 1.5, 5*24*time.Hour)
+}
+
 // flat génère assez de bougies pour que l'ATR de Wilder (14) soit défini,
 // avec une amplitude connue.
 func flat(n int, price, amplitude float64) [][4]float64 {
@@ -42,7 +50,7 @@ func TestUpperBarrierFirstGivesLabelOne(t *testing.T) {
 	rows = append(rows, flat(140, 119, 1)...) // > 5 jours horaires après l'événement
 	series := bars(rows)
 
-	res := TripleBarrier(series, BarrierATRMult, MaxHoldDays)
+	res := std(series)
 	i := 39
 	if !res.Defined(i) {
 		t.Fatalf("la bougie %d doit être étiquetable (ATR défini, fenêtre complète)", i)
@@ -58,7 +66,7 @@ func TestLowerBarrierFirstGivesLabelZero(t *testing.T) {
 	rows = append(rows, flat(140, 81, 1)...)
 	series := bars(rows)
 
-	res := TripleBarrier(series, BarrierATRMult, MaxHoldDays)
+	res := std(series)
 	i := 39
 	if res.Value[i] != 0 || res.Which[i] != BarrierSL {
 		t.Fatalf("barrière basse touchée en premier → label 0/sl, reçu %v/%v", res.Value[i], res.Which[i])
@@ -75,7 +83,7 @@ func TestBothBarriersInSameBarPrefersStop(t *testing.T) {
 	rows = append(rows, flat(140, 128, 1)...)
 	series := bars(rows)
 
-	res := TripleBarrier(series, BarrierATRMult, MaxHoldDays)
+	res := std(series)
 	i := 39
 	if res.Value[i] != 0 || res.Which[i] != BarrierSL {
 		t.Fatalf("les deux barrières dans la même bougie → stop (0/sl), reçu %v/%v",
@@ -91,7 +99,7 @@ func TestIncompleteForwardWindowIsUnlabeled(t *testing.T) {
 	// 100 bougies horaires = ~4 jours : l'horizon de 5 jours ne tient
 	// dans la série pour AUCUNE bougie.
 	series := bars(flat(100, 100, 1))
-	res := TripleBarrier(series, BarrierATRMult, MaxHoldDays)
+	res := std(series)
 	for i := range series {
 		if res.Defined(i) {
 			t.Fatalf("bougie %d étiquetée alors que son horizon dépasse la série", i)
@@ -101,7 +109,7 @@ func TestIncompleteForwardWindowIsUnlabeled(t *testing.T) {
 	// Avec 300 bougies (12,5 jours), les premières deviennent étiquetables
 	// et les DERNIÈRES doivent rester sans label.
 	long := bars(flat(300, 100, 1))
-	res = TripleBarrier(long, BarrierATRMult, MaxHoldDays)
+	res = std(long)
 	if !res.Defined(50) {
 		t.Fatal("une bougie avec 5 jours de marge devant elle doit être étiquetable")
 	}
@@ -113,7 +121,7 @@ func TestIncompleteForwardWindowIsUnlabeled(t *testing.T) {
 func TestTimeBarrierUsesReturnSign(t *testing.T) {
 	// Marché plat : aucune barrière n'est touchée, l'horizon décide.
 	series := bars(flat(400, 100, 0.2))
-	res := TripleBarrier(series, BarrierATRMult, MaxHoldDays)
+	res := std(series)
 	i := 20
 	if !res.Defined(i) {
 		t.Fatalf("bougie %d non étiquetée", i)
@@ -129,7 +137,7 @@ func TestTimeBarrierUsesReturnSign(t *testing.T) {
 
 func TestATRUndefinedGivesNoLabel(t *testing.T) {
 	series := bars(flat(5, 100, 1)) // trop court pour un ATR(14)
-	res := TripleBarrier(series, BarrierATRMult, MaxHoldDays)
+	res := std(series)
 	for i := range series {
 		if !math.IsNaN(res.Value[i]) {
 			t.Fatalf("sans ATR, la bougie %d ne peut pas être étiquetée", i)
@@ -139,7 +147,7 @@ func TestATRUndefinedGivesNoLabel(t *testing.T) {
 
 func TestLabelsAreBinary(t *testing.T) {
 	series := bars(flat(500, 100, 0.5))
-	res := Default(series)
+	res := std(series)
 	for i, v := range res.Value {
 		if math.IsNaN(v) {
 			continue
@@ -147,48 +155,5 @@ func TestLabelsAreBinary(t *testing.T) {
 		if v != 0 && v != 1 {
 			t.Fatalf("label non binaire à l'indice %d : %v", i, v)
 		}
-	}
-}
-
-// TestExpiredDesignatesTheLastBarOfTheWindow : la règle de la barrière
-// verticale est appelée par les DEUX moteurs. Elle doit désigner la même
-// bougie que la fenêtre (t, t+horizon] de l'étiquetage.
-func TestExpiredDesignatesTheLastBarOfTheWindow(t *testing.T) {
-	entry := time.Date(2024, 3, 4, 0, 0, 0, 0, time.UTC)
-	deadline := Deadline(entry)
-	const h4 = 4 * time.Hour
-
-	if want := entry.Add(time.Duration(MaxHoldDays) * 24 * time.Hour); !deadline.Equal(want) {
-		t.Fatalf("échéance %s, %s attendue", deadline, want)
-	}
-	// Une bougie qui se termine AVANT l'échéance : la fenêtre continue.
-	if Expired(deadline.Add(-2*h4), h4, deadline) {
-		t.Fatal("une bougie entièrement dans la fenêtre ne doit pas expirer")
-	}
-	// La bougie qui CONTIENT l'échéance est la dernière de la fenêtre.
-	if !Expired(deadline.Add(-h4/2), h4, deadline) {
-		t.Fatal("la bougie qui atteint l'échéance doit fermer la position")
-	}
-	if !Expired(deadline, h4, deadline) {
-		t.Fatal("la bougie qui commence à l'échéance doit fermer la position")
-	}
-}
-
-func TestExpiredWithoutCadenceFallsBackToStrictOverrun(t *testing.T) {
-	entry := time.Date(2024, 3, 4, 0, 0, 0, 0, time.UTC)
-	deadline := Deadline(entry)
-	if Expired(deadline, 0, deadline) {
-		t.Fatal("sans cadence connue, on attend un dépassement STRICT")
-	}
-	if !Expired(deadline.Add(time.Minute), 0, deadline) {
-		t.Fatal("après l'échéance, la position doit être fermée")
-	}
-}
-
-// TestExpiredWithoutDeadlineNeverFires : une position sans échéance (aucune
-// entrée) ne doit jamais déclencher de sortie.
-func TestExpiredWithoutDeadlineNeverFires(t *testing.T) {
-	if Expired(time.Now(), 4*time.Hour, time.Time{}) {
-		t.Fatal("sans échéance posée, rien ne doit expirer")
 	}
 }
