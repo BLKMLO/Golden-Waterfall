@@ -251,3 +251,27 @@ func TestBacktestAcceptsFlagsAfterThePair(t *testing.T) {
 		t.Fatalf("l'option placée après la paire est ignorée : %v", err)
 	}
 }
+
+// TestHelpStartsWithFirstSteps : quelqu'un qui découvre le programme lit
+// le début de l'aide, pas la liste des options. Les premiers pas viennent
+// donc AVANT tout le reste, dans l'ordre où ils se font.
+func TestHelpStartsWithFirstSteps(t *testing.T) {
+	isolate(t)
+	out, err := capture(t, func() error { return run([]string{"--help"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, commands := strings.Index(out, "PREMIERS PAS"), strings.Index(out, "COMMANDES")
+	if first < 0 || commands < 0 || first > commands {
+		t.Fatalf("les premiers pas doivent précéder les commandes :\n%s", out)
+	}
+	steps := []string{"gw download", "gw train", "gw backtest", "écran 1 Live"}
+	last := first
+	for _, s := range steps {
+		i := strings.Index(out[first:commands], s)
+		if i < 0 || first+i < last {
+			t.Fatalf("étape « %s » absente ou hors d'ordre :\n%s", s, out[first:commands])
+		}
+		last = first + i
+	}
+}

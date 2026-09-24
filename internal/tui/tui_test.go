@@ -246,3 +246,37 @@ func TestHelpFitsAndScrolls(t *testing.T) {
 		t.Fatal("« échap » doit refermer l'aide")
 	}
 }
+
+// TestBodiesFitWithoutCutting : TestScreensNeverExceedTheTerminal passe
+// même quand Fit coupe le corps — il ne voit que le résultat. Celui-ci
+// exige que chaque écran TIENNE dans la hauteur accordée, dès 60×18 : une
+// coupure annoncée vaut mieux qu'une coupure muette, mais un écran qui
+// n'a rien à couper vaut mieux que les deux.
+func TestBodiesFitWithoutCutting(t *testing.T) {
+	m := New(newTestApp(t))
+	for _, size := range screenSizes {
+		model, _ := m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+		m = model.(*Model)
+		body := m.height - lipgloss.Height(m.renderHeader()) - lipgloss.Height(m.renderFooter())
+		for i, v := range m.views {
+			if h := lipgloss.Height(v.Render(m.width, body)); h > body {
+				t.Errorf("écran %s en %d×%d : corps de %d lignes pour %d accordées",
+					m.views[i].Title(), size[0], size[1], h, body)
+			}
+		}
+	}
+}
+
+// TestHeaderShowsAccountCurrency : la devise du compte décide des paires
+// qui tradent ; elle reste dans l'entête à toutes les largeurs.
+func TestHeaderShowsAccountCurrency(t *testing.T) {
+	m := New(newTestApp(t))
+	cur := m.app.Config.Backtest.AccountCurrency
+	for _, size := range screenSizes {
+		model, _ := m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+		m = model.(*Model)
+		if h := m.renderHeader(); !strings.Contains(h, cur) {
+			t.Errorf("devise %s absente de l'entête en %d colonnes :\n%s", cur, size[0], h)
+		}
+	}
+}

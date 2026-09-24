@@ -640,6 +640,13 @@ func (v *Settings) Render(width, height int) string {
 	// déborder l'écran de cinq lignes à toutes les tailles.
 	header := v.renderHeader(width)
 	help := v.renderHelp(width)
+	// Petits terminaux : les deux panneaux fixes coûtaient à eux seuls
+	// onze lignes, et le tableau des réglages n'en gardait aucune. Ils
+	// passent alors en lignes simples, sans cadre ; aucun avertissement
+	// ne disparaît.
+	if height-lipgloss.Height(header)-lipgloss.Height(help) < settingsMinTable {
+		header, help = v.renderHeaderLine(width), v.renderHelpLines(width)
+	}
 
 	sb.WriteString(header)
 	sb.WriteString("\n")
@@ -710,6 +717,38 @@ func (v *Settings) renderHeader(width int) string {
 			"✗ "+strings.ReplaceAll(v.invalid, "\n", " · "), component.PanelContent(width)))
 	}
 	return component.Panel(th, "Configuration", body, width)
+}
+
+// settingsMinTable : en deçà, le tableau des réglages (cadre, entête, pied
+// compris) ne montre plus que deux ou trois lignes.
+const settingsMinTable = 8
+
+// renderHeaderLine : l'état du brouillon et l'avertissement, en une ou
+// deux lignes sans cadre.
+func (v *Settings) renderHeaderLine(width int) string {
+	th := v.deps.Theme
+	state := th.Muted.Render("aucune modification en attente")
+	if v.dirty {
+		state = th.Warning.Render("NON enregistré — s écrit config.yaml")
+	}
+	line := state + th.Warning.Render(" · ⚠ effet au redémarrage")
+	out := component.Clip(line, width)
+	if v.invalid != "" {
+		out += "\n" + th.Negative.Render(component.Truncate(
+			"✗ "+strings.ReplaceAll(v.invalid, "\n", " · "), width))
+	}
+	return out
+}
+
+// renderHelpLines : l'aide du réglage courant en deux lignes sans cadre.
+func (v *Settings) renderHelpLines(width int) string {
+	th := v.deps.Theme
+	f := v.current()
+	second := th.Muted.Render(component.Truncate(f.Help, width))
+	if env := v.forcedBy(f.Path); env != "" {
+		second = th.Warning.Render(component.Truncate("⚠ forcé par "+env, width))
+	}
+	return th.Text.Render(component.Truncate(f.Label+" — "+f.Path, width)) + "\n" + second
 }
 
 func (v *Settings) renderHelp(width int) string {

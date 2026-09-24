@@ -312,14 +312,21 @@ func (m *Model) renderHeader() string {
 	// sens : d'abord les libellés d'onglets (leur numéro suffit à les
 	// atteindre), ensuite les badges eux-mêmes en version courte, jamais
 	// l'avertissement de mode.
+	//
+	// Dernier cran avant de passer les badges sur leur propre ligne : des
+	// onglets réduits à leur chiffre, sans marge. Une ligne gagnée compte
+	// quand le terminal n'en a que dix-huit.
 	for _, attempt := range []struct {
-		compactTabs, compactBadges bool
-	}{{false, false}, {true, false}, {true, true}} {
+		compactTabs, compactBadges, bareTabs bool
+	}{{false, false, false}, {true, false, false}, {true, true, false}, {true, true, true}} {
 		if attempt.compactBadges {
 			badges = m.badges(snap, true)
 			right = lipgloss.JoinHorizontal(lipgloss.Top, badges...)
 		}
 		left := m.headerLeft(attempt.compactTabs)
+		if attempt.bareTabs {
+			left = m.headerBare()
+		}
 		gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
 		if gap >= 1 {
 			return left + strings.Repeat(" ", gap) + right + "\n" + m.rule()
@@ -355,6 +362,23 @@ func (m *Model) headerLeft(compact bool) string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, parts...)
 }
 
+// headerBare : onglets réduits à leur chiffre, séparés d'une espace.
+func (m *Model) headerBare() string {
+	parts := make([]string, 0, len(m.views))
+	for i, v := range m.views {
+		label := fmt.Sprintf("%d", i+1)
+		if v.Busy() {
+			label += "⣿"
+		}
+		style := m.th.Tab
+		if i == m.active {
+			style = m.th.TabActive
+		}
+		parts = append(parts, style.UnsetPadding().Render(label))
+	}
+	return strings.Join(parts, " ")
+}
+
 // badges construit les pastilles d'état. En version courte, les libellés
 // raccourcissent mais AUCUNE pastille ne disparaît.
 func (m *Model) badges(snap live.Snapshot, compact bool) []string {
@@ -373,6 +397,11 @@ func (m *Model) badges(snap live.Snapshot, compact bool) []string {
 	default:
 		out = append(out, m.th.BadgeOff.Render("PAPER"))
 	}
+	// La devise du compte décide des paires qui peuvent trader (21 sur 31
+	// ne le peuvent pas sur un compte en dollars) : elle se lit en
+	// permanence, pas seulement dans l'écran Paramètres.
+	cur := m.app.Config.Backtest.AccountCurrency
+	out = append(out, m.th.BadgeOff.Render(pick("compte "+cur, cur)))
 	out = append(out, component.Badge(m.th, snap.GatewayName, snap.Connected))
 	if !snap.SupportsBracket {
 		// Le moteur refusera toute entrée : mieux vaut le lire dans

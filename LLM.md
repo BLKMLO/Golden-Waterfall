@@ -115,6 +115,11 @@ d'être vraie.
 | `Table` : `+N col.` ; `Fit` : lignes masquées ; `StatRowMax` : `+N` | TUI | Perdre une information sans le dire |
 | Badges d'état jamais supprimés | TUI | Perdre « LIVE — ARGENT RÉEL » en réduisant la fenêtre |
 | Listes de trades défilables, position « n/N », « 500 plus récents sur N » | TUI | Des trades invisibles, sans un mot |
+| Ligne de contrôle Live (`checks`), « ? » avant la connexion | TUI Live | « Pourquoi rien ne se passe ? » sans réponse ; supposer un modèle chargé |
+| Numéro de compte tapé avant une connexion live réelle (`ConnectAs`) | TUI Live, live | Engager de l'argent réel sur une touche |
+| Filtre « tradables » par défaut + devise dans l'entête | TUI | Choisir une paire qui ne produira aucun trade |
+| « n » (aucun) décoche aussi les paires masquées | sélecteur | Une sélection validée qui contient des paires invisibles |
+| `TestBodiesFitWithoutCutting`, `TestLoadedScreensFit` | TUI | Un écran coupé par `Fit` alors qu'il pouvait s'abréger |
 | Filtre du Journal rappelé ; période de téléchargement affichée | TUI | Un filtre oublié ; croire télécharger tout l'historique |
 | Export = copie, cellule VIDE si non mesuré, drapeaux exportés | export CSV | Un fichier qui contredit l'écran ; un zéro inventé |
 | `theme.Apply` force réellement le fond | TUI | Une clé de configuration qui n'agit pas |
@@ -131,6 +136,16 @@ d'être vraie.
   `component.PanelContent(width)` pour la largeur intérieure. Budget de
   `PanelH` : `height − 3` ; un `Table` fenêtré prend `visible + 2` lignes
   (entête, pied « N lignes »).
+- **Petits terminaux** : chaque écran a une disposition COMPACTE (lignes
+  sans cadre, avertissements sur une ligne qui commence par le plus grave)
+  choisie seulement si la complète ne tient pas. Les textes explicatifs
+  sont écrits d'un trait, sans retour à la ligne manuel, et ont une
+  version courte (`explainPanel`). Deux tests l'exigent dès 60×18, écrans
+  vides ET pleins.
+- **Aide contextuelle** : une ligne au bas des panneaux de trades dit ce
+  que font les touches LÀ. `t` veut dire « aller aux trades / revenir »
+  dans Backtest comme dans Journal ; `entrée` ouvre le détail d'un trade ;
+  `v` bascule « tradables / toutes » partout où l'on choisit une paire.
 - **Listes longues** : `component.Scroll` (curseur, ↑↓, pgup/pgdn,
   début/fin, molette) + `Table` avec ce curseur — jamais `cursor = -1`
   sur une liste qui peut dépasser l'écran.
@@ -269,7 +284,7 @@ Dependabot hebdomadaire, `charmbracelet/x/*` GROUPÉS.
 
 Licence **MIT**, choisie par le propriétaire du projet.
 
-## État du projet (24 septembre 2026, v0.5.0)
+## État du projet (24 septembre 2026, v0.6.0)
 
 24 paquets, suite verte avec `-race`. `wc -l` des fichiers `.go` :
 20 875 lignes hors tests, 9 592 de tests.
@@ -285,7 +300,9 @@ Validé réellement : walk-forward et backtest de bout en bout sur un
 historique importé depuis pyarrow ; Parquet écrit relu par pyarrow ; rendu
 TUI contrôlé de 60×18 à 200×60 ; sélecteur de paires sous tmux ; binaire
 connecté à un **faux TWS** sous tmux (équité, position, ticks, refus
-« compte papier en mode live »).
+« compte papier en mode live ») ; en v0.6.0, binaire sous tmux à 60×18
+et 132×34 sur un rejeu d'historique SYNTHÉTIQUE (liste de contrôle,
+filtre tradables, dispositions compactes).
 
 **Jamais validé** : un téléchargement Dukascopy réel, une mesure sur
 données réelles, une séance contre un vrai TWS.
@@ -307,15 +324,12 @@ données réelles, une séance contre un vrai TWS.
    `0.5`, `gw runs`).
 5. **Règle de fin de semaine en live** (divergence backtest/live, voir
    plus haut).
-6. **Petits terminaux** : sous 80×24 l'écran Live est coupé ; sous
-   22 lignes de corps, l'écran Backtest avec résultat déborde de trois
-   lignes (plancher des graphiques). `Fit` le dit ; mieux vaut abréger.
-7. **IB, suite** : reconnexion automatique, métaux et indices (contrat
+6. **IB, suite** : reconnexion automatique, métaux et indices (contrat
    à définir, pas à deviner), P&L latent via `reqAccountUpdates`.
-8. **Exposition croisée** dans le walk-forward (drawdown et Sharpe
+7. **Exposition croisée** dans le walk-forward (drawdown et Sharpe
    agrégés à NaN faute de courbe commune).
-9. **Import CSV** (le lecteur de colonnes par alias existe).
-10. **Icône Windows** : il manque `build/icon.ico` (256×256).
+8. **Import CSV** (le lecteur de colonnes par alias existe).
+9. **Icône Windows** : il manque `build/icon.ico` (256×256).
 
 ## Décisions en vigueur (et pourquoi)
 
@@ -347,6 +361,9 @@ de défaire.
   qu'une dépendance (Go 1.26 + protobuf) ; **forex seulement** plutôt
   qu'une correspondance approximative des métaux et indices ; **sortie =
   annuler puis confirmer puis vendre**, quitte à ne pas sortir.
+- **Premiers pas en tête de `gw --help`** (avant la liste des commandes) ;
+  le README n'y renvoie qu'en une ligne. Pas d'assistant de premier
+  lancement dans la TUI : décision du propriétaire du projet.
 - **README abrégé, détail dans `docs/`** (`architecture`, `brokers`,
   `colibri`, `depannage`, `donnees`, `gbdt`).
 

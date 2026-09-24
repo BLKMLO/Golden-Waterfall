@@ -23,6 +23,10 @@ cessait d'être vraie — ce ne sont pas des intentions.
 | Envoyer une sortie pendant que ses barrières vivent encore chez IB | annule les barrières, attend la confirmation, puis seulement sort |
 | Laisser une position nue quand IB annule une barrière | ferme la position au marché |
 | Prendre la sortie d'une position d'avant le démarrage pour une entrée | ne journalise rien et le dit |
+| Se connecter à ARGENT RÉEL sur une seule touche | demande de taper le numéro du compte, refuse s'il n'est pas celui de la session |
+| Proposer au même rang des paires qui ne peuvent pas trader | ne propose que les paires dimensionnables dans la devise du compte (`v` pour tout voir) |
+| Laisser « pourquoi rien ne se passe ? » sans réponse | une ligne de contrôle nomme, pour la paire sélectionnée, la condition qui bloque |
+| Couper un écran sur un petit terminal | passe en disposition compacte ; rien n'est coupé dès 60×18 |
 
 
 ## Quand ça se passe mal

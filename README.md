@@ -17,27 +17,43 @@ aucune dépendance à installer.
 ---
 
 ```
-◆ Golden Waterfall  1 Live  2 Données  3 Backtest  4 Entraînement  5 Journal  6 Paramètres   REJEU — COMPTE SIMULÉ  replay  kill-switch
-───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ Compte                                                                                                                              │
-│ Équité              Marge               Perte du jour       Ticks               Bougies             Ordres                          │
-│ 10 404.73           367.20              0.41 %              3 931               981                 36                              │
-│                                         plafond 2.0 %       dernier 13:00:00                        72 exécutés                     │
-╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭──────────────────────────────────────────────────────────╮╭─────────────────────────────────────────────────────────────────────────╮
-│ Paires suivies                                           ││ EURUSD · H1                                                             │
-│ Paire           Bid     Var. État      Signal            ││                          █│                                             │
-│ ▸EURUSD      1.11155  +0.16 % armée     LONG 0.71        ││                          ██        █                                    │
-│  GBPUSD      1.28706  +0.06 % arrêtée   neutre 0.52      ││                         █  █   │█  ██        █    ███   █ █             │
-│  USDJPY      152.790  -0.22 % arrêtée   —                ││                   ██████ █  █  ██  ███  ████ █ ██ ████  ███             │
-│                                                          ││ ███  █         ███   ██ ███ █│████ █████     │███│ █ █   ██   █ █       │
-│                                                          ││ O 1.11168  H 1.11168  B 1.11098  C 1.11098  ·  420 bougies              │
-╰──────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────────────────────────────────╯
-Moteur : 1 paire(s) armée(s)
-
-tab écran  ·  ? aide  ·  q quitter  ·  c connecter  ·  k kill-switch global  ·  espace armer la paire  ·  ↑↓ sélection
+   1      2      3      4      5      6                        REJEU — COMPTE SIMULÉ  compte USD  replay  kill-switch  colibri_v1_2
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Compte                                                                                                                           │
+│ Équité        Marge         Perte du jour Ticks         Bougies       Ordres                                                     │
+│ 10000.00      0.00          0.00 %        23 725        99            0                                                          │
+│                             plafond 2.0 % dernier 20:2…               0 exécutés                                                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭────────────────────────────────────────────────────────────────╮╭────────────────────────────────────────────────────────────────╮
+│ Paires suivies                                                 ││ AUDUSD · H1                                                    │
+│  Paire           Bid     Var. État      Signal                 ││  ██  │││     ██                                                │
+│ ▸AUDUSD      0.67473  +0.70 % armée     pas de modèle          ││ ██████████████████                                             │
+│  EURUSD      1.11239  +0.03 % arrêtée   pas de modèle          ││ ██  │ │██ ││  ██│█                                             │
+│  GBPUSD      1.28395  +0.47 % arrêtée   pas de modèle          ││                  ███████│ ││                                   │
+│  USDJPY      153.045  -0.19 % arrêtée   pas de modèle          ││                   │││ │████████ │██                        █   │
+│                                                                ││                            ██│█████                │    ████   │
+│                                                                ││                               ││                 ███│████│     │
+│                                                                ││                                                │██ ███│        │
+│                                                                ││                                           │ █████              │
+│                                                                ││                                        ││████ ██               │
+│                                                                ││                                    █│█████ ││                  │
+│                                                                ││ ⚠ aucun entraînement archivé pour la stratégie "colibri_v1_…   │
+│                                                                ││ O 0.67304  H 0.67539  B 0.67304  C 0.67532  ·  110 bougies     │
+╰────────────────────────────────────────────────────────────────╯╰────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Positions ouvertes (rapportées par la passerelle)                                                                                │
+│  Paire    Sens     Quantité   Prix moyen   P&L latent                                                                            │
+│   (aucune donnée)                                                                                                                │
+│                                                                                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+AUDUSD  → bloquée : modèle  ✓ passerelle  ✓ barrières  ✓ kill-switch  ✓ paire armée  ✗ modèle  ✓ historique  ✓ devise USD
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ AUDUSD ARMÉE
+tab écran  ·  ? aide  ·  q quitter  ·  c connecter / déconnecter  ·  k kill-switch global  ·  espace armer la paire  ·  ↑↓ sélection
 ```
+
+<sub>Capture réelle du binaire : rejeu sur un historique synthétique, sans modèle entraîné — d'où « bloquée : modèle » sur la ligne de contrôle.</sub>
 
 ## Pourquoi
 
@@ -77,6 +93,8 @@ go build -o gw ./cmd/gw
 
 ## Démarrer
 
+`gw --help` commence par les **premiers pas** : les quatre étapes, dans l'ordre, avec la commande et l'écran de chacune.
+
 **1. Lancez `./gw`.** Un `config.yaml` commenté est écrit au premier
 démarrage ; `./gw paths` dit où. Tout se règle ensuite depuis l'écran
 **6 Paramètres**.
@@ -102,15 +120,21 @@ mise en place dans [docs/brokers.md](docs/brokers.md).
 
 | | Ce qu'on y fait |
 |---|---|
-| **1 Live** | Compte, paires suivies, positions, graphique en chandeliers |
+| **1 Live** | Compte, paires suivies, positions, graphique en chandeliers ; ligne de contrôle « pourquoi cette paire ne trade pas » |
 | **2 Données** | Inventaire de l'historique local, téléchargement complet ou par période, conversion des anciens fichiers (`m`) |
-| **3 Backtest** | Rejeu d'une paire, courbe d'équité, liste des trades défilable (`t`, `pgup`/`pgdn`), export CSV (`e`) |
+| **3 Backtest** | Rejeu d'une paire, courbe d'équité, liste des trades défilable (`t`, `pgup`/`pgdn`), détail d'un trade (`entrée`), export CSV (`e`) |
 | **4 Entraînement** | Walk-forward, choix des paires (`p`), plis, agrégat out-of-sample, runs archivés |
-| **5 Journal** | Journal applicatif et journal des trades exécutés (défilable), filtre texte (`/`), export CSV (`e`) |
+| **5 Journal** | Journal applicatif et journal des trades exécutés (défilable, détail par `entrée`), filtre texte (`/`), export CSV (`e`) |
 | **6 Paramètres** | Compte et courtier, risque, stratégie, historique, interface |
 
 `tab` change d'écran, `?` affiche l'aide complète, `q` quitte — et refuse tant
 qu'un entraînement tourne.
+
+La **devise du compte** reste affichée dans l'entête : avec le dimensionnement
+au risque, seules les paires dont elle est la base ou la cotation peuvent
+trader. Live, Backtest et le choix des paires ne proposent qu'elles par
+défaut ; `v` montre toutes les paires. L'interface tient sans rien couper
+dès 60×18.
 
 ## Le moteur Colibri
 
@@ -187,12 +211,15 @@ stratégie inscrite au catalogue passe d'office le banc de conformité
 (`internal/strategy/strategytest`).
 
 Pour publier : onglet **Actions** → **Release** → **Run workflow** avec le
-numéro (`v0.5.0`), ou pousser un tag `v*`.
+numéro (`v0.6.0`), ou pousser un tag `v*`.
 
 ## Avertissement
 
 Le mode par défaut est `paper` et la passerelle par défaut est un **rejeu
 simulé**. Passer `broker.mode` à `live` engage de l'argent réel.
+
+En mode `live` sur un vrai courtier, la connexion demande de **taper le
+numéro du compte** ; elle est refusée si ce n'est pas celui de la session.
 
 La passerelle Interactive Brokers est éprouvée contre les messages du
 client officiel d'IB et contre un faux TWS, **pas encore contre un vrai

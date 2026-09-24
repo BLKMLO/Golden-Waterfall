@@ -138,6 +138,9 @@ func (v *Training) openPicker() {
 		}
 		return ""
 	}
+	p.Tradable = func(symbol string) bool { return tradable(cfg, symbol) }
+	p.OnlyTradable = cfg.Risk.RiskPerTradePct > 0
+	p.TradableLabel = tradableLabel(cfg)
 	v.picker = p
 }
 
@@ -314,25 +317,24 @@ func (v *Training) Render(width, height int) string {
 		sb.WriteString(component.Panel(th, "Résultat", th.Negative.Render(wrap(errText, width-6)), width))
 		return sb.String()
 	case result == nil:
-		sb.WriteString(component.Panel(th, "Résultat", th.Muted.Render(
+		sb.WriteString(explainPanel(th, "Résultat", width, rest,
 			"Aucun walk-forward dans cette session.\n\n"+
-				"La seconde moitié de l'historique est découpée en blocs de test\n"+
-				"consécutifs. Chaque pli s'entraîne sur tout ce qui précède son bloc,\n"+
-				"puis est évalué dessus : rien n'est jamais testé sur des données\n"+
-				"vues à l'entraînement.\n\n"+
-				"r lance l'entraînement · o affiche les runs archivés"),
-			width))
+				"La seconde moitié de l'historique est découpée en blocs de test consécutifs. "+
+				"Chaque pli s'entraîne sur tout ce qui précède son bloc, puis est évalué dessus : "+
+				"rien n'est jamais testé sur des données vues à l'entraînement.\n\n"+
+				"r lance l'entraînement · o affiche les runs archivés",
+			"Aucun walk-forward. r lance · o runs archivés"))
 		return sb.String()
 	}
 
 	aggregate := component.FitBlock(rest-minBandHeight, 1, component.DefaultStatRows,
 		func(rows int) string { return v.renderAggregate(result, took, width, rows) })
+	if rest-lipgloss.Height(aggregate) < minBandHeight {
+		return v.renderCompactResult(result, width, height)
+	}
 	sb.WriteString(aggregate)
 	sb.WriteString("\n")
 	chartHeight := rest - lipgloss.Height(aggregate)
-	if chartHeight < minBandHeight {
-		chartHeight = minBandHeight
-	}
 	leftWidth := width / 2
 	sb.WriteString(lipgloss.JoinHorizontal(lipgloss.Top,
 		v.renderFolds(result, leftWidth, chartHeight),
@@ -384,6 +386,59 @@ func (v *Training) renderHeader(width, rows int) string {
 	}
 	return component.Panel(th, "Walk-forward en cours",
 		line+"\n"+th.Muted.Render(component.Truncate(detail, width-6)), width)
+}
+
+// renderCompactResult : l'agrégat pour un petit terminal, en lignes
+// simples. L'AUC out-of-sample ouvre la ligne de chiffres : c'est le seul
+// qui dise si le modèle vaut quelque chose.
+func (v *Training) renderCompactResult(res *training.Result, width, height int) string {
+	th := v.deps.Theme
+	s := res.Aggregate
+	params := th.Accent.Render(v.deps.App.Config.Strategy.Name) + th.Muted.Render(component.Truncate(
+		fmt.Sprintf(" · %s · %d plis · %s", v.timeframe(), len(res.Folds), pairsNote(res.Symbols)), width-14))
+	auc := component.Dash
+	if res.HasMeanAUC {
+		auc = component.Num(res.MeanOOSAUC, 3)
+	}
+	pnlStyle := th.Positive
+	if s.NetPnL < 0 {
+		pnlStyle = th.Negative
+	}
+	cards := []component.StatCard{
+		{Label: "AUC OOS", Value: auc, Style: th.Accent},
+		{Label: "P&L net OOS " + s.Currency, Value: component.Money(s.NetPnL), Style: pnlStyle},
+		{Label: "Trades OOS", Value: component.Count(s.Trades)},
+		{Label: "Taux de gain", Value: component.Num(s.WinRate, 1) + " %"},
+		{Label: "Profit factor", Value: component.Ratio(s.ProfitFactor)},
+	}
+	stats := component.StatRowMax(th, cards, width, 1)
+	warn := []string{"AUC 0,50 = hasard"}
+	if res.FinalDir == "" {
+		warn = append(warn, "PAS de modèle de production")
+	}
+	if !s.CostsModelled {
+		warn = append(warn, "⚠ coûts incomplets")
+	}
+	if !s.CurrencyExact {
+		warn = append(warn, "⚠ devises mêlées")
+	}
+	if n, _ := risk.SizingRefusals(s.Rejections); n > 0 {
+		warn = append(warn, fmt.Sprintf("⚠ %d entrée(s) non dimensionnée(s)", n))
+	}
+	if s.RejectedOrders > 0 {
+		warn = append(warn, fmt.Sprintf("⚠ %d refus de marge", s.RejectedOrders))
+	}
+	top := params + "\n" + stats + "\n" + th.Warning.Render(component.Truncate(strings.Join(warn, " · "), width))
+	band := height - lipgloss.Height(top)
+	if band < minCompactBand {
+		band = minCompactBand
+	}
+	if band >= minBandHeight && width >= 100 {
+		leftWidth := width / 2
+		return top + "\n" + lipgloss.JoinHorizontal(lipgloss.Top,
+			v.renderFolds(res, leftWidth, band), v.renderEquity(res, width-leftWidth, band))
+	}
+	return top + "\n" + v.renderFolds(res, width, band)
 }
 
 func (v *Training) renderAggregate(res *training.Result, took time.Duration, width, rows int) string {

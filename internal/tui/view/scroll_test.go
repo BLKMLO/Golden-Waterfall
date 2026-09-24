@@ -71,11 +71,7 @@ func TestBacktestTradesScroll(t *testing.T) {
 	if v.trades.Cursor <= 2 {
 		t.Fatal("pgdn doit avancer d'une page")
 	}
-	// En dessous de 22 lignes de corps, l'écran Backtest déborde déjà de
-	// trois lignes AVANT cette liste (plancher des graphiques) ; le
-	// routeur coupe alors en l'annonçant. Ce test garde ce que la liste
-	// défilable ne doit pas aggraver.
-	for _, h := range []int{22, 24, 40, 60} {
+	for _, h := range []int{13, 15, 19, 24, 40, 60} {
 		if got := lipgloss.Height(v.Render(100, h)); got > h {
 			t.Fatalf("écran Backtest de %d lignes pour %d accordées", got, h)
 		}

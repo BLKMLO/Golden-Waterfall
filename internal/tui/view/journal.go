@@ -42,6 +42,8 @@ type Journal struct {
 	// dit où l'on est dans une liste de cinq cents.
 	tradeScroll component.Scroll
 	tradePage   int
+	// detail : le trade sélectionné est affiché en entier (entrée).
+	detail bool
 
 	// Filtre texte. Le niveau minimum ne suffit pas : sur un millier de
 	// lignes, retrouver ce qu'une paire a fait demande de chercher son
@@ -65,7 +67,8 @@ func (v *Journal) Keys() [][2]string {
 		{"/", "filtrer"},
 		{"f", "niveau minimum"},
 		{"s", "suivre / figer"},
-		{"t", "journal / trades"},
+		{"t", "trades ⇄ journal"},
+		{"entrée", "détail du trade"},
 		{"e", "exporter les trades"},
 		{"↑↓ pgup pgdn", "défiler"},
 		{"début fin", "extrémités"},
@@ -122,8 +125,22 @@ func (v *Journal) Update(msg tea.Msg) (Model, tea.Cmd) {
 		if msg.String() == "t" {
 			v.tradesFresh = false // forcer une relecture au changement d'onglet
 		}
-		if v.tab == 1 && v.tradeScroll.Key(msg.String(), len(v.visibleTrades()), v.tradePage) {
-			return v, nil
+		if v.tab == 1 {
+			switch msg.String() {
+			case "enter":
+				if len(v.visibleTrades()) > 0 {
+					v.detail = !v.detail
+				}
+				return v, nil
+			case "esc":
+				if v.detail {
+					v.detail = false
+					return v, nil
+				}
+			}
+			if v.tradeScroll.Key(msg.String(), len(v.visibleTrades()), v.tradePage) {
+				return v, nil
+			}
 		}
 		switch msg.String() {
 		case "/":
@@ -157,7 +174,7 @@ func (v *Journal) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 		case "t":
 			v.tab = 1 - v.tab
-			v.offset = 0
+			v.offset, v.detail = 0, false
 		case "up", "K":
 			v.offset++
 			v.follow = false
@@ -337,7 +354,8 @@ func (v *Journal) renderLog(width, height int) string {
 	title := fmt.Sprintf("Journal applicatif · niveau ≥ %s · %s · %d/%d lignes",
 		v.level.String(), mode, len(filtered), len(lines))
 	body := sb.String() + "\n" + v.filterLine(width) +
-		th.Muted.Render("fichier : "+v.deps.App.Config.Paths.LogFile())
+		th.Info.Render("t trades exécutés · ") +
+		th.Muted.Render(component.Truncate("fichier : "+v.deps.App.Config.Paths.LogFile(), width-26))
 	return component.Panel(th, title, body, width)
 }
 
@@ -366,6 +384,10 @@ func (v *Journal) renderTrades(width, height int) string {
 		return component.Panel(th, "Trades", th.Negative.Render("journal illisible : "+v.tradesErr), width)
 	}
 	trades := v.visibleTrades()
+	if v.detail && len(trades) > 0 {
+		v.tradeScroll.Clamp(len(trades))
+		return renderTradeDetail(th, trades[v.tradeScroll.Cursor], width, minInt(height, 14))
+	}
 
 	cols := []component.Column{
 		{Title: "#", Width: 6, Right: true, Priority: 4},
@@ -406,9 +428,11 @@ func (v *Journal) renderTrades(width, height int) string {
 	v.tradePage = visible
 	v.tradeScroll.Clamp(len(rows))
 	body := component.Table(th, cols, rows, v.tradeScroll.Cursor, visible, component.PanelContent(width))
-	body += "\n" + v.filterLine(width) + th.Muted.Render(
-		"Ce journal ne contient QUE des exécutions rapportées par une passerelle. "+
-			"Aucun trade simulé n'y figure. · e exporte en CSV")
+	inner := component.PanelContent(width)
+	body += "\n" + v.filterLine(width) +
+		th.Info.Render(component.Truncate("↑↓ trade · entrée détail · t journal applicatif · / filtrer · e exporter", inner)) +
+		"\n" + th.Muted.Render(component.Truncate(
+		"Uniquement des exécutions rapportées par une passerelle : aucun trade simulé.", inner))
 	title := fmt.Sprintf("Trades exécutés (%d)", len(trades))
 	if v.filter != "" {
 		title = fmt.Sprintf("Trades exécutés (%d sur %d)", len(trades), len(v.trades))
