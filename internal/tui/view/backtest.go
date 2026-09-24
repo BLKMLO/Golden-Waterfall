@@ -53,6 +53,14 @@ type Backtest struct {
 	trades      component.Scroll
 	focusTrades bool
 	tradePage   int
+
+	// onlyTradable : ↑↓ ne proposent que les paires dimensionnables dans
+	// la devise du compte (touche v). Actif par défaut dès que le
+	// dimensionnement au risque l'est : une paire non dimensionnable
+	// donne un backtest sans aucun trade.
+	onlyTradable bool
+	// detail : le trade sélectionné est affiché en entier (entrée).
+	detail bool
 }
 
 // NewBacktest construit l'écran de backtest.
@@ -68,10 +76,33 @@ func NewBacktest(deps Deps) Model {
 		}
 	}
 	return &Backtest{
-		deps:    deps,
-		symbols: append([]string(nil), deps.App.Config.History.Instruments...),
-		tfIndex: idx,
+		deps:         deps,
+		symbols:      append([]string(nil), deps.App.Config.History.Instruments...),
+		tfIndex:      idx,
+		onlyTradable: deps.App.Config.Risk.RiskPerTradePct > 0,
 	}
+}
+
+// pairs : les paires proposées, filtre « tradables » appliqué. Si aucune
+// ne passe le filtre, toutes restent proposées — une liste vide ne
+// permettrait même pas de constater le problème.
+func (v *Backtest) pairs() []string {
+	if !v.onlyTradable {
+		return v.symbols
+	}
+	if out := filterTradable(v.deps.App.Config, v.symbols); len(out) > 0 {
+		return out
+	}
+	return v.symbols
+}
+
+// selected : la paire sous le curseur, "" si la liste est vide.
+func (v *Backtest) selected() string {
+	p := v.pairs()
+	if v.cursor < len(p) {
+		return p[v.cursor]
+	}
+	return ""
 }
 
 func (v *Backtest) Title() string { return "Backtest" }
@@ -93,9 +124,11 @@ func (v *Backtest) Keys() [][2]string {
 		{"r", "lancer"},
 		{"x", "interrompre"},
 		{"u", "unité de temps"},
+		{"v", "tradables / toutes"},
 		{"e", "exporter en CSV"},
 		arrows,
-		{"t", "paire / trades"},
+		{"t", "trades ⇄ paire"},
+		{"entrée", "détail du trade"},
 		{"pgup pgdn", "défiler les trades"},
 	}
 }
@@ -123,7 +156,7 @@ func (v *Backtest) Update(msg tea.Msg) (Model, tea.Cmd) {
 			v.err = msg.err.Error()
 		}
 		v.mu.Unlock()
-		v.trades = component.Scroll{}
+		v.trades, v.detail = component.Scroll{}, false
 		if msg.err != nil {
 			v.deps.Status("backtest en échec : " + msg.err.Error())
 		} else if msg.result != nil {
@@ -147,6 +180,12 @@ func (v *Backtest) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 		}
 		switch k {
+		case "enter":
+			if v.tradeCount() > 0 {
+				v.detail = !v.detail
+			}
+		case "esc":
+			v.detail = false
 		case "up", "K":
 			v.move(-1)
 		case "down", "J":
@@ -164,6 +203,21 @@ func (v *Backtest) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 		case "u":
 			v.tfIndex = (v.tfIndex + 1) % len(data.Timeframes)
+		case "v":
+			current := v.selected()
+			v.onlyTradable = !v.onlyTradable
+			v.cursor = 0
+			for i, s := range v.pairs() {
+				if s == current {
+					v.cursor = i
+				}
+			}
+			if v.onlyTradable {
+				v.deps.Status(fmt.Sprintf("paires %s seulement : %d sur %d",
+					tradableLabel(v.deps.App.Config), len(v.pairs()), len(v.symbols)))
+			} else {
+				v.deps.Status("toutes les paires proposées")
+			}
 		case "r":
 			return v, v.run()
 		case "e":
@@ -189,10 +243,7 @@ func (v *Backtest) Update(msg tea.Msg) (Model, tea.Cmd) {
 // faire.
 func (v *Backtest) exportResult() {
 	v.mu.Lock()
-	result, symbol := v.result, ""
-	if v.cursor < len(v.symbols) {
-		symbol = v.symbols[v.cursor]
-	}
+	result, symbol := v.result, v.selected()
 	tf := string(v.timeframe())
 	v.mu.Unlock()
 
@@ -210,10 +261,11 @@ func (v *Backtest) exportResult() {
 }
 
 func (v *Backtest) move(delta int) {
-	if len(v.symbols) == 0 {
+	n := len(v.pairs())
+	if n == 0 {
 		return
 	}
-	v.cursor = (v.cursor + delta + len(v.symbols)) % len(v.symbols)
+	v.cursor = (v.cursor + delta + n) % n
 }
 
 func (v *Backtest) run() tea.Cmd {
@@ -222,11 +274,11 @@ func (v *Backtest) run() tea.Cmd {
 		v.mu.Unlock()
 		return nil
 	}
-	if v.cursor >= len(v.symbols) {
+	symbol := v.selected()
+	if symbol == "" {
 		v.mu.Unlock()
 		return nil
 	}
-	symbol := v.symbols[v.cursor]
 	tf := v.timeframe()
 	ctx, cancel := context.WithCancel(context.Background())
 	v.running, v.cancel, v.result, v.err = true, cancel, nil, ""
@@ -294,11 +346,15 @@ func (v *Backtest) Render(width, height int) string {
 
 	// --- Paramètres ---
 	symbol := component.Dash
-	if v.cursor < len(v.symbols) {
-		symbol = v.symbols[v.cursor]
+	if s := v.selected(); s != "" {
+		symbol = s
+	}
+	pairNote := fmt.Sprintf("%d sur %d · v toutes", len(v.pairs()), len(v.symbols))
+	if !v.onlyTradable {
+		pairNote = "toutes · v tradables"
 	}
 	cards := []component.StatCard{
-		{Label: "Paire", Value: symbol, Style: th.Accent},
+		{Label: "Paire", Value: symbol, Style: th.Accent, Note: pairNote},
 		{Label: "Unité de temps", Value: string(v.timeframe())},
 		{Label: "Stratégie", Value: v.deps.App.Config.Strategy.Name},
 		{Label: "Capital", Value: component.Num(v.deps.App.Config.Backtest.InitialCapital, 0)},
@@ -319,7 +375,7 @@ func (v *Backtest) Render(width, height int) string {
 	switch {
 	case running:
 		sb.WriteString(component.Panel(th, "En cours",
-			th.Accent.Render("⣿ rejeu en cours…")+"\n"+
+			th.Accent.Render("⣿ rejeu en cours…")+" "+
 				th.Muted.Render("x pour interrompre"), width))
 		return sb.String()
 	case errText != "":
@@ -327,30 +383,91 @@ func (v *Backtest) Render(width, height int) string {
 			th.Negative.Render(wrap(errText, width-6)), width))
 		return sb.String()
 	case result == nil:
-		sb.WriteString(component.Panel(th, "Résultat", th.Muted.Render(
+		sb.WriteString(explainPanel(th, "Résultat", width, rest,
 			"Aucun backtest lancé.\n\n"+
-				"r rejoue la paire sélectionnée avec le MODÈLE DE PRODUCTION du\n"+
-				"dernier entraînement, coûts appliqués (spread + commission).\n\n"+
-				"Cet écran sert à INSPECTER le comportement du modèle, pas à juger\n"+
-				"sa performance : il a été entraîné sur cette période. Pour juger,\n"+
-				"c'est l'écran Entraînement."), width))
+				"r rejoue la paire sélectionnée avec le MODÈLE DE PRODUCTION du dernier "+
+				"entraînement, coûts appliqués (spread + commission).\n\n"+
+				"Cet écran sert à INSPECTER le comportement du modèle, pas à juger sa "+
+				"performance : il a été entraîné sur cette période. Pour juger, c'est "+
+				"l'écran Entraînement.",
+			"Aucun backtest. r rejoue la paire (IN-SAMPLE : pour inspecter, pas pour juger)."))
 		return sb.String()
 	}
 
 	stats := component.FitBlock(rest-minBandHeight, 1, component.DefaultStatRows,
 		func(rows int) string { return v.renderStats(result, took, width, rows) })
+	if rest-lipgloss.Height(stats) < minBandHeight {
+		// La disposition complète ne tient pas : paramètres, résultat et
+		// avertissements passent en lignes simples, sans cadre.
+		return v.renderCompactResult(result, width, height)
+	}
 	sb.WriteString(stats)
 	sb.WriteString("\n")
 
 	chartHeight := rest - lipgloss.Height(stats)
-	if chartHeight < minBandHeight {
-		chartHeight = minBandHeight
-	}
 	leftWidth := width / 2
 	sb.WriteString(lipgloss.JoinHorizontal(lipgloss.Top,
 		v.renderEquity(result, leftWidth, chartHeight),
 		v.renderTrades(result, width-leftWidth, chartHeight)))
 	return sb.String()
+}
+
+// renderCompactResult : le résultat d'un backtest pour un petit terminal.
+//
+// La disposition complète demande une trentaine de lignes dès que les
+// avertissements s'accumulent ; en 80×24, Fit en coupait huit. Ici, les
+// avertissements tiennent en UNE ligne qui commence toujours par
+// « IN-SAMPLE » — c'est le seul qu'on ne peut pas se permettre de rogner —
+// et la liste des trades prend toute la largeur ; la courbe de valeur
+// revient dès qu'il y a la place.
+func (v *Backtest) renderCompactResult(res *backtest.Result, width, height int) string {
+	th := v.deps.Theme
+	cfg := v.deps.App.Config
+	s := res.Stats
+	params := th.Accent.Render(v.selected()) + th.Muted.Render(component.Truncate(fmt.Sprintf(
+		" · %s · %s · capital %s · levier %s×", v.timeframe(), cfg.Strategy.Name,
+		component.Num(cfg.Backtest.InitialCapital, 0), component.Num(cfg.Backtest.Leverage, 0)), width-10))
+
+	pnlStyle := th.Positive
+	if s.NetPnL < 0 {
+		pnlStyle = th.Negative
+	}
+	cards := []component.StatCard{
+		{Label: "P&L net " + s.Currency, Value: component.Money(s.NetPnL), Style: pnlStyle},
+		{Label: "Trades", Value: component.Count(s.Trades)},
+		{Label: "Taux de gain", Value: component.Num(s.WinRate, 1) + " %"},
+		{Label: "Profit factor", Value: component.Ratio(s.ProfitFactor)},
+		{Label: "Drawdown max", Value: component.Num(s.MaxDrawdownPct, 2) + " %", Style: th.Negative},
+		{Label: "Sharpe", Value: component.Ratio(s.Sharpe)},
+	}
+	stats := component.StatRowMax(th, cards, width, 1)
+
+	warn := []string{"⚠ IN-SAMPLE : le modèle connaît cette période"}
+	if !s.CostsModelled {
+		warn = append(warn, "aucun coût modélisé")
+	}
+	if !s.CurrencyExact {
+		warn = append(warn, "montants en "+s.Currency+" non convertis")
+	}
+	if n, _ := risk.SizingRefusals(s.Rejections); n > 0 {
+		warn = append(warn, fmt.Sprintf("%d entrée(s) non dimensionnée(s)", n))
+	}
+	if s.SizeCapped > 0 {
+		warn = append(warn, fmt.Sprintf("%d rabotée(s) au plafond", s.SizeCapped))
+	}
+	warnings := th.Warning.Render(component.Truncate(strings.Join(warn, " · "), width))
+
+	top := params + "\n" + stats + "\n" + warnings
+	band := height - lipgloss.Height(top)
+	if band < minCompactBand {
+		band = minCompactBand
+	}
+	if band >= minBandHeight && width >= 100 {
+		leftWidth := width / 2
+		return top + "\n" + lipgloss.JoinHorizontal(lipgloss.Top,
+			v.renderEquity(res, leftWidth, band), v.renderTrades(res, width-leftWidth, band))
+	}
+	return top + "\n" + v.renderTrades(res, width, band)
 }
 
 // sizeCard dit la VÉRITÉ sur la taille des entrées.
@@ -464,11 +581,16 @@ func (v *Backtest) renderEquity(res *backtest.Result, width, height int) string 
 
 func (v *Backtest) renderTrades(res *backtest.Result, width, height int) string {
 	th := v.deps.Theme
+	if v.detail && len(res.Trades) > 0 {
+		v.trades.Clamp(len(res.Trades))
+		return renderTradeDetail(th, res.Trades[len(res.Trades)-1-v.trades.Cursor], width, height)
+	}
 	// Budget MESURÉ : PanelH garde height − 3 lignes (bordures et titre) ;
 	// le tableau en prend visible + 2 (entête, pied « N lignes ») ; la
 	// ligne de détail du trade sélectionné, une. L'ancien calcul
 	// (height − 4) coupait déjà le pied du tableau sans le dire.
-	visible := height - 6
+	// … et la ligne d'aide contextuelle, une de plus.
+	visible := height - 7
 	if visible < 1 {
 		visible = 1
 	}
@@ -504,6 +626,14 @@ func (v *Backtest) renderTrades(res *backtest.Result, width, height int) string 
 			component.Num(t.Quantity, 0), component.Duration(t.Duration()))
 		body += "\n" + th.Muted.Render(component.Truncate(detail, component.PanelContent(width)))
 	}
+	// Aide CONTEXTUELLE : ce que font les touches ICI, maintenant. « t » ne
+	// dit pas la même chose selon que les flèches parcourent les paires ou
+	// les trades ; la barre du bas ne peut pas le dire, ce panneau si.
+	hint := "t parcourir les trades · entrée détail · pgup/pgdn défiler"
+	if v.focusTrades {
+		hint = "↑↓ trade · entrée détail · t revenir aux paires"
+	}
+	body += "\n" + th.Info.Render(component.Truncate(hint, component.PanelContent(width)))
 	title := fmt.Sprintf("Trades (%d)", len(res.Trades))
 	if pos := v.trades.Position(len(res.Trades)); pos != "" {
 		title += " · " + pos

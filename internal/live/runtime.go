@@ -39,6 +39,10 @@ type SymbolState struct {
 	HasSignal  bool
 	// ModelLoaded dit si un modèle est RÉELLEMENT chargé pour cette paire.
 	ModelLoaded bool
+	// HistoryOK : l'historique local a amorcé le tampon et n'est pas
+	// périmé. Faux tant que la passerelle n'a pas été connectée — la
+	// chauffe se fait à la connexion.
+	HistoryOK bool
 	// Notice porte l'anomalie éventuelle (modèle absent, historique
 	// périmé…). Les deux sont distincts : une paire peut avoir son modèle
 	// et un historique local incomplet, ou l'inverse, et confondre les
@@ -95,6 +99,7 @@ type Runtime struct {
 	symbols  []string
 	quotes   map[string]*Quote
 	modelOK  map[string]bool
+	histOK   map[string]bool
 	notices  map[string]string
 	message  string
 	cancel   context.CancelFunc
@@ -116,6 +121,7 @@ func NewRuntime(cfg config.Config, bus *core.Bus, logger *slog.Logger,
 		cfg: cfg, bus: bus, logger: logger, store: store, risk: rm,
 		quotes:  map[string]*Quote{},
 		modelOK: map[string]bool{},
+		histOK:  map[string]bool{},
 		notices: map[string]string{},
 		message: "non connecté",
 	}
@@ -127,6 +133,27 @@ func NewRuntime(cfg config.Config, bus *core.Bus, logger *slog.Logger,
 // L'ordre compte : on chauffe AVANT de connecter le flux, pour qu'aucune
 // bougie ne soit décidée par une stratégie encore aveugle.
 func (r *Runtime) Connect(ctx context.Context) error {
+	return r.connect(ctx, r.cfg.Broker.Account)
+}
+
+// ConnectAs connecte en imposant le compte courtier.
+//
+// C'est la confirmation d'une séance à ARGENT RÉEL : l'utilisateur tape
+// le numéro de son compte, et la passerelle refuse de se connecter si ce
+// n'est pas celui de la session. Taper un numéro oblige à le lire ;
+// appuyer sur « c » n'oblige à rien.
+func (r *Runtime) ConnectAs(ctx context.Context, account string) error {
+	if account == "" {
+		return fmt.Errorf("numéro de compte vide")
+	}
+	if r.cfg.Broker.Account != "" && account != r.cfg.Broker.Account {
+		return fmt.Errorf("le compte saisi (%s) n'est pas celui de broker.account (%s)",
+			account, r.cfg.Broker.Account)
+	}
+	return r.connect(ctx, account)
+}
+
+func (r *Runtime) connect(ctx context.Context, account string) error {
 	r.Disconnect()
 
 	tf, err := data.ParseTimeframe(r.cfg.Broker.Timeframe)
@@ -142,7 +169,7 @@ func (r *Runtime) Connect(ctx context.Context) error {
 		Leverage:        r.cfg.Backtest.Leverage,
 		Speed:           r.cfg.Broker.ReplaySpeed,
 		ClientID:        r.cfg.Broker.ClientID,
-		Account:         r.cfg.Broker.Account,
+		Account:         account,
 		AccountCurrency: r.cfg.Backtest.AccountCurrency,
 		StateDir:        r.cfg.Paths.DataDir,
 		Logger:          slogAdapter{r.logger},
@@ -172,6 +199,7 @@ func (r *Runtime) Connect(ctx context.Context) error {
 	// « pas d'historique » n'ont ni la même cause ni le même remède, et
 	// les confondre conduit à chercher le problème au mauvais endroit.
 	modelOK := map[string]bool{}
+	histOK := map[string]bool{}
 	notices := map[string]string{}
 	addNotice := func(sym, msg string) {
 		if notices[sym] == "" {
@@ -191,8 +219,10 @@ func (r *Runtime) Connect(ctx context.Context) error {
 			addNotice(sym, fmt.Sprintf("historique local absent (%v)", histErr))
 		default:
 			engine.Seed(sym, series)
+			histOK[sym] = len(series) > 0
 			if len(series) > 0 {
 				if age := time.Since(series[len(series)-1].Time); age > 7*24*time.Hour {
+					histOK[sym] = false
 					addNotice(sym, fmt.Sprintf("historique périmé de %d jours — le retélécharger",
 						int(age.Hours()/24)))
 				}
@@ -228,7 +258,7 @@ func (r *Runtime) Connect(ctx context.Context) error {
 	r.mu.Lock()
 	r.gateway, r.engine, r.strategy = gw, engine, strat
 	r.symbols = symbols
-	r.modelOK, r.notices = modelOK, notices
+	r.modelOK, r.histOK, r.notices = modelOK, histOK, notices
 	r.cancel = cancel
 	r.message = "connecté"
 	r.mu.Unlock()
@@ -419,6 +449,10 @@ func (r *Runtime) Snapshot() Snapshot {
 	for k, v := range r.modelOK {
 		modelOK[k] = v
 	}
+	histOK := make(map[string]bool, len(r.histOK))
+	for k, v := range r.histOK {
+		histOK[k] = v
+	}
 	notices := make(map[string]string, len(r.notices))
 	for k, v := range r.notices {
 		notices[k] = v
@@ -472,6 +506,7 @@ func (r *Runtime) Snapshot() Snapshot {
 			InFlight:    inFlight[sym],
 			Notice:      notices[sym],
 			ModelLoaded: modelOK[sym],
+			HistoryOK:   histOK[sym],
 		}
 		st.Symbol = sym
 		if engine != nil {

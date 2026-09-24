@@ -86,6 +86,28 @@ func run(args []string) error {
 func printUsage() {
 	fmt.Print(`Golden Waterfall — expert advisor en terminal.
 
+PREMIERS PAS — dans cet ordre, chaque étape a besoin de la précédente :
+
+  1. Télécharger l'historique   gw download EURUSD --from 2018 --to 2024
+                                (ou écran 2 Données : d la paire, D tout)
+  2. Entraîner et valider       gw train EURUSD
+                                (ou écran 4 Entraînement : p paires, r lancer)
+                                Seul l'agrégat OUT-OF-SAMPLE dit si le modèle
+                                vaut quelque chose : 0,50 d'AUC = hasard.
+  3. Inspecter un rejeu         gw backtest EURUSD
+                                (ou écran 3 Backtest : r) — rejeu IN-SAMPLE,
+                                pour comprendre, pas pour juger.
+  4. Trader                     gw, écran 1 Live : c connecter, k kill-switch,
+                                espace armer la paire. Par défaut, rejeu
+                                simulé : aucun argent engagé. Un vrai courtier
+                                (Interactive Brokers) : docs/brokers.md.
+
+  Devise du compte (backtest.account_currency) : seules les paires dont elle
+  est la base ou la cotation peuvent être dimensionnées au risque. gw config
+  dit lesquelles.
+
+COMMANDES
+
   gw                      interface terminal (par défaut)
   gw download [PAIRE…]    télécharge l'historique M1 Dukascopy
      --year A             une seule année        (ex. gw download EURUSD --year 2019)
@@ -101,7 +123,8 @@ func printUsage() {
   gw config [--default]   affiche la configuration effective
   gw version
 
-Variables d'environnement :
+VARIABLES D'ENVIRONNEMENT
+
   GW_CONFIG_DIR, GW_DATA_DIR   forcent les emplacements (installation portable)
   GW_BROKER, GW_MODE, GW_STRATEGY, GW_STRATEGY_ENABLED, GW_LOG_LEVEL,
   GW_THEME, GW_TIMEFRAME, GW_SEED, GW_BROKER_HOST, GW_BROKER_PORT,

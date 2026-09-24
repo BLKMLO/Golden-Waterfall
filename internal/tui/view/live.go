@@ -38,6 +38,15 @@ type Live struct {
 	// quatre heures.
 	chartKey    chartKey
 	chartSeries core.Series
+
+	// onlyTradable : la liste ne montre que les paires dimensionnables
+	// dans la devise du compte (touche v).
+	onlyTradable bool
+
+	// Confirmation d'une connexion à ARGENT RÉEL : le numéro de compte
+	// doit être tapé. Pendant la saisie, l'écran prend toutes les touches.
+	confirming bool
+	typed      string
 }
 
 // chartKey identifie ce qui rendrait le graphique obsolète : la paire,
@@ -61,7 +70,41 @@ func NewLive(deps Deps) Model {
 			idx = i
 		}
 	}
-	return &Live{deps: deps, chartTF: tf, tfIndex: idx}
+	return &Live{deps: deps, chartTF: tf, tfIndex: idx,
+		onlyTradable: deps.App.Config.Risk.RiskPerTradePct > 0}
+}
+
+// CapturesKeys : pendant la saisie du numéro de compte, « q » ou « 3 »
+// sont des caractères, pas des commandes.
+func (v *Live) CapturesKeys() bool { return v.confirming }
+
+// watch : les paires affichées, filtre « tradables » appliqué. Une liste
+// que le filtre viderait est montrée entière : un écran vide ne permet
+// même pas de voir le problème.
+func (v *Live) watch() []live.SymbolState {
+	all := v.snapshot.Symbols
+	if !v.onlyTradable {
+		return all
+	}
+	out := make([]live.SymbolState, 0, len(all))
+	for _, s := range all {
+		if tradable(v.deps.App.Config, s.Symbol) {
+			out = append(out, s)
+		}
+	}
+	if len(out) == 0 {
+		return all
+	}
+	return out
+}
+
+// current : la paire sélectionnée.
+func (v *Live) current() (live.SymbolState, bool) {
+	w := v.watch()
+	if v.cursor < len(w) {
+		return w[v.cursor], true
+	}
+	return live.SymbolState{}, false
 }
 
 func (v *Live) Title() string { return "Live" }
@@ -78,8 +121,38 @@ func (v *Live) Keys() [][2]string {
 		{"k", "kill-switch global"},
 		{"espace", "armer la paire"},
 		{"↑↓", "sélection"},
+		{"v", "tradables / toutes"},
 		{"u", "unité de temps"},
 	}
+}
+
+// needsConfirmation : une connexion engage-t-elle de l'argent réel ?
+func (v *Live) needsConfirmation() bool {
+	return v.deps.App.Config.Broker.Mode == "live" && !v.snapshot.Simulated
+}
+
+// confirmKey traite la saisie du numéro de compte.
+func (v *Live) confirmKey(msg tea.KeyMsg) tea.Cmd {
+	switch msg.Type {
+	case tea.KeyEsc:
+		v.confirming, v.typed = false, ""
+		v.deps.Status("connexion LIVE abandonnée")
+	case tea.KeyEnter:
+		account := strings.TrimSpace(v.typed)
+		if account == "" {
+			v.deps.Status("tapez le numéro du compte, ou échap pour renoncer")
+			return nil
+		}
+		v.confirming, v.typed = false, ""
+		return v.connect(account)
+	case tea.KeyBackspace:
+		if r := []rune(v.typed); len(r) > 0 {
+			v.typed = string(r[:len(r)-1])
+		}
+	case tea.KeyRunes:
+		v.typed += string(msg.Runes)
+	}
+	return nil
 }
 
 func (v *Live) Update(msg tea.Msg) (Model, tea.Cmd) {
@@ -94,6 +167,9 @@ func (v *Live) Update(msg tea.Msg) (Model, tea.Cmd) {
 		v.snapshot = v.deps.App.Live.Snapshot()
 
 	case tea.KeyMsg:
+		if v.confirming {
+			return v, v.confirmKey(msg)
+		}
 		switch msg.String() {
 		// « k » seul est pris par le kill-switch : la sélection se fait
 		// aux flèches ou en majuscules, jamais en hjkl ici.
@@ -116,6 +192,20 @@ func (v *Live) Update(msg tea.Msg) (Model, tea.Cmd) {
 			v.tfIndex = (v.tfIndex + 1) % len(data.Timeframes)
 			v.chartTF = data.Timeframes[v.tfIndex]
 			v.deps.Status("graphique en " + string(v.chartTF))
+		case "v":
+			cur, _ := v.current()
+			v.onlyTradable = !v.onlyTradable
+			v.cursor = 0
+			for i, s := range v.watch() {
+				if s.Symbol == cur.Symbol {
+					v.cursor = i
+				}
+			}
+			if v.onlyTradable {
+				v.deps.Status("paires " + tradableLabel(v.deps.App.Config) + " seulement")
+			} else {
+				v.deps.Status("toutes les paires suivies")
+			}
 		}
 
 	default:
@@ -125,7 +215,7 @@ func (v *Live) Update(msg tea.Msg) (Model, tea.Cmd) {
 }
 
 func (v *Live) moveCursor(delta int) {
-	n := len(v.snapshot.Symbols)
+	n := len(v.watch())
 	if n == 0 {
 		return
 	}
@@ -138,22 +228,38 @@ func (v *Live) toggleConnection() tea.Cmd {
 		v.deps.Status("passerelle déconnectée")
 		return nil
 	}
+	if v.needsConfirmation() {
+		v.confirming, v.typed = true, ""
+		v.deps.Status("LIVE — ARGENT RÉEL : tapez le numéro du compte pour confirmer")
+		return nil
+	}
+	return v.connect("")
+}
+
+// connect lance la connexion ; account non vide l'impose à la passerelle.
+func (v *Live) connect(account string) tea.Cmd {
 	v.connecting = true
 	v.deps.Status("connexion en cours…")
 	app := v.deps.App
 	emit := v.deps.Emit
 	return func() tea.Msg {
-		err := app.Live.Connect(context.Background())
+		var err error
+		if account != "" {
+			err = app.Live.ConnectAs(context.Background(), account)
+		} else {
+			err = app.Live.Connect(context.Background())
+		}
 		emit(connectDoneMsg{err: err})
 		return nil
 	}
 }
 
 func (v *Live) toggleSymbol() {
-	if v.cursor >= len(v.snapshot.Symbols) {
+	cur, ok := v.current()
+	if !ok {
 		return
 	}
-	sym := v.snapshot.Symbols[v.cursor].Symbol
+	sym := cur.Symbol
 	on, err := v.deps.App.Live.ToggleSymbol(sym)
 	if err != nil {
 		v.deps.Status(err.Error())
@@ -167,37 +273,50 @@ func (v *Live) toggleSymbol() {
 }
 
 func (v *Live) Render(width, height int) string {
-	th := v.deps.Theme
-	snap := v.snapshot
-
-	// « moteur : moteur arrêté » disait deux fois le même mot, et la
-	// ligne restait vide tant que le runtime n'avait pas d'instance.
-	engine := snap.EngineStatus
-	if engine == "" {
-		engine = "au repos — aucune passerelle ouverte"
+	if v.confirming {
+		return v.renderConfirmation(width)
 	}
-	status := th.Muted.Render("Moteur : " + engine)
+	snap := v.snapshot
+	check := v.renderChecklist(width)
+
+	// --- Petits terminaux ------------------------------------------------
+	//
+	// Sous liveCompactHeight lignes, le panneau Compte (sept lignes au
+	// mieux) et le panneau Positions (quatre) ne laissaient plus rien au
+	// reste, et Fit coupait la liste des paires. Le compte passe alors sur
+	// UNE ligne, et le panneau des positions n'apparaît que s'il y en a.
+	if height < liveCompactHeight {
+		summary := v.renderAccountLine(width)
+		band := height - lipgloss.Height(summary) - lipgloss.Height(check)
+		positions := ""
+		if len(snap.Positions) > 0 && band-minPositionsHeight >= minCompactBand {
+			pos := minInt(positionsHeight(len(snap.Positions)), band-minCompactBand)
+			positions = v.renderPositions(width, pos)
+			band -= pos
+		}
+		if band < minCompactBand {
+			band = minCompactBand
+		}
+		parts := []string{summary, v.renderBand(width, band)}
+		if positions != "" {
+			parts = append(parts, positions)
+		}
+		parts = append(parts, check)
+		return strings.Join(parts, "\n")
+	}
 
 	// --- Répartition de la hauteur ------------------------------------
 	//
-	// Un plancher posé sur la seule bande centrale faisait déborder
-	// l'écran entier : en 80×24, la taille de terminal la plus banale qui
-	// soit, le panneau Compte étalait ses six cartes sur trois rangées et
-	// mangeait onze lignes sur dix-neuf. Un corps plus haut que la
-	// fenêtre ne perd pas ses dernières lignes — il pousse l'entête et la
-	// barre de raccourcis dehors, donc « q quitter » et le bandeau de
-	// mode.
-	//
-	// On alloue donc du plus rigide au plus souple, et on MESURE au lieu
-	// de deviner : le panneau Compte essaie trois rangées de cartes, puis
+	// On alloue du plus rigide au plus souple, et on MESURE au lieu de
+	// deviner : le panneau Compte essaie trois rangées de cartes, puis
 	// deux, puis une, et garde la première qui laisse de quoi dessiner le
 	// reste. Les cartes écartées restent comptées par la carte « +N ».
 	account := component.FitBlock(
-		height-minBandHeight-minPositionsHeight-lipgloss.Height(status),
+		height-minBandHeight-minPositionsHeight-lipgloss.Height(check),
 		1, component.DefaultStatRows,
 		func(rows int) string { return v.renderAccount(width, rows) })
 
-	free := height - lipgloss.Height(account) - lipgloss.Height(status)
+	free := height - lipgloss.Height(account) - lipgloss.Height(check)
 	// Les positions ouvertes cèdent AVANT la bande centrale : elles
 	// tiennent en quelques lignes, alors que paires suivies et graphique
 	// n'ont plus de sens sous une demi-douzaine.
@@ -212,21 +331,167 @@ func (v *Live) Render(width, height int) string {
 	if mid < minPositionsHeight {
 		mid = minPositionsHeight
 	}
-	positions := v.renderPositions(width, pos)
-
-	leftWidth := width / 2
-	left := v.renderWatchlist(leftWidth, mid)
-	right := v.renderChart(width-leftWidth, mid)
 
 	var sb strings.Builder
 	sb.WriteString(account)
 	sb.WriteString("\n")
-	sb.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, left, right))
+	sb.WriteString(v.renderBand(width, mid))
 	sb.WriteString("\n")
-	sb.WriteString(positions)
+	sb.WriteString(v.renderPositions(width, pos))
 	sb.WriteString("\n")
-	sb.WriteString(status)
+	sb.WriteString(check)
 	return sb.String()
+}
+
+// liveCompactHeight : hauteur de corps sous laquelle l'écran passe en
+// disposition compacte. Mesurée : la disposition complète demande
+// compte (7) + bande (7) + positions (4) + contrôle (1) = 19 lignes.
+const (
+	liveCompactHeight = 19
+	minCompactBand    = 5
+)
+
+// renderBand : paires suivies à gauche, graphique à droite.
+func (v *Live) renderBand(width, height int) string {
+	leftWidth := width / 2
+	return lipgloss.JoinHorizontal(lipgloss.Top,
+		v.renderWatchlist(leftWidth, height), v.renderChart(width-leftWidth, height))
+}
+
+// renderAccountLine : le compte en une ligne, pour les petits terminaux.
+// Mêmes règles que le panneau : « — » pour ce qu'on n'a pas.
+func (v *Live) renderAccountLine(width int) string {
+	th := v.deps.Theme
+	snap := v.snapshot
+	equity, dayLoss := component.Dash, component.Dash
+	if snap.HasAccount {
+		equity = component.Num(snap.Account.Equity, 2)
+		if pct, ok := snap.Account.DayLossPct(); ok {
+			dayLoss = component.Num(pct, 2) + " %"
+		}
+	}
+	line := fmt.Sprintf("Équité %s %s · perte du jour %s (plafond %.1f %%) · %s ordres",
+		equity, snap.Account.Currency, dayLoss, v.deps.App.Config.Risk.MaxDailyLossPct,
+		component.Count(int(snap.Stats.Orders)))
+	if snap.AccountErr != "" {
+		return th.Warning.Render(component.Truncate("⚠ "+snap.AccountErr, width))
+	}
+	return th.Text.Render(component.Truncate(line, width))
+}
+
+// checkState : réponse d'un point de contrôle.
+type checkState int
+
+const (
+	checkUnknown checkState = iota
+	checkOK
+	checkKO
+)
+
+// check : un point de la liste de contrôle.
+type check struct {
+	long, short string
+	state       checkState
+}
+
+// checks : tout ce qui doit être vrai pour qu'une paire trade.
+//
+// Le moteur en tient déjà le compte, mais le disait en UNE phrase — la
+// première condition manquante — et pour aucune paire en particulier.
+// « Pourquoi rien ne se passe ? » demandait alors de faire le tour de
+// l'entête, de la liste des paires et du journal. La réponse est ici,
+// d'un coup d'œil. Ce qui ne se sait qu'à la connexion (modèle,
+// historique) reste « ? » avant elle : rien n'est supposé.
+func (v *Live) checks(s live.SymbolState) []check {
+	snap := v.snapshot
+	yes := func(b bool) checkState {
+		if b {
+			return checkOK
+		}
+		return checkKO
+	}
+	afterConnect := func(b bool) checkState {
+		if !snap.Connected {
+			return checkUnknown
+		}
+		return yes(b)
+	}
+	cfg := v.deps.App.Config
+	return []check{
+		{"passerelle", "pass.", yes(snap.Connected)},
+		{"barrières", "SL", yes(snap.SupportsBracket)},
+		{"kill-switch", "k-s", yes(snap.KillSwitch)},
+		{"paire armée", "armée", yes(s.Armed)},
+		{"modèle", "modèle", afterConnect(s.ModelLoaded)},
+		{"historique", "hist.", afterConnect(s.HistoryOK)},
+		{"devise " + cfg.Backtest.AccountCurrency, cfg.Backtest.AccountCurrency, yes(tradable(cfg, s.Symbol))},
+	}
+}
+
+// renderChecklist : une ligne, pour la paire sélectionnée.
+func (v *Live) renderChecklist(width int) string {
+	th := v.deps.Theme
+	s, ok := v.current()
+	if !ok {
+		return th.Muted.Render("Aucune paire suivie.")
+	}
+	items := v.checks(s)
+	blocked := ""
+	for _, c := range items {
+		if c.state != checkOK && blocked == "" {
+			blocked = c.long
+		}
+	}
+	verdict := th.Positive.Render("→ peut trader")
+	if blocked != "" {
+		verdict = th.Warning.Render("→ bloquée : " + blocked)
+	}
+	// Le VERDICT vient juste après la paire : c'est la réponse, les coches
+	// n'en sont que le détail, et c'est la fin de la ligne qu'un terminal
+	// étroit rogne.
+	for _, short := range []bool{false, true} {
+		parts := []string{th.Accent.Render(s.Symbol), verdict}
+		for _, c := range items {
+			label := c.long
+			if short {
+				label = c.short
+			}
+			switch c.state {
+			case checkOK:
+				parts = append(parts, th.Positive.Render("✓ "+label))
+			case checkKO:
+				parts = append(parts, th.Negative.Render("✗ "+label))
+			default:
+				parts = append(parts, th.Muted.Render("? "+label))
+			}
+		}
+		line := strings.Join(parts, "  ")
+		if lipgloss.Width(line) <= width || short {
+			return component.Clip(line, width)
+		}
+	}
+	return ""
+}
+
+// renderConfirmation : la saisie du numéro de compte avant une séance à
+// argent réel.
+func (v *Live) renderConfirmation(width int) string {
+	th := v.deps.Theme
+	cfg := v.deps.App.Config
+	body := th.Warning.Render("LIVE — ARGENT RÉEL") + "\n\n" +
+		"La passerelle « " + cfg.Broker.Name + " » va se connecter en mode live.\n" +
+		"Tapez le numéro de votre compte courtier pour confirmer. La connexion\n" +
+		"sera refusée si ce n'est pas le compte de la session.\n\n" +
+		th.Accent.Render("compte : "+v.typed+"▏") + "\n\n" +
+		th.Muted.Render("entrée confirme · échap renonce")
+	return component.Panel(th, "Confirmer la connexion", body, width)
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func (v *Live) renderAccount(width, rows int) string {
@@ -311,8 +576,9 @@ func (v *Live) renderWatchlist(width, height int) string {
 		// qui cèdent la place.
 		{Title: "Signal", Width: 13, Flex: true, Min: 8, Priority: 1},
 	}
-	rows := make([][]string, 0, len(v.snapshot.Symbols))
-	for _, s := range v.snapshot.Symbols {
+	watch := v.watch()
+	rows := make([][]string, 0, len(watch))
+	for _, s := range watch {
 		change := component.Dash
 		if s.HasQuote && s.DayOpen > 0 {
 			change = component.Pct(s.Change, 2)
@@ -347,22 +613,28 @@ func (v *Live) renderWatchlist(width, height int) string {
 		})
 	}
 	body := component.Table(th, cols, rows, v.cursor, height-4, component.PanelContent(width))
-	return component.PanelH(th, "Paires suivies", body, width, height)
+	title := "Paires suivies"
+	if v.onlyTradable && len(watch) < len(v.snapshot.Symbols) {
+		title = fmt.Sprintf("Paires tradables %s · %d/%d", v.deps.App.Config.Backtest.AccountCurrency,
+			len(watch), len(v.snapshot.Symbols))
+	}
+	return component.PanelH(th, title, body, width, height)
 }
 
 func (v *Live) renderChart(width, height int) string {
 	th := v.deps.Theme
-	if v.cursor >= len(v.snapshot.Symbols) {
+	cur, ok := v.current()
+	if !ok {
 		return component.PanelH(th, "Graphique", th.Muted.Render("aucune paire"), width, height)
 	}
-	sym := v.snapshot.Symbols[v.cursor].Symbol
+	sym := cur.Symbol
 	series := v.deps.App.Live.Buffer(sym)
 	title := fmt.Sprintf("%s · %s", sym, v.chartTF)
 
 	if len(series) == 0 {
 		msg := th.Muted.Render("aucune bougie reçue pour l'instant.\n" +
 			"Le graphique se remplit à la connexion de la passerelle.")
-		if m := v.snapshot.Symbols[v.cursor].Notice; m != "" {
+		if m := cur.Notice; m != "" {
 			msg += "\n\n" + th.Warning.Render(component.Truncate("⚠ "+m, width-6))
 		}
 		return component.PanelH(th, title, msg, width, height)
@@ -376,7 +648,7 @@ func (v *Live) renderChart(width, height int) string {
 	// L'anomalie de la paire sélectionnée est TOUJOURS visible, pas
 	// seulement quand le graphique est vide : c'est elle qui explique un
 	// silence de la stratégie.
-	if notice := v.snapshot.Symbols[v.cursor].Notice; notice != "" {
+	if notice := cur.Notice; notice != "" {
 		legend = th.Warning.Render(component.Truncate("⚠ "+notice, width-6)) + "\n" + legend
 		lines = lines[:maxInt(len(lines)-1, 0)]
 	}

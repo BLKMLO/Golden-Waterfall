@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/BLKMLO/Golden-Waterfall/internal/data"
 	"github.com/BLKMLO/Golden-Waterfall/internal/tui/component"
@@ -298,7 +299,13 @@ func (v *Data) Render(width, height int) string {
 	th := v.deps.Theme
 	var sb strings.Builder
 
-	sb.WriteString(v.renderHeader(width))
+	header := v.renderHeader(width, false)
+	// Petit terminal : la note sur la source passe en version courte
+	// plutôt que de laisser le tableau sans une seule ligne.
+	if height-lipgloss.Height(header) < dataMinTable {
+		header = v.renderHeader(width, true)
+	}
+	sb.WriteString(header)
 	sb.WriteString("\n")
 
 	cols := []component.Column{
@@ -339,25 +346,34 @@ func (v *Data) Render(width, height int) string {
 		}
 		rows = append(rows, []string{inv.Symbol, class, years, bars, format, style.Render(missing)})
 	}
-	sb.WriteString(component.Panel(th, "Historique local", component.Table(th, cols, rows, v.cursor, height-10, component.PanelContent(width)), width))
-
-	// Tronqué : hors panneau, rien ne borne cette ligne, et un chemin long
+	// Tronqué : hors panneau, rien ne borne ces lignes, et un chemin long
 	// débordait la largeur du terminal — ce qui décale toute la mise en
 	// page, pas seulement cette ligne.
+	footer := ""
 	if n := v.legacyCount(); n > 0 {
-		sb.WriteString("\n" + th.Warning.Render(component.Truncate(fmt.Sprintf(
+		footer += "\n" + th.Warning.Render(component.Truncate(fmt.Sprintf(
 			"⚠ %d année(s) encore au format .gwb, lisible par ce seul programme. "+
-				"« m » les convertit en Parquet.", n), width)))
+				"« m » les convertit en Parquet.", n), width))
 	}
-	// Tronqué : hors panneau, rien ne borne cette ligne, et un chemin long
-	// débordait la largeur du terminal — ce qui décale toute la mise en
-	// page, pas seulement cette ligne.
-	sb.WriteString("\n" + th.Muted.Render(component.Truncate(
-		"Dossier : "+v.deps.App.Config.Paths.HistoryDir(), width)))
+	footer += "\n" + th.Muted.Render(component.Truncate(
+		"Dossier : "+v.deps.App.Config.Paths.HistoryDir(), width))
+
+	// Hauteur MESURÉE : l'ancien « height − 10 » supposait un entête de
+	// taille fixe, qui s'enroule pourtant selon la largeur.
+	budget := height - lipgloss.Height(header) - lipgloss.Height(footer) + 1
+	sb.WriteString(component.FitBlock(budget, 1, maxInt(budget, 1), func(n int) string {
+		return component.Panel(th, "Historique local",
+			component.Table(th, cols, rows, v.cursor, n, component.PanelContent(width)), width)
+	}))
+	sb.WriteString(footer)
 	return sb.String()
 }
 
-func (v *Data) renderHeader(width int) string {
+// dataMinTable : cadre, entête et pied de l'historique local, une ligne
+// de données, et le chemin du dossier.
+const dataMinTable = 7
+
+func (v *Data) renderHeader(width int, compact bool) string {
 	th := v.deps.Theme
 	v.mu.Lock()
 	active, p, lastErr, started := v.active, v.progress, v.lastError, v.startedAt
@@ -366,9 +382,12 @@ func (v *Data) renderHeader(width int) string {
 	if !active {
 		// Une seule phrase par ligne, sans coupure manuelle : le panneau
 		// habille le texte à la largeur réelle.
-		body := v.renderSpan(width) + "\n" + th.Muted.Render(
-			"Source : Dukascopy (M1 bid ET ask — c'est le côté ask qui permet de MESURER le spread). "+
-				"Concurrence basse volontaire : au-delà de 3-4 requêtes simultanées, Dukascopy répond 429.")
+		source := "Source : Dukascopy (M1 bid ET ask — c'est le côté ask qui permet de MESURER le spread). " +
+			"Concurrence basse volontaire : au-delà de 3-4 requêtes simultanées, Dukascopy répond 429."
+		if compact {
+			source = component.Truncate("Source : Dukascopy, M1 bid et ask (spread mesuré).", component.PanelContent(width))
+		}
+		body := v.renderSpan(width) + "\n" + th.Muted.Render(source)
 		if lastErr != "" {
 			body += "\n" + th.Negative.Render("⚠ "+component.Truncate(lastErr, component.PanelContent(width)))
 		}

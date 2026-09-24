@@ -31,6 +31,12 @@ type SymbolPicker struct {
 	Note func(symbol string) string
 	// MinOne : refuser de valider une sélection vide.
 	MinOne bool
+	// Tradable, s'il est posé, permet de masquer (touche v) les paires
+	// qui ne produiraient rien ; OnlyTradable dit si le filtre est actif
+	// et TradableLabel le décrit (« dimensionnables en USD »).
+	Tradable      func(symbol string) bool
+	OnlyTradable  bool
+	TradableLabel string
 
 	filter    string
 	searching bool
@@ -80,13 +86,26 @@ func (p *SymbolPicker) Selected() []string {
 func (p *SymbolPicker) CapturesKeys() bool { return true }
 
 // visible renvoie les symboles retenus par le filtre.
-func (p *SymbolPicker) visible() []string {
+func (p *SymbolPicker) visible() []string { return p.matching(true) }
+
+// matching applique le filtre texte, et le masque des paires non
+// tradables si mask le demande.
+func (p *SymbolPicker) matching(mask bool) []string {
+	base := p.all
+	if mask && p.OnlyTradable && p.Tradable != nil {
+		base = make([]string, 0, len(p.all))
+		for _, s := range p.all {
+			if p.Tradable(s) {
+				base = append(base, s)
+			}
+		}
+	}
 	if p.filter == "" {
-		return p.all
+		return base
 	}
 	needle := strings.ToUpper(p.filter)
-	out := make([]string, 0, len(p.all))
-	for _, s := range p.all {
+	out := make([]string, 0, len(base))
+	for _, s := range base {
 		if strings.Contains(s, needle) {
 			out = append(out, s)
 			continue
@@ -151,12 +170,20 @@ func (p *SymbolPicker) Update(msg tea.KeyMsg) (done, accepted bool) {
 			p.selected[s] = true
 		}
 	case "n":
-		for _, s := range list {
+		// « aucun » décoche aussi les paires que le masque « tradables »
+		// cache : sinon elles resteraient cochées sans qu'on les voie, et
+		// la sélection validée en contiendrait vingt de trop.
+		for _, s := range p.matching(false) {
 			delete(p.selected, s)
 		}
 	case "i":
 		for _, s := range list {
 			p.toggle(s)
+		}
+	case "v":
+		if p.Tradable != nil {
+			p.OnlyTradable = !p.OnlyTradable
+			p.cursor = 0
 		}
 	}
 	if p.cursor < 0 {
@@ -199,6 +226,7 @@ func (p *SymbolPicker) Keys() [][2]string {
 		{"espace", "cocher / décocher"},
 		{"/", "filtrer"},
 		{"a / n / i", "tout · aucun · inverser (dans le filtre)"},
+		{"v", "tradables seulement / toutes"},
 		{"entrée", "valider"},
 		{"échap", "annuler"},
 	}
@@ -233,6 +261,20 @@ func (p *SymbolPicker) Render(width, height int) string {
 	}
 
 	head := fmt.Sprintf("%d sélectionnée(s) sur %d", len(p.Selected()), len(p.all))
+	if p.OnlyTradable && p.Tradable != nil {
+		// Une paire cochée puis masquée reste cochée : le dire, sinon la
+		// sélection validée contiendrait des paires que l'écran cachait.
+		hidden := 0
+		for _, s := range p.Selected() {
+			if !p.Tradable(s) {
+				hidden++
+			}
+		}
+		head += fmt.Sprintf(" · %s seulement (v toutes)", p.TradableLabel)
+		if hidden > 0 {
+			head += fmt.Sprintf(" · %d cochée(s) masquée(s)", hidden)
+		}
+	}
 	if p.filter != "" {
 		head += fmt.Sprintf(" · filtre « %s » : %d affichée(s)", p.filter, len(list))
 	}
@@ -245,7 +287,7 @@ func (p *SymbolPicker) Render(width, height int) string {
 		lines = append(lines, th.Negative.Render("✗ "+p.message))
 	default:
 		lines = append(lines, th.Muted.Render(
-			"espace coche · / filtre · a tout · n aucun · i inverse · entrée valide · échap annule"))
+			"espace coche · / filtre · a tout · n aucun · i inverse · v tradables · entrée valide · échap annule"))
 	}
 
 	inner := component.PanelContent(width)

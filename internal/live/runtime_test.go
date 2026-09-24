@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -198,5 +199,24 @@ func TestUnknownGatewayIsReported(t *testing.T) {
 	rt = NewRuntime(cfg, core.NewBus(), logger, store, risk.New(cfg.Risk, cfg.Backtest.AccountCurrency, logger))
 	if err := rt.Connect(context.Background()); err == nil {
 		t.Fatal("une passerelle inconnue doit faire échouer la connexion, clairement")
+	}
+}
+
+// TestConnectAsRefusesAnotherAccount : la confirmation d'une séance à
+// argent réel ne vaut que si le compte tapé est celui de la
+// configuration. Refusé AVANT toute connexion.
+func TestConnectAsRefusesAnotherAccount(t *testing.T) {
+	_, cfg, store := setupRuntime(t)
+	cfg.Broker.Account = "U1234567"
+	logger := slog.New(slog.DiscardHandler)
+	rt := NewRuntime(cfg, core.NewBus(), logger, store, risk.New(cfg.Risk, cfg.Backtest.AccountCurrency, logger))
+	if err := rt.ConnectAs(context.Background(), "U7654321"); err == nil || !strings.Contains(err.Error(), "broker.account") {
+		t.Fatalf("un autre compte doit être refusé : %v", err)
+	}
+	if err := rt.ConnectAs(context.Background(), ""); err == nil {
+		t.Fatal("un numéro vide doit être refusé")
+	}
+	if rt.Connected() {
+		t.Fatal("aucune connexion ne doit avoir été ouverte")
 	}
 }
