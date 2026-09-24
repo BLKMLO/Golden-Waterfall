@@ -47,31 +47,6 @@ func TestSimulatedGatewayDeclaresItself(t *testing.T) {
 	}
 }
 
-// TestIBGatewayRefusesRatherThanPretends : tant que le protocole TWS n'est
-// pas parlé, toute méthode doit échouer clairement. Une passerelle qui
-// répondrait « connecté » sans l'être est le pire scénario possible.
-func TestIBGatewayRefusesRatherThanPretends(t *testing.T) {
-	gw, err := New("interactive_brokers", Options{Host: "127.0.0.1", Port: 7497})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := gw.Connect(context.Background()); err == nil {
-		t.Fatal("la connexion doit échouer explicitement")
-	}
-	if gw.Connected() {
-		t.Fatal("jamais de connexion optimiste")
-	}
-	if _, err := gw.Account(context.Background()); err == nil {
-		t.Fatal("aucune donnée de compte ne doit être fabriquée")
-	}
-	if _, err := gw.Positions(context.Background()); err == nil {
-		t.Fatal("aucune position ne doit être fabriquée")
-	}
-	if _, err := gw.PlaceOrder(context.Background(), core.OrderRequest{Symbol: "EURUSD"}); err == nil {
-		t.Fatal("aucun ordre ne doit être accepté")
-	}
-}
-
 func writeReplayHistory(t *testing.T, dir, symbol string) {
 	t.Helper()
 	start := time.Date(2023, 6, 5, 0, 0, 0, 0, time.UTC)

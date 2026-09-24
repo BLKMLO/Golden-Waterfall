@@ -19,6 +19,10 @@ cessait d'être vraie — ce ne sont pas des intentions.
 | Se déclarer connecté par optimisme | échoue explicitement |
 | Fabriquer un aller-retour à partir de deux entrées du même sens | ne journalise rien et signale l'incohérence |
 | Appliquer un modèle dont les colonnes ont bougé | refuse le modèle en nommant la colonne fautive |
+| Trader un compte papier IB en mode `live`, ou l'inverse | refuse la connexion en nommant le compte |
+| Envoyer une sortie pendant que ses barrières vivent encore chez IB | annule les barrières, attend la confirmation, puis seulement sort |
+| Laisser une position nue quand IB annule une barrière | ferme la position au marché |
+| Prendre la sortie d'une position d'avant le démarrage pour une entrée | ne journalise rien et le dit |
 
 
 ## Quand ça se passe mal
@@ -37,6 +41,11 @@ cessait d'être vraie — ce ne sont pas des intentions.
 | Le courtier ne répond pas sur les positions | s'abstient de décider, plutôt que de trader sur une image périmée |
 | La perte journalière maximale est atteinte | bloque toute nouvelle entrée ; les sorties restent toujours possibles |
 | Une deuxième instance est lancée | échoue proprement : la base est déjà ouverte |
+| TWS injoignable, API désactivée, mauvais port | refuse la connexion en disant quoi vérifier |
+| « client id is already in use » (IB, code 326) | refuse la connexion : changer `broker.client_id` |
+| TWS perd sa liaison avec IB (code 1100) | passe « déconnecté » jusqu'au rétablissement ; aucun ordre ne part |
+| Le socket TWS se ferme | journalise l'erreur ; les stops et limites restent chez IB ; `c` reconnecte |
+| La devise du compte IB diffère de `backtest.account_currency` | refuse la connexion : le dimensionnement au risque serait faux |
 
 ## Où vivent vos données
 

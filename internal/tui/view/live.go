@@ -413,11 +413,15 @@ func (v *Live) renderPositions(width, height int) string {
 		if !p.IsLong() {
 			side = th.Negative.Render("SHORT")
 		}
-		pnl := component.Money(p.UnrealizedPnL)
-		if p.UnrealizedPnL >= 0 {
-			pnl = th.Positive.Render(pnl)
-		} else {
-			pnl = th.Negative.Render(pnl)
+		// Le courtier ne rapporte pas toujours le P&L latent (IB ne le
+		// donne pas dans son flux de positions) : un tiret, pas un zéro.
+		pnl := component.Dash
+		switch {
+		case !p.UnrealizedKnown:
+		case p.UnrealizedPnL >= 0:
+			pnl = th.Positive.Render(component.Money(p.UnrealizedPnL))
+		default:
+			pnl = th.Negative.Render(component.Money(p.UnrealizedPnL))
 		}
 		rows = append(rows, []string{
 			p.Symbol, side, component.Num(p.Quantity, 2),

@@ -91,6 +91,20 @@ type Options struct {
 	Speed float64
 	// Leverage du compte simulé.
 	Leverage float64
+	// ClientID : identifiant de connexion auprès de TWS, unique par
+	// connexion simultanée.
+	ClientID int
+	// Account : compte courtier à utiliser quand l'identifiant en gère
+	// plusieurs. Vide = le seul compte géré, ou un refus s'il y en a
+	// plusieurs.
+	Account string
+	// AccountCurrency : devise attendue du compte. Une passerelle réelle
+	// refuse de démarrer sur un compte dans une autre devise : tout le
+	// dimensionnement au risque en dépend.
+	AccountCurrency string
+	// StateDir : dossier où une passerelle garde ce qui doit survivre à un
+	// redémarrage (identifiants des ordres attachés chez le courtier).
+	StateDir string
 	Logger   Logger
 }
 

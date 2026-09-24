@@ -75,7 +75,9 @@ Golden-Waterfall/
 │   ├── broker/
 │   │   ├── gateway.go          CONTRAT + registre.
 │   │   ├── replay.go           Rejeu de l'historique local, compte SIMULÉ.
-│   │   └── interactive_brokers.go  Ancrage : refuse au lieu de faire semblant.
+│   │   ├── interactive_brokers.go  TWS / IB Gateway : bracket, comptes rendus.
+│   │   ├── ib_protocol.go      Messages TWS, écrits contre le client officiel.
+│   │   └── ib_wire.go          Trames, champs, versions du protocole.
 │   │
 │   ├── live/
 │   │   ├── aggregator.go       Ticks → bougies closes.

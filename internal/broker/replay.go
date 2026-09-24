@@ -168,6 +168,9 @@ func (g *replayGateway) Positions(ctx context.Context) ([]core.Position, error) 
 			Quantity:      qty,
 			AveragePrice:  p.entryPrice,
 			UnrealizedPnL: unrealized(p, price),
+			// Le rejeu EST le courtier de ce compte fictif : son P&L
+			// latent est la valeur qu'il applique.
+			UnrealizedKnown: price > 0,
 		})
 	}
 	return out, nil
@@ -300,6 +303,7 @@ func (g *replayGateway) checkBarriers(symbol string, bar core.Bar) {
 		FillPrice: price,
 		PnL:       pnl,
 		Realized:  true,
+		Closing:   true,
 		Reason:    reason,
 		Time:      bar.Time,
 	})
@@ -339,7 +343,7 @@ func (g *replayGateway) PlaceOrder(ctx context.Context, req core.OrderRequest) (
 		g.report(core.ExecutionReport{
 			OrderID: id, Symbol: req.Symbol, Side: req.Side, Quantity: qty,
 			Status: core.Filled, FillPrice: price, PnL: pnl, Realized: true,
-			Reason: "sortie", Time: now,
+			Closing: true, Reason: "sortie", Time: now,
 		})
 		return id, nil
 	}

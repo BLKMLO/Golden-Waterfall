@@ -44,6 +44,12 @@ type BrokerConfig struct {
 	// Host/Port de la passerelle (TWS, terminal…), quand elle en a une.
 	Host string `yaml:"host"`
 	Port int    `yaml:"port"`
+	// ClientID : identifiant de connexion auprès de TWS. Deux programmes
+	// connectés au même TWS doivent en avoir un différent.
+	ClientID int `yaml:"client_id"`
+	// Account : compte courtier, requis seulement quand la session TWS en
+	// gère plusieurs. Vide = le seul compte de la session.
+	Account string `yaml:"account"`
 	// Symbols : paires suivies au démarrage. Vide = celles de History.
 	Symbols []string `yaml:"symbols"`
 	// Timeframe des bougies agrégées en live (doit être un timeframe connu).
@@ -166,7 +172,7 @@ type LoggingConfig struct {
 func Default() Config {
 	return Config{
 		Broker: BrokerConfig{
-			Name: "replay", Mode: "paper", Host: "127.0.0.1", Port: 7497,
+			Name: "replay", Mode: "paper", Host: "127.0.0.1", Port: 7497, ClientID: 1,
 			Timeframe: "H4", ReplaySpeed: 120,
 		},
 		Strategy: StrategyConfig{Name: "colibri_v1_2", Enabled: false},
@@ -257,6 +263,8 @@ func envBindings() []envBinding {
 		{"GW_MODE", "broker.mode", func(c *Config, v string) error { c.Broker.Mode = v; return nil }},
 		{"GW_BROKER_HOST", "broker.host", func(c *Config, v string) error { c.Broker.Host = v; return nil }},
 		{"GW_BROKER_PORT", "broker.port", func(c *Config, v string) error { return setInt(v, &c.Broker.Port) }},
+		{"GW_BROKER_CLIENT_ID", "broker.client_id", func(c *Config, v string) error { return setInt(v, &c.Broker.ClientID) }},
+		{"GW_BROKER_ACCOUNT", "broker.account", func(c *Config, v string) error { c.Broker.Account = v; return nil }},
 		{"GW_STRATEGY", "strategy.name", func(c *Config, v string) error { c.Strategy.Name = v; return nil }},
 		{"GW_STRATEGY_ENABLED", "strategy.enabled", func(c *Config, v string) error { return setBool(v, &c.Strategy.Enabled) }},
 		{"GW_LOG_LEVEL", "logging.level", func(c *Config, v string) error { c.Logging.Level = v; return nil }},
@@ -333,6 +341,9 @@ func (c Config) Validate() error {
 	}
 	if c.Broker.Port < 0 || c.Broker.Port > 65535 {
 		add("broker.port hors bornes : %d", c.Broker.Port)
+	}
+	if c.Broker.ClientID < 0 || c.Broker.ClientID > 2147483647 {
+		add("broker.client_id hors bornes : %d (0 à 2147483647)", c.Broker.ClientID)
 	}
 	if c.Broker.ReplaySpeed <= 0 {
 		add("broker.replay_speed doit être > 0 (bougies par seconde)")

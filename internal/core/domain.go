@@ -95,6 +95,11 @@ type Position struct {
 	Quantity      float64
 	AveragePrice  float64
 	UnrealizedPnL float64
+	// UnrealizedKnown : le courtier a-t-il RAPPORTÉ le P&L latent ? Le flux
+	// de positions d'Interactive Brokers ne le donne pas ; le recalculer
+	// ici supposerait une conversion de devise et des frais qui nous
+	// échappent. L'interface affiche alors « — », jamais un zéro.
+	UnrealizedKnown bool
 }
 
 // IsLong indique le sens de la position.
@@ -151,8 +156,13 @@ type ExecutionReport struct {
 	FillPrice float64
 	PnL       float64
 	Realized  bool // true si PnL est significatif (sortie de position).
-	Reason    string
-	Time      time.Time
+	// Closing : l'exécution RÉDUIT une position (sortie, stop, limite).
+	// Sans ce drapeau, le moteur ne peut distinguer une sortie dont il n'a
+	// jamais vu l'entrée — position ouverte avant le démarrage — d'une
+	// nouvelle entrée, et il l'enregistrerait comme telle.
+	Closing bool
+	Reason  string
+	Time    time.Time
 }
 
 // Trade est un aller-retour complet, journalisé après coup.
