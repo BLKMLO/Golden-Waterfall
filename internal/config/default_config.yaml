@@ -9,7 +9,8 @@
 #
 # Les variables d'environnement GW_* ont le dernier mot (GW_BROKER, GW_MODE,
 # GW_STRATEGY, GW_STRATEGY_ENABLED, GW_LOG_LEVEL, GW_THEME, GW_TIMEFRAME,
-# GW_SEED, GW_BROKER_HOST, GW_BROKER_PORT).
+# GW_SEED, GW_BROKER_HOST, GW_BROKER_PORT, GW_BROKER_CLIENT_ID,
+# GW_BROKER_ACCOUNT).
 # ---------------------------------------------------------------------------
 
 broker:
@@ -17,12 +18,23 @@ broker:
   #   replay             — rejoue l'historique local comme un flux live.
   #                        Marqué REJEU partout dans l'interface : aucune
   #                        donnée de compte n'est présentée comme réelle.
-  #   interactive_brokers — TWS / IB Gateway (à brancher, cf. docs).
+  #   interactive_brokers — TWS ou IB Gateway (forex IDEALPRO). Chaque
+  #                        entrée part en bracket : stop et limite vivent
+  #                        chez le courtier. Cf. docs/brokers.md.
   name: "replay"
   # "paper" ou "live". Passer en réel ne demande QUE ce changement.
+  # Interactive Brokers VÉRIFIE la cohérence : en "paper", la connexion
+  # est refusée sur un compte réel ; en "live", sur un compte papier.
   mode: "paper"
+  # Terminal courtier. TWS : 7497 (papier), 7496 (réel) ;
+  # IB Gateway : 4002 (papier), 4001 (réel).
   host: "127.0.0.1"
   port: 7497
+  # Interactive Brokers : identifiant de connexion (unique par programme
+  # connecté au même TWS) et compte à utiliser si la session en gère
+  # plusieurs (vide = le seul compte de la session).
+  client_id: 1
+  account: ""
   # Paires suivies en live. Vide = celles de history.instruments.
   symbols: []
   # Unité de temps des bougies agrégées en live. Doit être celle sur

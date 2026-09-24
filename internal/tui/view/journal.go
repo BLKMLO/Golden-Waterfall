@@ -34,6 +34,14 @@ type Journal struct {
 	trades      []core.Trade
 	tradesErr   string
 	tradesFresh bool
+	// tradesTotal : nombre de trades au journal. L'écran n'en relit que
+	// maxJournalTrades ; sans ce total, « 500 » se lirait « 500 en tout ».
+	tradesTotal int
+	// tradeScroll : curseur de l'onglet trades, qui défile par ligne
+	// sélectionnée plutôt que par décalage — une ligne mise en évidence
+	// dit où l'on est dans une liste de cinq cents.
+	tradeScroll component.Scroll
+	tradePage   int
 
 	// Filtre texte. Le niveau minimum ne suffit pas : sur un millier de
 	// lignes, retrouver ce qu'une paire a fait demande de chercher son
@@ -60,6 +68,7 @@ func (v *Journal) Keys() [][2]string {
 		{"t", "journal / trades"},
 		{"e", "exporter les trades"},
 		{"↑↓ pgup pgdn", "défiler"},
+		{"début fin", "extrémités"},
 	}
 }
 
@@ -73,6 +82,7 @@ func (v *Journal) searchKey(msg tea.KeyMsg) {
 	switch msg.Type {
 	case tea.KeyEnter:
 		v.filter, v.searching, v.offset = strings.TrimSpace(v.buffer), false, 0
+		v.tradeScroll = component.Scroll{}
 		if v.filter == "" {
 			v.deps.Status("filtre effacé")
 		} else {
@@ -111,6 +121,9 @@ func (v *Journal) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 		if msg.String() == "t" {
 			v.tradesFresh = false // forcer une relecture au changement d'onglet
+		}
+		if v.tab == 1 && v.tradeScroll.Key(msg.String(), len(v.visibleTrades()), v.tradePage) {
+			return v, nil
 		}
 		switch msg.String() {
 		case "/":
@@ -169,6 +182,15 @@ func (v *Journal) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 
 	case tea.MouseMsg:
+		if v.tab == 1 {
+			switch msg.Button {
+			case tea.MouseButtonWheelUp:
+				v.tradeScroll.Wheel(true, len(v.visibleTrades()))
+			case tea.MouseButtonWheelDown:
+				v.tradeScroll.Wheel(false, len(v.visibleTrades()))
+			}
+			return v, nil
+		}
 		switch msg.Button {
 		case tea.MouseButtonWheelUp:
 			v.offset += 3
@@ -236,6 +258,9 @@ func (v *Journal) reloadTrades() {
 		return
 	}
 	v.trades, v.tradesErr, v.tradesFresh = trades, "", true
+	if n, err := v.deps.App.Store.TradeCount(); err == nil {
+		v.tradesTotal = n
+	}
 }
 
 // maxJournalTrades borne ce que l'écran relit : au-delà, un terminal
@@ -371,13 +396,28 @@ func (v *Journal) renderTrades(width, height int) string {
 			pnl, component.Truncate(t.ExitReason, 20),
 		})
 	}
-	body := component.Table(th, cols, rows, -1, height-5, component.PanelContent(width))
+	// Budget : bordures et titre (3), entête et pied du tableau (2), ligne
+	// de filtre (1) et note finale, qui s'enroule sur deux lignes en
+	// dessous de 110 colonnes (2).
+	visible := height - 8
+	if visible < 1 {
+		visible = 1
+	}
+	v.tradePage = visible
+	v.tradeScroll.Clamp(len(rows))
+	body := component.Table(th, cols, rows, v.tradeScroll.Cursor, visible, component.PanelContent(width))
 	body += "\n" + v.filterLine(width) + th.Muted.Render(
 		"Ce journal ne contient QUE des exécutions rapportées par une passerelle. "+
 			"Aucun trade simulé n'y figure. · e exporte en CSV")
 	title := fmt.Sprintf("Trades exécutés (%d)", len(trades))
 	if v.filter != "" {
 		title = fmt.Sprintf("Trades exécutés (%d sur %d)", len(trades), len(v.trades))
+	}
+	if v.tradesTotal > len(v.trades) {
+		title += fmt.Sprintf(" · %d plus récents sur %d", len(v.trades), v.tradesTotal)
+	}
+	if pos := v.tradeScroll.Position(len(trades)); pos != "" {
+		title += " · " + pos
 	}
 	return component.Panel(th, title, body, width)
 }

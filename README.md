@@ -94,7 +94,9 @@ les plis disent s'il le mérite.
 
 **4. Tradez** — écran **1 Live** : `c` connecte, `k` arme le kill-switch
 global, `espace` arme la paire. Par défaut la passerelle est un **rejeu
-simulé** : toute la chaîne fonctionne, aucun argent n'est engagé.
+simulé** : toute la chaîne fonctionne, aucun argent n'est engagé. Pour un
+vrai courtier, **Interactive Brokers** (TWS ou IB Gateway, forex) :
+mise en place dans [docs/brokers.md](docs/brokers.md).
 
 ## Les six écrans
 
@@ -102,9 +104,9 @@ simulé** : toute la chaîne fonctionne, aucun argent n'est engagé.
 |---|---|
 | **1 Live** | Compte, paires suivies, positions, graphique en chandeliers |
 | **2 Données** | Inventaire de l'historique local, téléchargement complet ou par période, conversion des anciens fichiers (`m`) |
-| **3 Backtest** | Rejeu d'une paire, courbe d'équité, liste des trades, export CSV (`e`) |
+| **3 Backtest** | Rejeu d'une paire, courbe d'équité, liste des trades défilable (`t`, `pgup`/`pgdn`), export CSV (`e`) |
 | **4 Entraînement** | Walk-forward, choix des paires (`p`), plis, agrégat out-of-sample, runs archivés |
-| **5 Journal** | Journal applicatif et journal des trades exécutés, filtre texte (`/`), export CSV (`e`) |
+| **5 Journal** | Journal applicatif et journal des trades exécutés (défilable), filtre texte (`/`), export CSV (`e`) |
 | **6 Paramètres** | Compte et courtier, risque, stratégie, historique, interface |
 
 `tab` change d'écran, `?` affiche l'aide complète, `q` quitte — et refuse tant
@@ -154,7 +156,8 @@ gw config --default                # le modèle de configuration commenté
 Variables d'environnement (elles ont le dernier mot sur le fichier, et l'écran
 Paramètres le signale) : `GW_CONFIG_DIR`, `GW_DATA_DIR`, `GW_BROKER`,
 `GW_MODE`, `GW_STRATEGY`, `GW_STRATEGY_ENABLED`, `GW_LOG_LEVEL`, `GW_THEME`,
-`GW_TIMEFRAME`, `GW_SEED`, `GW_BROKER_HOST`, `GW_BROKER_PORT`.
+`GW_TIMEFRAME`, `GW_SEED`, `GW_BROKER_HOST`, `GW_BROKER_PORT`,
+`GW_BROKER_CLIENT_ID`, `GW_BROKER_ACCOUNT`.
 
 ## Documentation
 
@@ -184,12 +187,16 @@ stratégie inscrite au catalogue passe d'office le banc de conformité
 (`internal/strategy/strategytest`).
 
 Pour publier : onglet **Actions** → **Release** → **Run workflow** avec le
-numéro (`v0.4.1`), ou pousser un tag `v*`.
+numéro (`v0.5.0`), ou pousser un tag `v*`.
 
 ## Avertissement
 
 Le mode par défaut est `paper` et la passerelle par défaut est un **rejeu
 simulé**. Passer `broker.mode` à `live` engage de l'argent réel.
+
+La passerelle Interactive Brokers est éprouvée contre les messages du
+client officiel d'IB et contre un faux TWS, **pas encore contre un vrai
+TWS**. La faire tourner d'abord sur un compte papier.
 
 Un expert advisor peut perdre de l'argent, et un bon backtest n'est pas une
 promesse. Le seul chiffre à regarder est l'agrégat **out-of-sample** du

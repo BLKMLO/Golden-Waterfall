@@ -134,14 +134,18 @@ func (r *Runtime) Connect(ctx context.Context) error {
 		return err
 	}
 	gw, err := broker.New(r.cfg.Broker.Name, broker.Options{
-		Host:           r.cfg.Broker.Host,
-		Port:           r.cfg.Broker.Port,
-		Mode:           r.cfg.Broker.Mode,
-		HistoryDir:     r.cfg.Paths.HistoryDir(),
-		InitialCapital: r.cfg.Backtest.InitialCapital,
-		Leverage:       r.cfg.Backtest.Leverage,
-		Speed:          r.cfg.Broker.ReplaySpeed,
-		Logger:         slogAdapter{r.logger},
+		Host:            r.cfg.Broker.Host,
+		Port:            r.cfg.Broker.Port,
+		Mode:            r.cfg.Broker.Mode,
+		HistoryDir:      r.cfg.Paths.HistoryDir(),
+		InitialCapital:  r.cfg.Backtest.InitialCapital,
+		Leverage:        r.cfg.Backtest.Leverage,
+		Speed:           r.cfg.Broker.ReplaySpeed,
+		ClientID:        r.cfg.Broker.ClientID,
+		Account:         r.cfg.Broker.Account,
+		AccountCurrency: r.cfg.Backtest.AccountCurrency,
+		StateDir:        r.cfg.Paths.DataDir,
+		Logger:          slogAdapter{r.logger},
 	})
 	if err != nil {
 		return err

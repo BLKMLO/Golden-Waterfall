@@ -176,6 +176,18 @@ func settingsFields() []settingField {
 			Set:  func(c *config.Config, s string) error { return setInt(&c.Broker.Port, s) },
 		},
 		{
+			Section: "Compte", Path: "broker.client_id", Label: "Client ID (IB)", Kind: kindNumber, Step: 1,
+			Help: "Interactive Brokers : identifiant de connexion. Unique par programme connecté au même TWS.",
+			Get:  func(c *config.Config) string { return strconv.Itoa(c.Broker.ClientID) },
+			Set:  func(c *config.Config, s string) error { return setInt(&c.Broker.ClientID, s) },
+		},
+		{
+			Section: "Compte", Path: "broker.account", Label: "Compte (IB)", Kind: kindText,
+			Help: "Interactive Brokers : compte à utiliser si la session TWS en gère plusieurs. Vide = le seul compte.",
+			Get:  func(c *config.Config) string { return c.Broker.Account },
+			Set:  func(c *config.Config, s string) error { c.Broker.Account = strings.TrimSpace(s); return nil },
+		},
+		{
 			Section: "Compte", Path: "backtest.account_currency", Label: "Devise du compte", Kind: kindEnum,
 			Help:    "Devise dans laquelle sont exprimés capital, P&L et budget de risque. Elle doit être celle du compte réel.",
 			Choices: func() []string { return []string{"USD", "EUR", "GBP", "CHF", "JPY", "CAD", "AUD", "NZD"} },

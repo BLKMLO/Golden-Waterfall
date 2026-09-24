@@ -155,3 +155,27 @@ func TestUnreportedPnLIsNotComputed(t *testing.T) {
 		t.Fatalf("le motif doit signaler l'absence de P&L : %q", trades[0].ExitReason)
 	}
 }
+
+// TestExitWithoutKnownEntryIsNotAnEntry : une sortie dont le moteur n'a
+// pas vu l'entrée (position ouverte avant le démarrage, stop d'une séance
+// précédente) ne devient PAS une entrée. Sinon la sortie suivante
+// journaliserait un trade entre deux ordres sans rapport.
+func TestExitWithoutKnownEntryIsNotAnEntry(t *testing.T) {
+	h := newExecutionHarness(t)
+	h.engine.HandleExecution(core.ExecutionReport{
+		Symbol: "EURUSD", Side: core.Sell, Quantity: 1000, Status: core.Filled,
+		FillPrice: 1.10, PnL: -5, Realized: true, Closing: true, Reason: "stop", Time: time.Now().UTC(),
+	})
+	h.engine.HandleExecution(core.ExecutionReport{
+		Symbol: "EURUSD", Side: core.Buy, Quantity: 1000, Status: core.Filled,
+		FillPrice: 1.12, OrderID: "B", Time: time.Now().UTC(),
+	})
+	h.engine.HandleExecution(core.ExecutionReport{
+		Symbol: "EURUSD", Side: core.Sell, Quantity: 1000, Status: core.Filled,
+		FillPrice: 1.13, PnL: 10, Realized: true, Closing: true, Reason: "sortie", Time: time.Now().UTC(),
+	})
+	trades, _ := h.store.Trades(0)
+	if len(trades) != 1 || trades[0].EntryPrice != 1.12 {
+		t.Fatalf("un seul trade attendu, entré à 1.12 : %+v", trades)
+	}
+}

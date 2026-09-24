@@ -392,6 +392,16 @@ func (e *Engine) HandleExecution(rep core.ExecutionReport) {
 
 	e.mu.Lock()
 	leg, hasLeg := e.openLeg[rep.Symbol]
+	if rep.Closing && !hasLeg {
+		// Sortie d'une position dont ce moteur n'a pas vu l'entrée
+		// (ouverte avant le démarrage, ou hors du programme). La prendre
+		// pour une entrée fabriquerait, à la sortie suivante, un trade
+		// entre deux ordres sans rapport.
+		e.mu.Unlock()
+		e.logger.Warn("sortie d'une position ouverte hors de cette séance : aucun trade journalisé",
+			"symbole", rep.Symbol, "ordre", rep.OrderID, "prix", rep.FillPrice, "pnl", rep.PnL)
+		return
+	}
 	// Deux fills du MÊME sens ne forment pas un aller-retour.
 	//
 	// L'appariement naïf « le deuxième fill ferme le premier » fabriquerait

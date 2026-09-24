@@ -45,6 +45,14 @@ type Backtest struct {
 	took    time.Duration
 	cancel  context.CancelFunc
 	rows    int
+
+	// Liste des trades : curseur, et focus des flèches. ↑↓ choisissent
+	// la paire tant que le focus n'est pas sur les trades ; pgup, pgdn,
+	// début, fin et la molette font TOUJOURS défiler les trades, qui sont
+	// la seule liste longue de l'écran.
+	trades      component.Scroll
+	focusTrades bool
+	tradePage   int
 }
 
 // NewBacktest construit l'écran de backtest.
@@ -77,13 +85,29 @@ func (v *Backtest) Busy() bool {
 func (v *Backtest) Init() tea.Cmd { return nil }
 
 func (v *Backtest) Keys() [][2]string {
+	arrows := [2]string{"↑↓", "paire"}
+	if v.focusTrades {
+		arrows = [2]string{"↑↓", "trade"}
+	}
 	return [][2]string{
 		{"r", "lancer"},
 		{"x", "interrompre"},
 		{"u", "unité de temps"},
 		{"e", "exporter en CSV"},
-		{"↑↓", "paire"},
+		arrows,
+		{"t", "paire / trades"},
+		{"pgup pgdn", "défiler les trades"},
 	}
+}
+
+// tradeCount : nombre de trades du dernier résultat, 0 sans résultat.
+func (v *Backtest) tradeCount() int {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.result == nil {
+		return 0
+	}
+	return len(v.result.Trades)
 }
 
 func (v *Backtest) timeframe() data.Timeframe { return data.Timeframes[v.tfIndex] }
@@ -99,6 +123,7 @@ func (v *Backtest) Update(msg tea.Msg) (Model, tea.Cmd) {
 			v.err = msg.err.Error()
 		}
 		v.mu.Unlock()
+		v.trades = component.Scroll{}
 		if msg.err != nil {
 			v.deps.Status("backtest en échec : " + msg.err.Error())
 		} else if msg.result != nil {
@@ -106,12 +131,37 @@ func (v *Backtest) Update(msg tea.Msg) (Model, tea.Cmd) {
 				msg.result.Stats.Trades, component.Duration(msg.took)))
 		}
 
+	case tea.MouseMsg:
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
+			v.trades.Wheel(true, v.tradeCount())
+		case tea.MouseButtonWheelDown:
+			v.trades.Wheel(false, v.tradeCount())
+		}
+
 	case tea.KeyMsg:
-		switch msg.String() {
+		k := msg.String()
+		if v.focusTrades || (k != "up" && k != "K" && k != "down" && k != "J") {
+			if v.trades.Key(k, v.tradeCount(), v.tradePage) {
+				return v, nil
+			}
+		}
+		switch k {
 		case "up", "K":
 			v.move(-1)
 		case "down", "J":
 			v.move(1)
+		case "t":
+			if v.tradeCount() == 0 && !v.focusTrades {
+				v.deps.Status("aucun trade à parcourir — r lance un backtest")
+				break
+			}
+			v.focusTrades = !v.focusTrades
+			if v.focusTrades {
+				v.deps.Status("↑↓ parcourent les trades — t revient au choix de la paire")
+			} else {
+				v.deps.Status("↑↓ choisissent la paire")
+			}
 		case "u":
 			v.tfIndex = (v.tfIndex + 1) % len(data.Timeframes)
 		case "r":
@@ -414,6 +464,16 @@ func (v *Backtest) renderEquity(res *backtest.Result, width, height int) string 
 
 func (v *Backtest) renderTrades(res *backtest.Result, width, height int) string {
 	th := v.deps.Theme
+	// Budget MESURÉ : PanelH garde height − 3 lignes (bordures et titre) ;
+	// le tableau en prend visible + 2 (entête, pied « N lignes ») ; la
+	// ligne de détail du trade sélectionné, une. L'ancien calcul
+	// (height − 4) coupait déjà le pied du tableau sans le dire.
+	visible := height - 6
+	if visible < 1 {
+		visible = 1
+	}
+	v.tradePage = visible
+	v.trades.Clamp(len(res.Trades))
 	cols := []component.Column{
 		{Title: "Entrée", Width: 16, Flex: true, Min: 10, Priority: 2},
 		{Title: "Sens", Width: 6, Priority: 1},
@@ -436,8 +496,22 @@ func (v *Backtest) renderTrades(res *backtest.Result, width, height int) string 
 		}
 		rows = append(rows, []string{component.Time(t.EntryTime), side, pnl, t.ExitReason})
 	}
-	return component.PanelH(th, fmt.Sprintf("Trades (%d)", len(res.Trades)),
-		component.Table(th, cols, rows, -1, height-4, component.PanelContent(width)), width, height)
+	body := component.Table(th, cols, rows, v.trades.Cursor, visible, component.PanelContent(width))
+	if n := len(res.Trades); n > 0 {
+		t := res.Trades[n-1-v.trades.Cursor]
+		detail := fmt.Sprintf("%s → %s · %s u · %s",
+			component.Price(t.Symbol, t.EntryPrice), component.Price(t.Symbol, t.ExitPrice),
+			component.Num(t.Quantity, 0), component.Duration(t.Duration()))
+		body += "\n" + th.Muted.Render(component.Truncate(detail, component.PanelContent(width)))
+	}
+	title := fmt.Sprintf("Trades (%d)", len(res.Trades))
+	if pos := v.trades.Position(len(res.Trades)); pos != "" {
+		title += " · " + pos
+		if v.focusTrades {
+			title = "▸ " + title
+		}
+	}
+	return component.PanelH(th, title, body, width, height)
 }
 
 // wrap coupe un texte long à la largeur donnée.

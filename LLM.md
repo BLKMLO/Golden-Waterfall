@@ -140,6 +140,12 @@ cessait d'être vraie.
 | Cible v1_2 confrontée au moteur de backtest | colibri | Apprendre des gains que l'exécution ne verse pas |
 | `costs_modelled`, `purged`, `calibrated` au manifeste | colibri | Croire nette une cible brute, ou calibrée une probabilité brute |
 | Modèle rangé PAR PAIRE dans une instance | colibri | Décider EURUSD avec le modèle d'USDJPY |
+| `ibCheckMode` (compte « D… » = papier) + devise vérifiée | broker IB | Trader un compte réel en « paper », ou afficher ARGENT RÉEL sur un compte papier |
+| Sortie IB = annulation CONFIRMÉE des barrières, puis marché | broker IB | Un stop orphelin qui rouvre une position |
+| `checkProtection` (barrière perdue → fermeture) | broker IB | Une position protégée à l'écran et nue chez le courtier |
+| `ExecutionReport.Closing` | core, live | Prendre la sortie d'une position d'avant le démarrage pour une entrée |
+| `Position.UnrealizedKnown` | core, TUI | Afficher 0 de P&L latent quand le courtier ne le donne pas |
+| Messages IB identiques OCTET POUR OCTET au client officiel | broker IB | Un protocole écrit de mémoire |
 
 ## Conventions
 
@@ -390,11 +396,10 @@ réel (le bac à sable de dev est limité à 429), et surtout la MESURE de
    historique, et `gw runs` compare. Tant que ce n'est pas fait, le
    chiffre par défaut n'est adossé à aucune mesure — et le dire est la
    moitié du travail.
-3. **Brancher Interactive Brokers** — seul élément manquant pour que le
-   live soit autre chose qu'un rejeu. Feuille de route dans
-   `docs/brokers.md`. Tant que `placeOrder` ne soumet pas un vrai bracket
-   OCA, `Info.SupportsBracket` reste à `false` et le moteur REFUSE les
-   entrées. ⚠ Ne pas écrire ce protocole « à l'aveugle ».
+3. **Éprouver Interactive Brokers contre un VRAI TWS papier** (v0.5.0).
+   La passerelle est écrite et testée contre le client officiel et un faux
+   TWS, jamais contre un vrai : entrée, stop, limite, sortie sur signal,
+   redémarrage, puis comparer le journal au relevé IB.
 4. **Icône Windows** : mécanique en place, il manque le fichier
    `build/icon.ico` (256×256) — décision de design, pas de code.
 5. **Exposition croisée inter-actifs** dans le walk-forward : les
