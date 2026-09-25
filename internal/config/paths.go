@@ -107,6 +107,11 @@ func (p Paths) DatabaseFile() string { return filepath.Join(p.DataDir, "gw.db") 
 // l'utilisateur est censé ouvrir avec un autre outil.
 func (p Paths) ExportsDir() string { return filepath.Join(p.DataDir, "exports") }
 
+// NewsDir contient l'archive du calendrier économique : un fichier JSON
+// par semaine récupérée ou importée. Le flux public ne sert que la semaine
+// en cours ; sans archive, aucun backtest ne pourrait rejouer le filtre.
+func (p Paths) NewsDir() string { return filepath.Join(p.DataDir, "news") }
+
 // LogFile est le journal applicatif.
 func (p Paths) LogFile() string { return filepath.Join(p.DataDir, "logs", "gw.log") }
 
@@ -115,7 +120,7 @@ func (p Paths) LogFile() string { return filepath.Join(p.DataDir, "logs", "gw.lo
 func (p Paths) EnsureDirs() error {
 	for _, dir := range []string{
 		p.ConfigDir, p.DataDir, p.HistoryDir(), p.ModelsDir(), p.ExportsDir(),
-		filepath.Dir(p.LogFile()),
+		p.NewsDir(), filepath.Dir(p.LogFile()),
 	} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err

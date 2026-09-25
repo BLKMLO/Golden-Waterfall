@@ -58,10 +58,17 @@ Golden-Waterfall/
 │   │   │   ├── train.go        Cible, purge, poids, entraînement, AUC OOS.
 │   │   │   └── model.go        Manifeste, chargement vérifié colonne à colonne.
 │   │   └── troglodyte/         Génération Troglodyte (tendance, Kalman) :
+│   │       ├── revision.go     Définitions figées v1_0, v1_1.
 │   │       ├── kalman.go       Tendance locale linéaire, filtre, vraisemblance.
 │   │       ├── mle.go          Maximum de vraisemblance (grille + Nelder-Mead).
-│   │       ├── strategy.go     Révision v1_0, décision sur z, entraînement.
+│   │       ├── decision.go     LA règle (decide), normalisation, chandelier.
+│   │       ├── calibrate.go    Calibrage v1_1 : rejeu de la règle comme le moteur.
+│   │       ├── strategy.go     Chauffe, décision, entraînement.
 │   │       └── model.go        Manifeste = le modèle entier, chargement vérifié.
+│   │
+│   ├── news/                   Calendrier économique et FILTRE d'actualités :
+│   │                           sources enregistrées (forexfactory, none),
+│   │                           archive par semaine, Gate commun aux moteurs.
 │   │
 │   ├── strategies/             CATALOGUE : le seul paquet qui nomme une
 │   │                           implémentation (importé par app).
@@ -142,6 +149,20 @@ supposaient autrefois de Colibri est désormais DÉCLARÉ par la stratégie :
 | `model.json` + `metadata.json` (catalogue) | `strategy.ModelManifest` seul |
 | Clôture de toute position avant le week-end | `Description.HoldsOverWeekend` (v0.7.0) |
 | Signal opposé ignoré tant que la position vit | `Description.ExitOnReversal` (v0.7.0) |
+| Aucun filtre d'actualités | `Description.UsesNews` (v0.7.1) ; Colibri ne le déclare jamais |
+
+**Sorties orientées** (v0.7.1) : `core.ExitLong` et `core.ExitShort` ne
+ferment qu'une position de leur sens (`SignalAction.Closes`), en backtest
+comme en live — c'est `risk.Evaluate` qui tranche. Une stratégie sans état
+ne sait pas dans quel sens le moteur est positionné ; un stop suiveur, lui,
+ne vaut que pour un sens.
+
+**Filtre d'actualités** (v0.7.1, [`actualites.md`](actualites.md)) : un
+seul `news.Service`, câblé dans `app.New`, fournit un `news.Gate` immuable
+au moteur de backtest, au walk-forward et au moteur live. Les moteurs
+l'appliquent aux seules ENTRÉES d'une stratégie qui déclare `UsesNews`, à
+l'instant du close de la bougie de décision. Une stratégie ne va jamais
+sur internet elle-même.
 
 Les règles d'exécution que la stratégie a besoin de connaître pour
 étiqueter sa cible (fin de semaine ISO, barrière verticale, spread médian)
@@ -328,6 +349,7 @@ cotation, `CurrencyExact` vaut `false`, et l'interface le dit.
 | Nouvelle stratégie | `strategy/<oiseau>/` + `Register()` dans un `init()` + une ligne dans `strategies/` | Moteurs, walk-forward, TUI, CLI, risque, brokers |
 | Nouvelle révision d'une stratégie | une nouvelle valeur `revision` dans son paquet | Les révisions publiées |
 | Nouveau broker | `broker/<nom>.go` + `Register()` dans un `init()` | Stratégies, risque, TUI |
+| Nouvelle source d'actualités | `news/<nom>.go` + `news.Register()` dans un `init()` | Moteurs, stratégies |
 | Nouvel instrument | une ligne dans `data.Instruments` | Le reste de `data` |
 | Nouvel indicateur | `indicator/` (causal, NaN pendant la chauffe) | Un jeu de features publié |
 | Nouvel écran | `tui/view/<nom>.go` + une ligne dans `tui.New()` | Les autres écrans |

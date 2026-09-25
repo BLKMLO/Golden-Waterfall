@@ -1,0 +1,74 @@
+[
+ {
+  "title": "Bank Holiday",
+  "country": "JPY",
+  "date": "2026-09-20T19:00:00-04:00",
+  "impact": "Holiday",
+  "forecast": "",
+  "previous": ""
+ },
+ {
+  "title": "Rightmove HPI m/m",
+  "country": "GBP",
+  "date": "2026-09-20T19:01:00-04:00",
+  "impact": "Low",
+  "forecast": "",
+  "previous": "-2.0%"
+ },
+ {
+  "title": "Credit Card Spending y/y",
+  "country": "NZD",
+  "date": "2026-09-20T23:00:00-04:00",
+  "impact": "Low",
+  "forecast": "",
+  "previous": "5.3%"
+ },
+ {
+  "title": "ECB President Lagarde Speaks",
+  "country": "EUR",
+  "date": "2026-09-21T11:00:00-04:00",
+  "impact": "Medium",
+  "forecast": "",
+  "previous": ""
+ },
+ {
+  "title": "BOC Gov Macklem Speaks",
+  "country": "CAD",
+  "date": "2026-09-21T11:05:00-04:00",
+  "impact": "Medium",
+  "forecast": "",
+  "previous": ""
+ },
+ {
+  "title": "RBA Gov Bullock Speaks",
+  "country": "AUD",
+  "date": "2026-09-21T23:10:00-04:00",
+  "impact": "High",
+  "forecast": "",
+  "previous": ""
+ },
+ {
+  "title": "Employment Change",
+  "country": "AUD",
+  "date": "2026-09-23T21:30:00-04:00",
+  "impact": "High",
+  "forecast": "21.5K",
+  "previous": "-15.8K"
+ },
+ {
+  "title": "Unemployment Rate",
+  "country": "AUD",
+  "date": "2026-09-23T21:30:00-04:00",
+  "impact": "High",
+  "forecast": "4.5%",
+  "previous": "4.5%"
+ },
+ {
+  "title": "SNB Monetary Policy Assessment",
+  "country": "CHF",
+  "date": "2026-09-24T03:30:00-04:00",
+  "impact": "High",
+  "forecast": "",
+  "previous": ""
+ }
+]

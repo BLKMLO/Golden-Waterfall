@@ -10,6 +10,7 @@ import (
 	"github.com/BLKMLO/Golden-Waterfall/internal/broker"
 	"github.com/BLKMLO/Golden-Waterfall/internal/core"
 	"github.com/BLKMLO/Golden-Waterfall/internal/data"
+	"github.com/BLKMLO/Golden-Waterfall/internal/news"
 	"github.com/BLKMLO/Golden-Waterfall/internal/risk"
 	"github.com/BLKMLO/Golden-Waterfall/internal/storage"
 	"github.com/BLKMLO/Golden-Waterfall/internal/strategy"
@@ -59,7 +60,20 @@ type Engine struct {
 	// symbole (temps du marché), pour ne pas renvoyer un ordre à chaque
 	// tick quand la sortie échoue.
 	weekendTry map[string]time.Time
-	stats      Stats
+	// news : filtre d'actualités, appliqué aux entrées d'une stratégie
+	// qui le déclare. nil = aucun.
+	news  NewsSource
+	stats Stats
+}
+
+// NewsSource fournit le filtre d'actualités courant (nil = désactivé).
+type NewsSource interface{ Gate() *news.Gate }
+
+// SetNews branche le filtre d'actualités (Runtime.connect).
+func (e *Engine) SetNews(src NewsSource) {
+	e.mu.Lock()
+	e.news = src
+	e.mu.Unlock()
 }
 
 // openLeg : l'entrée d'un aller-retour en cours, telle que le broker l'a
@@ -101,8 +115,13 @@ type Stats struct {
 	// pas accepter. Comme au backtest.
 	WeekendExits   int64
 	WeekendSkipped int64
-	LastTick       time.Time
-	LastBar        time.Time
+	// NewsBlocked : entrées écartées par une annonce. NewsUncovered :
+	// entrées transmises SANS filtre, faute de calendrier couvrant
+	// l'instant — comme au backtest.
+	NewsBlocked   int64
+	NewsUncovered int64
+	LastTick      time.Time
+	LastBar       time.Time
 }
 
 // NewEngine assemble le moteur. Le câblage réel se fait dans Runtime.
@@ -323,6 +342,32 @@ func (e *Engine) submit(ctx context.Context, symbol string, sig core.Signal, las
 		e.logger.Info("entrée non transmise : dernière bougie avant la fermeture du week-end",
 			"symbole", symbol, "signal", sig.Action)
 		return
+	}
+	if sig.Action.IsEntry() && e.desc.UsesNews && heldQuantity(positions, symbol) == 0 {
+		e.mu.RLock()
+		src := e.news
+		e.mu.RUnlock()
+		if src != nil {
+			if gate := src.Gate(); gate != nil {
+				// Instant de la décision : le close de la bougie, comme au
+				// backtest.
+				switch verdict, ev := gate.Check(symbol, sig.Time.Add(e.tf.Duration())); verdict {
+				case news.Blocked:
+					e.mu.Lock()
+					e.stats.NewsBlocked++
+					e.mu.Unlock()
+					e.logger.Info("entrée non transmise : annonce économique",
+						"symbole", symbol, "signal", sig.Action, "annonce", ev.String())
+					return
+				case news.Uncovered:
+					e.mu.Lock()
+					e.stats.NewsUncovered++
+					e.mu.Unlock()
+					e.logger.Warn("filtre d'actualités inopérant : calendrier absent pour cet instant, entrée transmise",
+						"symbole", symbol)
+				}
+			}
+		}
 	}
 	var account *core.AccountState
 	if acc, err := e.gateway.Account(ctx); err == nil {

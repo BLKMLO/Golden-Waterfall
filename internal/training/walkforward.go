@@ -103,6 +103,13 @@ type Result struct {
 type Runner struct {
 	cfg  config.Config
 	risk *risk.Manager
+	news backtest.NewsSource
+}
+
+// WithNews branche le filtre d'actualités sur les backtests des plis.
+func (r *Runner) WithNews(src backtest.NewsSource) *Runner {
+	r.news = src
+	return r
 }
 
 // NewRunner construit l'exécuteur.
@@ -443,7 +450,7 @@ func (r *Runner) runFold(ctx context.Context, req Request, k int, b foldBounds,
 	}
 
 	// Évaluation OUT-OF-SAMPLE, actif par actif.
-	engine := backtest.NewEngine(r.cfg, r.risk)
+	engine := backtest.NewEngine(r.cfg, r.risk).WithNews(r.news)
 	results := make([]*backtest.Result, len(symbols))
 	var aucSum float64
 	var aucCount int

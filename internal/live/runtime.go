@@ -12,6 +12,7 @@ import (
 	"github.com/BLKMLO/Golden-Waterfall/internal/config"
 	"github.com/BLKMLO/Golden-Waterfall/internal/core"
 	"github.com/BLKMLO/Golden-Waterfall/internal/data"
+	"github.com/BLKMLO/Golden-Waterfall/internal/news"
 	"github.com/BLKMLO/Golden-Waterfall/internal/risk"
 	"github.com/BLKMLO/Golden-Waterfall/internal/storage"
 	"github.com/BLKMLO/Golden-Waterfall/internal/strategy"
@@ -80,6 +81,13 @@ type Snapshot struct {
 	HasAccount bool
 	AccountErr string
 	Stats      Stats
+	// NewsActive : la stratégie déclare le filtre d'actualités ET il est
+	// activé. NewsCovered : le calendrier couvre l'instant du dernier tick
+	// (ou maintenant, sans tick). Un filtre actif sans couverture ne
+	// filtre rien — l'interface le montre.
+	NewsActive  bool
+	NewsCovered bool
+	NewsStatus  news.Status
 }
 
 // Runtime assemble la passerelle, la stratégie et le moteur, et les fait
@@ -91,6 +99,7 @@ type Runtime struct {
 	logger *slog.Logger
 	store  *storage.Store
 	risk   *risk.Manager
+	news   *news.Service
 
 	mu       sync.RWMutex
 	gateway  broker.Gateway
@@ -125,6 +134,12 @@ func NewRuntime(cfg config.Config, bus *core.Bus, logger *slog.Logger,
 		notices: map[string]string{},
 		message: "non connecté",
 	}
+}
+
+// WithNews branche le service d'actualités (câblé par app.New).
+func (r *Runtime) WithNews(svc *news.Service) *Runtime {
+	r.news = svc
+	return r
 }
 
 // Connect instancie la passerelle et la stratégie, charge les modèles,
@@ -187,6 +202,12 @@ func (r *Runtime) connect(ctx context.Context, account string) error {
 	engine.SetEnabled(r.cfg.Strategy.Enabled)
 
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	// Actualités : seulement pour une stratégie qui les déclare. Colibri
+	// ne reçoit ni filtre ni récupération.
+	if strat.Describe().UsesNews && r.news.Enabled() {
+		engine.SetNews(r.news)
+		go r.news.Run(runCtx)
+	}
 	gw.OnTick(func(t core.Tick) {
 		r.recordQuote(t)
 		engine.HandleTick(runCtx, t)
@@ -487,6 +508,12 @@ func (r *Runtime) Snapshot() Snapshot {
 		d := strat.Describe()
 		snap.StrategyName = d.Name
 		snap.StrategyReady, snap.StrategyWhy = strat.Ready()
+		snap.NewsActive = d.UsesNews && r.news.Enabled()
+	} else if probe, err := strategy.New(r.cfg.Strategy.Name); err == nil {
+		snap.NewsActive = probe.Describe().UsesNews && r.news.Enabled()
+	}
+	if snap.NewsActive {
+		snap.NewsStatus = r.news.Status()
 	}
 	var inFlight map[string]string
 	if engine != nil {
@@ -494,6 +521,13 @@ func (r *Runtime) Snapshot() Snapshot {
 		snap.EngineStatus = engine.Describe()
 		snap.Stats = engine.Stats()
 		inFlight = engine.InFlight()
+		if snap.NewsActive {
+			at := snap.Stats.LastTick
+			if at.IsZero() {
+				at = time.Now()
+			}
+			snap.NewsCovered = r.news.Gate().Calendar.Covers(at)
+		}
 	} else {
 		snap.EngineStatus = "arrêté"
 	}

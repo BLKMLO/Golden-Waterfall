@@ -44,55 +44,25 @@
 //
 //	troglodyte_v1_0 : fenêtre 500 bougies, s_in 1,5, s_out 0,5, stop
 //	                  3 × ATR(14). Ces valeurs sont des CONVENTIONS de
-//	                  départ, pas des mesures. Détail : docs/troglodyte.md.
+//	                  départ, pas des mesures.
+//	troglodyte_v1_1 : prix NORMALISÉ par sa volatilité avant le filtre,
+//	                  stop suiveur « chandelier », seuils CALIBRÉS à
+//	                  l'entraînement, filtre d'actualités déclaré.
+//
+// Définitions : revision.go. Détail : docs/troglodyte.md.
 package troglodyte
 
 import (
 	"context"
 	"fmt"
 	"math"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/BLKMLO/Golden-Waterfall/internal/core"
 	"github.com/BLKMLO/Golden-Waterfall/internal/strategy"
 )
-
-// revision : définition FIGÉE d'une révision.
-type revision struct {
-	name, version, summary string
-	// window : bougies refiltrées à chaque décision.
-	window int
-	// enterZ, exitZ : seuils s_in et s_out sur z.
-	enterZ, exitZ float64
-	// stopATR, atrPeriod : stop à k × ATR de Wilder.
-	stopATR   float64
-	atrPeriod int
-	// minTrainBars : en deçà, l'estimation des variances n'a pas assez
-	// d'innovations pour être autre chose que du bruit. On REFUSE.
-	minTrainBars int
-}
-
-var revisions = []revision{
-	{
-		name:    "troglodyte_v1_0",
-		version: "1.0",
-		summary: "Suivi de tendance structurel : pente d'une tendance locale linéaire " +
-			"filtrée par Kalman, variances estimées par maximum de vraisemblance, paire par paire.",
-		window:       500,
-		enterZ:       1.5,
-		exitZ:        0.5,
-		stopATR:      3,
-		atrPeriod:    14,
-		minTrainBars: 1000,
-	},
-}
-
-func init() {
-	for _, r := range revisions {
-		strategy.Register(r.name, func() strategy.Strategy { return newTroglodyte(r) })
-	}
-}
 
 type troglodyte struct {
 	rev revision
@@ -110,27 +80,47 @@ func newTroglodyte(rev revision) *troglodyte {
 
 func (t *troglodyte) Describe() strategy.Description {
 	r := t.rev
+	input := "ln(close bid)"
+	if r.volHalfLife > 0 {
+		input = "ln(close bid) normalisé par sa volatilité (demi-vie " + strconv.Itoa(r.volHalfLife) + " bougies)"
+	}
+	def := map[string]any{
+		"modele":           "tendance locale linéaire (niveau + pente), filtre de Kalman, sur " + input,
+		"estimation":       "maximum de vraisemblance diffuse, concentrée en σ²_η ; grille puis Nelder-Mead",
+		"fenetre":          r.window,
+		"seuil_entree_z":   r.enterZ,
+		"seuil_sortie_z":   r.exitZ,
+		"stop_atr":         r.stopATR,
+		"periode_atr":      r.atrPeriod,
+		"limite":           "aucune",
+		"porte_week_end":   true,
+		"sortie_si_oppose": true,
+		"mutualise":        false,
+	}
+	if r.trailBars > 0 {
+		def["stop_suiveur"] = "chandelier : plus haut (plus bas) des " + strconv.Itoa(r.trailBars) + " dernières bougies ∓ k × ATR"
+	}
+	if r.calibrated() {
+		def["calibrage"] = "s_in et k choisis sur l'entraînement parmi la grille ; s_out = s_in / 3"
+		def["grille_seuil_entree"] = r.enterGrid
+		def["grille_stop_atr"] = r.stopGrid
+		def["seuil_entree_z"] = "calibré (repli 1,5)"
+		def["stop_atr"] = "calibré (repli 3)"
+		def["seuil_sortie_z"] = "s_in / 3"
+	}
+	if r.usesNews {
+		def["actualites"] = "filtre déclaré (appliqué par les moteurs si news.enabled)"
+	}
 	return strategy.Description{
-		Name:    r.name,
-		Version: r.version,
-		Summary: r.summary,
-		Definition: map[string]any{
-			"modele":           "tendance locale linéaire (niveau + pente), filtre de Kalman, sur ln(close bid)",
-			"estimation":       "maximum de vraisemblance diffuse, concentrée en σ²_ε ; grille puis Nelder-Mead",
-			"fenetre":          r.window,
-			"seuil_entree_z":   r.enterZ,
-			"seuil_sortie_z":   r.exitZ,
-			"stop_atr":         r.stopATR,
-			"periode_atr":      r.atrPeriod,
-			"limite":           "aucune",
-			"porte_week_end":   true,
-			"sortie_si_oppose": true,
-			"mutualise":        false,
-		},
+		Name:             r.name,
+		Version:          r.version,
+		Summary:          r.summary,
+		Definition:       def,
 		ContextBars:      r.window,
 		MaxHold:          0,
 		HoldsOverWeekend: true,
 		ExitOnReversal:   true,
+		UsesNews:         r.usesNews,
 	}
 }
 
@@ -186,18 +176,12 @@ func (t *troglodyte) OnBar(ctx context.Context, symbol string, series core.Serie
 	if m == nil || i+1 < t.rev.window {
 		return strategy.NoSignal(symbol), nil
 	}
-	window := series[i+1-t.rev.window : i+1]
-	y, ok := logCloses(window)
+	st, ok := t.state(series, i, m.params)
 	if !ok {
-		// Un prix nul ou absent ne dit rien de la tendance : on s'abstient.
+		// Prix nul ou absent, volatilité nulle : rien à dire de la
+		// tendance, on s'abstient.
 		return strategy.NoSignal(symbol), nil
 	}
-	z := filterWindow(y, m.params).slopeZ()
-	atr := windowATR(window, t.rev.atrPeriod)
-	if math.IsNaN(z) || math.IsNaN(atr) || atr <= 0 {
-		return strategy.NoSignal(symbol), nil
-	}
-
 	bar := series[i]
 	sig := core.Signal{
 		Strategy: t.rev.name,
@@ -207,18 +191,44 @@ func (t *troglodyte) OnBar(ctx context.Context, symbol string, series core.Serie
 		Action:   core.Hold,
 		// Confiance : probabilité a posteriori, SOUS LE MODÈLE gaussien,
 		// que la pente soit du côté le plus probable — P(β > 0) = Φ(z).
-		Confidence: math.Max(normalCDF(z), normalCDF(-z)),
+		Confidence: math.Max(normalCDF(st.z), normalCDF(-st.z)),
 	}
-	offset := t.rev.stopATR * atr
-	switch {
-	case z >= t.rev.enterZ:
-		sig.Action, sig.StopLoss, sig.Confidence = core.EnterLong, bar.Close()-offset, normalCDF(z)
-	case z <= -t.rev.enterZ:
-		sig.Action, sig.StopLoss, sig.Confidence = core.EnterShort, bar.Close()+offset, normalCDF(-z)
-	case math.Abs(z) < t.rev.exitZ:
-		sig.Action = core.Exit
+	action, stop := decide(st, m.rule())
+	switch action {
+	case core.EnterLong:
+		sig.Action, sig.StopLoss, sig.Confidence = action, stop, normalCDF(st.z)
+	case core.EnterShort:
+		sig.Action, sig.StopLoss, sig.Confidence = action, stop, normalCDF(-st.z)
+	default:
+		sig.Action = action
 	}
 	return sig, nil
+}
+
+// state : ce que la décision voit de la bougie i, calculé sur les
+// `window` bougies qui finissent à i et sur elles seules.
+func (t *troglodyte) state(series core.Series, i int, p params) (barState, bool) {
+	r := t.rev
+	window := series[i+1-r.window : i+1]
+	y, ok := logCloses(window)
+	if ok && r.volHalfLife > 0 {
+		y, ok = normalizedPath(y, r.volHalfLife)
+	}
+	if !ok {
+		return barState{}, false
+	}
+	st := barState{
+		z:     filterWindow(y, p).slopeZ(),
+		close: series[i].Close(),
+		atr:   windowATR(window, r.atrPeriod),
+	}
+	if math.IsNaN(st.z) || math.IsNaN(st.atr) || st.atr <= 0 {
+		return barState{}, false
+	}
+	if r.trailBars > 0 {
+		st.hh, st.ll = extremes(window, r.trailBars)
+	}
+	return st, true
 }
 
 // Train estime les variances du modèle sur UNE paire.
@@ -240,6 +250,11 @@ func (t *troglodyte) Train(ctx context.Context, req strategy.TrainRequest) (*str
 	if !ok {
 		return nil, fmt.Errorf("%s : prix nul, négatif ou absent dans l'historique — logarithme impossible", symbol)
 	}
+	if t.rev.volHalfLife > 0 {
+		if y, ok = normalizedPath(y, t.rev.volHalfLife); !ok {
+			return nil, fmt.Errorf("%s : volatilité nulle sur une demi-vie — normalisation impossible", symbol)
+		}
+	}
 	progress := func(r float64, step string) {
 		if req.Progress != nil {
 			req.Progress(r, step)
@@ -256,6 +271,14 @@ func (t *troglodyte) Train(ctx context.Context, req strategy.TrainRequest) (*str
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	ru := rule{enterZ: t.rev.enterZ, exitZ: t.rev.exitZ, stopATR: t.rev.stopATR, trail: t.rev.trailBars > 0}
+	var cal *calibration
+	if t.rev.calibrated() {
+		progress(0.3, "calibrage du seuil d'entrée et du stop sur l'entraînement")
+		if ru, cal, err = t.calibrate(ctx, series, f.Params); err != nil {
+			return nil, err
+		}
+	}
 	first, last := series.Span()
 	meta := &modelMeta{
 		Strategy:       t.rev.name,
@@ -270,10 +293,13 @@ func (t *troglodyte) Train(ctx context.Context, req strategy.TrainRequest) (*str
 		NegligibleZeta: f.NegligibleZeta,
 		AtUpperBound:   f.AtUpperBound,
 		Window:         t.rev.window,
-		EnterZ:         t.rev.enterZ,
-		ExitZ:          t.rev.exitZ,
-		StopATR:        t.rev.stopATR,
+		EnterZ:         ru.enterZ,
+		ExitZ:          ru.exitZ,
+		StopATR:        ru.stopATR,
 		ATRPeriod:      t.rev.atrPeriod,
+		VolHalfLife:    t.rev.volHalfLife,
+		TrailBars:      t.rev.trailBars,
+		Calibration:    cal,
 		TrainFrom:      first,
 		TrainTo:        last,
 		Seed:           req.Seed,
@@ -290,23 +316,29 @@ func (t *troglodyte) Train(ctx context.Context, req strategy.TrainRequest) (*str
 		}
 		return 0
 	}
+	metrics := map[string]float64{
+		"log_vraisemblance_par_obs": f.LogL / float64(f.Obs),
+		"sigma2_eps":                f.Params.Eps,
+		"sigma2_eta":                f.Params.Eta,
+		"sigma2_zeta":               f.Params.Zeta,
+		"iterations":                float64(f.Iterations),
+		"sigma2_eps_negligeable":    flag(f.NegligibleEps),
+		"sigma2_zeta_negligeable":   flag(f.NegligibleZeta),
+		"borne_haute_atteinte":      flag(f.AtUpperBound),
+	}
+	if cal != nil {
+		metrics["calibrage_seuil_entree"] = ru.enterZ
+		metrics["calibrage_stop_atr"] = ru.stopATR
+		metrics["calibrage_repli"] = flag(cal.Fallback)
+	}
 	return &strategy.TrainReport{
 		ModelDir: req.OutputDir,
 		Samples:  f.Obs,
 		// Une seule entrée : le logarithme du close.
 		Features: 1,
-		Metrics: map[string]float64{
-			"log_vraisemblance_par_obs": f.LogL / float64(f.Obs),
-			"sigma2_eps":                f.Params.Eps,
-			"sigma2_eta":                f.Params.Eta,
-			"sigma2_zeta":               f.Params.Zeta,
-			"iterations":                float64(f.Iterations),
-			"sigma2_eps_negligeable":    flag(f.NegligibleEps),
-			"sigma2_zeta_negligeable":   flag(f.NegligibleZeta),
-			"borne_haute_atteinte":      flag(f.AtUpperBound),
-		},
-		Symbols: []string{symbol},
-		Seed:    req.Seed,
+		Metrics:  metrics,
+		Symbols:  []string{symbol},
+		Seed:     req.Seed,
 	}, nil
 }
 

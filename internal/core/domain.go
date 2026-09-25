@@ -35,10 +35,33 @@ const (
 	EnterLong  SignalAction = "ENTER_LONG"
 	EnterShort SignalAction = "ENTER_SHORT"
 	Exit       SignalAction = "EXIT"
+	// ExitLong / ExitShort : sorties ORIENTÉES — ne ferment qu'une
+	// position longue (resp. courte). Une stratégie sans état ne sait pas
+	// dans quel sens le moteur est positionné ; un stop suiveur, lui, ne
+	// vaut que pour un sens : « le prix a reculé de 3 ATR sous son plus
+	// haut » condamne une position longue, pas une courte.
+	ExitLong  SignalAction = "EXIT_LONG"
+	ExitShort SignalAction = "EXIT_SHORT"
 )
 
 // IsEntry indique si l'action ouvre une position.
 func (a SignalAction) IsEntry() bool { return a == EnterLong || a == EnterShort }
+
+// IsExit indique si l'action ferme une position (orientée ou non).
+func (a SignalAction) IsExit() bool { return a == Exit || a == ExitLong || a == ExitShort }
+
+// Closes : l'action ferme-t-elle une position de quantité signée `qty` ?
+func (a SignalAction) Closes(qty float64) bool {
+	switch a {
+	case Exit:
+		return qty != 0
+	case ExitLong:
+		return qty > 0
+	case ExitShort:
+		return qty < 0
+	}
+	return false
+}
 
 // Tick est un point de marché reçu d'une gateway.
 type Tick struct {

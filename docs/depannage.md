@@ -30,6 +30,9 @@ cessait d'être vraie — ce ne sont pas des intentions.
 | Laisser une position traverser le week-end en live quand le backtest l'aurait fermée | ferme dans les 5 minutes avant la clôture hebdomadaire (vendredi 17 h, New York) ; en retard si aucun tick n'est arrivé à temps, et le journal le dit |
 | Appliquer les variances d'une paire, d'une unité de temps ou d'une définition à une autre (Troglodyte) | refuse le modèle en nommant ce qui diffère |
 | Afficher une AUC pour un moteur qui n'est pas un classifieur | affiche `—` |
+| Prendre « aucune annonce » pour « calendrier absent » | compte à part les entrées décidées hors du calendrier archivé, et en avertit |
+| Donner les actualités à Colibri | ne les donne qu'aux stratégies qui les déclarent ; un test l'interdit à Colibri |
+| Fermer une position courte sur un signal pensé pour une longue | sorties orientées : `ExitLong` ne ferme qu'une position longue |
 
 
 ## Quand ça se passe mal
@@ -37,6 +40,8 @@ cessait d'être vraie — ce ne sont pas des intentions.
 | Ce qui arrive | Ce que fait Golden Waterfall |
 |---|---|
 | Dukascopy répond 429 (limite de débit) | attend longuement, honore `Retry-After`, et ne monte jamais la concurrence |
+| Le calendrier économique est injoignable | ne déclare rien couvert, garde l'archive, le dit (`gw news`, journal) |
+| Un fichier étranger traîne dans le dossier `news/` | l'ignore : seuls les fichiers de semaine (`AAAA-MM-JJ.json`) comptent |
 | Un jour n'a pas de donnée (week-end, férié) | le compte comme normal, pas comme un échec |
 | Une année se télécharge à moitié | l'écrit, la marque incomplète, et la refait à la prochaine demande |
 | Un fichier d'historique est tronqué | refuse de le lire et nomme le fichier et le remède |

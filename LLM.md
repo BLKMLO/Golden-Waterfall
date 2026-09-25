@@ -20,7 +20,10 @@
   GBDT) est la première, Troglodyte (suivi de tendance, filtre de
   Kalman, v0.7.0) la deuxième. Les révisions d'une génération sont
   numérotées : `colibri_v1_0`, `v1_1`, `v1_2` (défaut des nouvelles
-  installations), `troglodyte_v1_0`.
+  installations), `troglodyte_v1_0`, `v1_1`.
+- **Colibri n'a PAS droit à internet** (règle du propriétaire) : aucune
+  révision Colibri ne déclare `UsesNews` ; `TestColibriNeverUsesTheNews`
+  le fait respecter.
 
 ## Commandes
 
@@ -34,8 +37,9 @@ make dist       # les cinq binaires (Linux ×2, macOS ×2, Windows)
 
 Sous-commandes : `download [--year A | --from A --to B]`,
 `train [PAIRES…] [--risk-per-trade X]`, `backtest PAIRE [--csv]`, `runs`,
-`migrate [--remove]`, `import --symbol S FICHIER…`, `paths`,
-`config [--default]`, `version`.
+`migrate [--remove]`, `import --symbol S FICHIER…`,
+`news [fetch | import FICHIER…]`, `paths`, `config [--default]`,
+`version`. `gw news` n'ouvre pas la base (utilisable TUI ouverte).
 
 Les options sont remises devant les paires avant parsing
 (`partitionArgs`) : le paquet `flag` s'arrête au premier argument
@@ -77,7 +81,7 @@ identique).
 8. **Une stratégie est un module remplaçable.** Moteurs, walk-forward, TUI
    et CLI ne connaissent que `strategy.Strategy` et sa `Description`
    (`ContextBars`, `MaxHold`, `HoldsOverWeekend`, `ExitOnReversal`,
-   `ModelManifest`). Règles d'exécution partagées dans `core/horizon.go`
+   `UsesNews`, `ModelManifest`). Règles d'exécution partagées dans `core/horizon.go`
    et `strategy.ApplyReversal`, appelées par les DEUX moteurs. Le catalogue `internal/strategies`
    est le SEUL paquet qui nomme une implémentation ; toute stratégie qui y
    figure passe le banc `strategy/strategytest`.
@@ -119,6 +123,10 @@ d'être vraie.
 | `negligible_eps` / `negligible_zeta` (test du rapport de vraisemblance), `at_upper_bound` | troglodyte | Prendre une variance au bord pour une estimation, ou l'inverse |
 | `ScoreOOS` → non calculable | troglodyte | Une AUC inventée pour un moteur qui n'est pas un classifieur |
 | Sortie de fin de semaine au temps des TICKS, en retard plutôt que jamais, `WeekendExits`/`WeekendSkipped` | live | Une position que le backtest a fermée, portée en live pendant le week-end |
+| `NewsUncovered` (backtest, live), `NewsSummary`, `✗ news` informatif | news, backtest, live, TUI, CLI | Prendre « calendrier absent » pour « aucune annonce » |
+| Semaine couverte déclarée explicitement ; import = semaines contenant une annonce | news | Un fichier qui s'arrête le 10 mars présenté comme couvrant le 20 |
+| Sorties orientées `ExitLong`/`ExitShort` (`Closes`) | core, risk | Un stop suiveur long qui ferme une position courte |
+| Simulation du calibrage confrontée au VRAI moteur, trade par trade | troglodyte | Calibrer une règle que l'exécution ne suit pas |
 | Avertissement IN-SAMPLE | backtest (TUI + CLI) | Lire un rejeu comme une performance |
 | Brouillon + « prend effet au démarrage » ; `GW_*` non modifiable ; `Validate()` avant écriture | TUI Paramètres | Croire un réglage actif ; éditer une valeur que l'environnement réécrira ; se rendre le démarrage impossible |
 | `Table` : `+N col.` ; `Fit` : lignes masquées ; `StatRowMax` : `+N` | TUI | Perdre une information sans le dire |
@@ -239,6 +247,16 @@ d'être vraie.
   mesurées. Pas de limite (`TakeProfit` = 0 permis par le banc).
 - Filtre confronté à un conditionnement gaussien DENSE, vraisemblance à
   une densité de Cholesky ; estimation vérifiée sur séries simulées.
+- **v1_1** (v0.7.1) : prix NORMALISÉ par sa volatilité (EWMA des r²,
+  demi-vie 30, σ_{t−1}, calculée sur la fenêtre seule) ; stop suiveur
+  CHANDELIER (22 bougies, k ATR) via sorties orientées ; s_in ∈ {1 ; 1,5 ;
+  2 ; 2,5} et k ∈ {2 ; 3 ; 4} CALIBRÉS in-sample (t de Student de la
+  moyenne des trades, n ≥ 20, repli 1,5/3 signalé), s_out = s_in/3 ;
+  `UsesNews`. Tout cela : conventions. `decide` est LA règle (OnBar ET
+  calibrage). Un modèle calibré hors grille est refusé au chargement.
+- **v1_0 vérifiée identique octet pour octet** après la refonte du paquet
+  (modèle + 3 000 décisions, et walk-forward synthétique : mêmes 38
+  trades). Refaire cette capture avant toute retouche du paquet.
 
 ### Exécution et risque
 
@@ -275,6 +293,22 @@ d'être vraie.
 - **Rejeu** : horodate au temps du marché rejoué, jamais l'heure réelle.
 - **bbolt** verrouille le fichier : une seconde instance échoue, c'est
   voulu.
+
+### Actualités (`internal/news`, `docs/actualites.md`)
+
+- Flux `nfs.faireconomy.media/ff_calendar_thisweek.json` : semaine EN
+  COURS seulement (précédente/suivante = 404, constaté le 25/09/2026) →
+  ARCHIVE `<données>/news/AAAA-MM-JJ.json` (dimanche 0 h New York), une
+  récupération remplace sa semaine. Seuls ces noms de fichiers sont lus.
+- Règle : entrée bloquée si annonce d'impact ≥ `min_impact` sur base ou
+  cotation dans [t − after, t + before], t = close de la bougie de
+  décision. Fériés jamais filtrants. Hors semaine couverte → NON filtrée,
+  COMPTÉE (`NewsUncovered`). Sorties jamais filtrées.
+- `news` n'importe PAS `config` (sinon cycle via `data`) : `app.NewsOptions`
+  traduit. Source inconnue = refus de démarrer (dans `app.New`).
+- Récupération : live (si la stratégie déclare, toutes les
+  `refresh_minutes`) et `gw news fetch`. Tests : faux serveur HTTP, jamais
+  le réseau ; extrait réel du flux dans `testdata/`.
 
 ### Interactive Brokers (`internal/broker/ib_*.go`, `interactive_brokers.go`)
 
@@ -321,7 +355,8 @@ d'être vraie.
 partout (promesse « un seul binaire »). Parquet fait passer le binaire de
 8,8 à 15,2 Mo : prix assumé d'un format lisible par d'autres outils.
 v0.7.0 : 15 536 312 → 16 093 368 octets (`-s -w`, mesurés côte à côte),
-base des fuseaux `time/tzdata` et Troglodyte compris.
+base des fuseaux `time/tzdata` et Troglodyte compris ; v0.7.1 :
+16 212 152 octets (`net/http` était déjà là pour Dukascopy).
 `muesli/termenv` est directe pour les SEULS tests du thème.
 
 ⚠ `go.mod` exige **Go 1.25** (`bbolt` v1.5, `x/sys` v0.45). Un repli sur
@@ -332,17 +367,17 @@ Dependabot hebdomadaire, `charmbracelet/x/*` GROUPÉS.
 
 Licence **MIT**, choisie par le propriétaire du projet.
 
-## État du projet (25 septembre 2026, v0.7.0)
+## État du projet (25 septembre 2026, v0.7.1)
 
-25 paquets, suite verte avec `-race`. `wc -l` des fichiers `.go` :
-22 721 lignes hors tests, 10 741 de tests.
+26 paquets, suite verte avec `-race`. `wc -l` des fichiers `.go` :
+24 320 lignes hors tests, 11 364 de tests.
 
 Couverture mesurée le 25 septembre 2026 (`go test -cover`) :
-`cmd/gw` 26 %, `config` 57 %, `tui/view` 61 %, `core` 68 %, `tui` 69 %,
-`data` 70 %, `tui/component` 74 %, `training` 75 %, `indicator` 77 %,
-`storage` 79 %, `app` 79 %, `live` 81 %, `broker` 82 %, `ml/gbdt` 83 %,
-`backtest` 85 %, `strategy/troglodyte` 87 %, `strategy/colibri` 87 %,
-`export` 88 %, `risk` 90 %, `label` 97 %, `tui/theme` 100 %.
+`cmd/gw` 23 %, `config` 57 %, `tui/view` 61 %, `core` 67 %, `tui` 69 %,
+`data` 70 %, `tui/component` 74 %, `training` 74 %, `news` 76 %,
+`app` 77 %, `indicator` 77 %, `storage` 79 %, `live` 80 %, `broker` 82 %,
+`ml/gbdt` 83 %, `backtest` 86 %, `strategy/colibri` 87 %, `export` 88 %,
+`strategy/troglodyte` 89 %, `risk` 90 %, `label` 97 %, `tui/theme` 100 %.
 
 Validé réellement : walk-forward et backtest de bout en bout sur un
 historique importé depuis pyarrow ; Parquet écrit relu par pyarrow ; rendu
@@ -353,11 +388,16 @@ et 132×34 sur un rejeu d'historique SYNTHÉTIQUE (liste de contrôle,
 filtre tradables, dispositions compactes) ; en v0.7.0, `gw train` et
 `gw backtest` avec `troglodyte_v1_0` sur trois ans de M1 SYNTHÉTIQUE
 (aucune clôture de week-end, sorties sur signal, AUC « — »), et Colibri
-v1_2 identique au bit près entre `main` et la branche.
+v1_2 identique au bit près entre `main` et la branche ; en v0.7.1, même
+essai avec `troglodyte_v1_1` (avertissement « hors calendrier » affiché),
+`gw news fetch` contre le VRAI flux (une semaine archivée), TUI sous tmux
+(`✗ news` informatif, section Actualités de Paramètres), Colibri et
+Troglodyte v1_0 à nouveau identiques au bit près.
 
 **Jamais validé** : un téléchargement Dukascopy réel, une mesure sur
 données réelles (ni Colibri ni Troglodyte), une séance contre un vrai
-TWS, la règle de fin de semaine live sur un vrai flux.
+TWS, la règle de fin de semaine live sur un vrai flux, le filtre
+d'actualités sur une période archivée (aucun historique de calendrier).
 
 ## Reste à faire, par ordre de valeur
 
@@ -376,10 +416,11 @@ TWS, la règle de fin de semaine live sur un vrai flux.
    Change des résultats publiés : à traiter comme un changement de moteur.
 4. **Mesurer `risk_per_trade_pct`** (`gw train --risk-per-trade 0` puis
    `0.5`, `gw runs`).
-5. **Troglodyte, suite** : volatilité variable (les variances sont
-   constantes sur l'entraînement), stop suiveur (le contrat ne sait pas
-   déplacer un stop), et, avec un contrat multi-jambes, une génération
-   d'arbitrage statistique qui réutiliserait le filtre.
+5. **Troglodyte, suite** : mesurer v1_1 contre v1_0 sur historique réel ;
+   archiver un calendrier historique (`gw news import`) pour que le
+   filtre compte dans une mesure ; variances variables dans le modèle
+   lui-même ; avec un contrat multi-jambes, une génération d'arbitrage
+   statistique qui réutiliserait le filtre de Kalman.
 6. **IB, suite** : reconnexion automatique, métaux et indices (contrat
    à définir, pas à deviner), P&L latent via `reqAccountUpdates`.
 7. **Exposition croisée** dans le walk-forward (drawdown et Sharpe
@@ -421,7 +462,7 @@ de défaire.
   le README n'y renvoie qu'en une ligne. Pas d'assistant de premier
   lancement dans la TUI : décision du propriétaire du projet.
 - **README abrégé, détail dans `docs/`** (`architecture`, `brokers`,
-  `colibri`, `depannage`, `donnees`, `gbdt`, `troglodyte`).
+  `actualites`, `colibri`, `depannage`, `donnees`, `gbdt`, `troglodyte`).
 - **Deuxième génération = tendance structurelle** (Kalman), pas
   cointégration (deux jambes : contrat à refaire ; croisées non
   dimensionnables ; identité ln EURGBP = ln EURUSD − ln GBPUSD), ni
@@ -434,6 +475,15 @@ de défaire.
   l'ancien comportement (sa cible v1_2 l'a appris).
 - **Pas d'AUC pour Troglodyte** : `ScoreOOS` répond « non calculable » ;
   `PositiveRate` et `Rounds` sont `omitempty` dans `run.json`.
+- **Actualités = filtre des MOTEURS, déclaré par la stratégie**, pas une
+  feature : une stratégie ne va jamais sur internet, backtest et live
+  appliquent la même `Gate.Check`. `news.enabled: true` par défaut ; sans
+  archive, rien n'est filtré et c'est dit. Calendrier absent en live →
+  entrée TRANSMISE (échec ouvert, compté, journalisé), pas bloquée.
+- **Calibrage petit et in-sample** (12 points) : le walk-forward juge ;
+  plus de points = plus de chance d'un gagnant de hasard.
+- **Stop suiveur par sortie de la stratégie** (chandelier), pas par
+  déplacement d'ordre : le contrat ne sait pas modifier un stop posé.
 
 ## Leçons (bugs corrigés dont la cause peut revenir)
 
@@ -459,6 +509,8 @@ de défaire.
 - **Une paramétrisation mal conditionnée** (Troglodyte, variances
   rapportées à σ²_ε) : tests unitaires verts, trouvée par le premier
   `gw train` sur le binaire. Toujours faire tourner le binaire.
+- **Un fichier étranger lu comme une semaine d'archive** (test d'import
+  posé dans `news/`) → noms de fichiers vérifiés.
 
 ## Performance (mesurée)
 
@@ -466,7 +518,8 @@ Bancs : `internal/{indicator,ml/gbdt,label,data,tui,strategy/troglodyte}/bench_t
 
 Troglodyte (Xeon 2,1 GHz du bac à sable) : 21 à 24 µs par décision
 (fenêtre de 500, une allocation de 4 Ko) ; 40 ms pour estimer les
-variances sur 10 000 bougies.
+variances sur 10 000 bougies. v1_1 : 27 µs par décision, 0,31 s pour un
+entraînement complet (calibrage compris) sur 10 000 bougies.
 
 | Changement | Avant | Après |
 |---|---|---|

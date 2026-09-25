@@ -28,6 +28,7 @@ type Config struct {
 	Backtest BacktestConfig `yaml:"backtest"`
 	History  HistoryConfig  `yaml:"history"`
 	Training TrainingConfig `yaml:"training"`
+	News     NewsConfig     `yaml:"news"`
 	UI       UIConfig       `yaml:"ui"`
 	Logging  LoggingConfig  `yaml:"logging"`
 
@@ -150,6 +151,29 @@ type TrainingConfig struct {
 	Seed int64 `yaml:"seed"`
 }
 
+// NewsConfig : filtre d'actualités économiques.
+//
+// Il ne s'applique qu'aux stratégies qui le DÉCLARENT
+// (`Description.UsesNews`) ; Colibri n'y a jamais accès, quel que soit ce
+// réglage. Le calendrier est récupéré par le programme, archivé, et
+// appliqué par les moteurs — jamais par la stratégie elle-même.
+type NewsConfig struct {
+	// Enabled : filtre actif pour les stratégies qui le déclarent.
+	Enabled bool `yaml:"enabled"`
+	// Source : clé du registre des sources (« forexfactory », « none »).
+	Source string `yaml:"source"`
+	// MinImpact : impact minimal d'une annonce filtrante (low, medium,
+	// high).
+	MinImpact string `yaml:"min_impact"`
+	// BeforeMinutes / AfterMinutes : aucune entrée si une annonce tombe
+	// dans les N minutes qui suivent la décision, ou est survenue dans les
+	// M minutes qui la précèdent.
+	BeforeMinutes int `yaml:"before_minutes"`
+	AfterMinutes  int `yaml:"after_minutes"`
+	// RefreshMinutes : cadence de récupération pendant une séance live.
+	RefreshMinutes int `yaml:"refresh_minutes"`
+}
+
 // UIConfig : réglages d'affichage de la TUI.
 type UIConfig struct {
 	// Theme vaut "auto", "dark" ou "light". "auto" laisse le terminal
@@ -196,8 +220,10 @@ func Default() Config {
 			},
 		},
 		Training: TrainingConfig{Folds: 5, Timeframe: "H4", Workers: 0, Seed: 42},
-		UI:       UIConfig{Theme: "auto", RefreshMillis: 500, ChartTimeframe: "H1"},
-		Logging:  LoggingConfig{Level: "info", BufferSize: 1000},
+		News: NewsConfig{Enabled: true, Source: "forexfactory", MinImpact: "high",
+			BeforeMinutes: 30, AfterMinutes: 30, RefreshMinutes: 60},
+		UI:      UIConfig{Theme: "auto", RefreshMillis: 500, ChartTimeframe: "H1"},
+		Logging: LoggingConfig{Level: "info", BufferSize: 1000},
 	}
 }
 
@@ -271,6 +297,7 @@ func envBindings() []envBinding {
 		{"GW_THEME", "ui.theme", func(c *Config, v string) error { c.UI.Theme = v; return nil }},
 		{"GW_TIMEFRAME", "training.timeframe", func(c *Config, v string) error { c.Training.Timeframe = v; return nil }},
 		{"GW_SEED", "training.seed", func(c *Config, v string) error { return setInt64(v, &c.Training.Seed) }},
+		{"GW_NEWS", "news.enabled", func(c *Config, v string) error { return setBool(v, &c.News.Enabled) }},
 	}
 }
 
@@ -417,6 +444,20 @@ func (c Config) Validate() error {
 	}
 	if c.Training.Workers < 0 {
 		add("training.workers ne peut pas être négatif (0 = un par cœur)")
+	}
+	if strings.TrimSpace(c.News.Source) == "" {
+		add("news.source est vide (« none » pour n'utiliser que l'archive)")
+	}
+	switch c.News.MinImpact {
+	case "low", "medium", "high":
+	default:
+		add("news.min_impact doit valoir \"low\", \"medium\" ou \"high\" (reçu %q)", c.News.MinImpact)
+	}
+	if c.News.BeforeMinutes < 0 || c.News.BeforeMinutes > 24*60 || c.News.AfterMinutes < 0 || c.News.AfterMinutes > 24*60 {
+		add("news.before_minutes et news.after_minutes doivent être dans [0, 1440]")
+	}
+	if c.News.RefreshMinutes < 5 {
+		add("news.refresh_minutes doit être >= 5 (le flux ne change pas à la minute ; au-delà on le surcharge)")
 	}
 	if c.UI.RefreshMillis < 50 {
 		add("ui.refresh_millis doit être >= 50 (en deçà, la TUI brûle du CPU pour rien)")

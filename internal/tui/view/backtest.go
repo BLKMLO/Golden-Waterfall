@@ -455,6 +455,9 @@ func (v *Backtest) renderCompactResult(res *backtest.Result, width, height int) 
 	if s.SizeCapped > 0 {
 		warn = append(warn, fmt.Sprintf("%d rabotée(s) au plafond", s.SizeCapped))
 	}
+	if s.NewsUncovered > 0 {
+		warn = append(warn, fmt.Sprintf("%d entrée(s) hors calendrier news", s.NewsUncovered))
+	}
 	warnings := th.Warning.Render(component.Truncate(strings.Join(warn, " · "), width))
 
 	top := params + "\n" + stats + "\n" + warnings
@@ -537,6 +540,13 @@ func (v *Backtest) renderStats(res *backtest.Result, took time.Duration, width, 
 	if n, detail := risk.SizingRefusals(s.Rejections); n > 0 {
 		body += "\n" + th.Warning.Render(component.Truncate(fmt.Sprintf(
 			"⚠ %d entrée(s) non dimensionnée(s), donc refusée(s) : %s", n, detail), width-6))
+	}
+	if msg, warn := s.NewsSummary(); msg != "" {
+		style, prefix := th.Muted, ""
+		if warn {
+			style, prefix = th.Warning, "⚠ "
+		}
+		body += "\n" + style.Render(component.Truncate(prefix+msg, width-6))
 	}
 	if !s.CostsModelled {
 		body += "\n" + th.Warning.Render(

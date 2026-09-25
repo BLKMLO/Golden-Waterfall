@@ -164,9 +164,11 @@ func (m *Manager) Evaluate(sig core.Signal, open []core.Position, account *core.
 	case core.Hold, "":
 		return m.reject(ReasonHold)
 
-	case core.Exit:
+	case core.Exit, core.ExitLong, core.ExitShort:
 		pos := findPosition(open, sig.Symbol)
-		if pos == nil {
+		if pos == nil || !sig.Action.Closes(pos.Quantity) {
+			// Une sortie orientée face à une position de l'autre sens n'a
+			// rien à fermer : c'est une abstention, pas une erreur.
 			return m.reject(ReasonNothingToClose)
 		}
 		// Une SORTIE n'est JAMAIS bloquée par une limite : quel que soit

@@ -32,6 +32,7 @@ import (
 	"github.com/BLKMLO/Golden-Waterfall/internal/config"
 	"github.com/BLKMLO/Golden-Waterfall/internal/data"
 	"github.com/BLKMLO/Golden-Waterfall/internal/export"
+	"github.com/BLKMLO/Golden-Waterfall/internal/news"
 	"github.com/BLKMLO/Golden-Waterfall/internal/risk"
 	"github.com/BLKMLO/Golden-Waterfall/internal/strategy"
 	"github.com/BLKMLO/Golden-Waterfall/internal/training"
@@ -77,6 +78,8 @@ func run(args []string) error {
 		return runMigrate(args[1:])
 	case "import":
 		return runImport(args[1:])
+	case "news":
+		return runNews(args[1:])
 	default:
 		printUsage()
 		return fmt.Errorf("sous-commande inconnue %q", args[0])
@@ -95,8 +98,9 @@ PREMIERS PAS — dans cet ordre, chaque étape a besoin de la précédente :
                                 Seul l'agrégat OUT-OF-SAMPLE dit si le modèle
                                 vaut quelque chose : 0,50 d'AUC = hasard.
                                 Moteur : strategy.name — colibri_v1_2 (défaut,
-                                classifieur) ou troglodyte_v1_0 (tendance,
-                                sans AUC : juger le P&L out-of-sample).
+                                classifieur) ou troglodyte_v1_1 (tendance,
+                                sans AUC : juger le P&L out-of-sample ;
+                                calendrier économique : gw news fetch).
   3. Inspecter un rejeu         gw backtest EURUSD
                                 (ou écran 3 Backtest : r) — rejeu IN-SAMPLE,
                                 pour comprendre, pas pour juger.
@@ -122,6 +126,8 @@ COMMANDES
   gw runs                 liste les entraînements archivés
   gw migrate [--remove]   convertit les anciens .gwb en Parquet
   gw import --symbol S F… verse des fichiers Parquet extérieurs dans l'historique
+  gw news [fetch]         état du calendrier économique ; fetch le récupère
+  gw news import F…       verse un calendrier JSON (format du flux) dans l'archive
   gw paths                affiche les emplacements utilisés
   gw config [--default]   affiche la configuration effective
   gw version
@@ -131,7 +137,7 @@ VARIABLES D'ENVIRONNEMENT
   GW_CONFIG_DIR, GW_DATA_DIR   forcent les emplacements (installation portable)
   GW_BROKER, GW_MODE, GW_STRATEGY, GW_STRATEGY_ENABLED, GW_LOG_LEVEL,
   GW_THEME, GW_TIMEFRAME, GW_SEED, GW_BROKER_HOST, GW_BROKER_PORT,
-  GW_BROKER_CLIENT_ID, GW_BROKER_ACCOUNT
+  GW_BROKER_CLIENT_ID, GW_BROKER_ACCOUNT, GW_NEWS
 `)
 }
 
@@ -594,6 +600,13 @@ func printSizing(cfg config.RiskConfig, s backtest.Stats) {
 	if n, detail := risk.SizingRefusals(s.Rejections); n > 0 {
 		fmt.Printf("⚠ %d entrée(s) non dimensionnée(s), donc refusée(s) : %s\n", n, detail)
 	}
+	if msg, warn := s.NewsSummary(); msg != "" {
+		prefix := ""
+		if warn {
+			prefix = "⚠ "
+		}
+		fmt.Printf("%s%s\n", prefix, strings.ToUpper(msg[:1])+msg[1:])
+	}
 }
 
 func sizingLabel(cfg config.RiskConfig) string {
@@ -645,4 +658,54 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return string(r[:n-1]) + "…"
+}
+
+// runNews : état, récupération et import du calendrier économique.
+//
+// Ne passe PAS par app.New : la base bbolt est verrouillée par une
+// interface ouverte, et le calendrier n'en a pas besoin. Le service est
+// construit depuis la configuration, comme app.New le fait.
+func runNews(args []string) error {
+	cfg, err := config.Load(config.DefaultPaths())
+	if err != nil {
+		return err
+	}
+	svc, err := news.NewService(app.NewsOptions(cfg), nil)
+	if err != nil {
+		return err
+	}
+	verb := "status"
+	if len(args) > 0 {
+		verb = args[0]
+	}
+	switch verb {
+	case "status":
+	case "fetch":
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		n, err := svc.Refresh(ctx)
+		if err != nil {
+			return fmt.Errorf("récupération du calendrier : %w", err)
+		}
+		fmt.Printf("%d semaine(s) archivée(s) depuis %s\n", n, cfg.News.Source)
+	case "import":
+		if len(args) < 2 {
+			return fmt.Errorf("usage : gw news import FICHIER.json…")
+		}
+		for _, path := range args[1:] {
+			weeks, events, err := svc.Import(path)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("%s : %d annonce(s), %d semaine(s) déclarée(s) couverte(s)\n", path, events, weeks)
+		}
+	default:
+		return fmt.Errorf("gw news : action inconnue %q (status, fetch, import)", verb)
+	}
+	st := svc.Status()
+	st.Enabled = cfg.News.Enabled
+	fmt.Println("Calendrier économique :", st.Describe())
+	fmt.Printf("Archive : %s\n", cfg.Paths.NewsDir())
+	fmt.Println("S'applique aux stratégies qui le déclarent (troglodyte_v1_1) ; Colibri n'y a jamais accès.")
+	return nil
 }

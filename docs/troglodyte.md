@@ -211,7 +211,7 @@ clôture de fin de semaine, sorties sur signal, AUC affichée « — ».
 Les chiffres de P&L de cet essai ne mesurent rien : la série contenait
 des tendances fabriquées exprès.
 
-**Jamais mesuré** : Troglodyte sur un historique réel. Tenté pendant le
+**Jamais mesuré** : Troglodyte (v1_0 comme v1_1) sur un historique réel. Tenté pendant le
 développement de v0.7.0 : Dukascopy a limité le débit au point de
 rendre le téléchargement impraticable depuis le bac à sable
 (4 jours sur 260 en un quart d'heure). À faire avant toute conclusion :
@@ -219,6 +219,9 @@ rendre le téléchargement impraticable depuis le bac à sable
 (`gw runs`).
 
 ## Limites connues de v1_0
+
+(Les trois premières sont traitées par v1_1, plus bas.)
+
 
 - **Variances constantes** sur tout l'historique d'entraînement : la
   volatilité du change varie ; z en hérite une échelle trop petite dans
@@ -230,3 +233,125 @@ rendre le téléchargement impraticable depuis le bac à sable
   `final`) une position que le live aurait gardée.
 - **Pas d'AUC** : Troglodyte n'est pas un classifieur. On le juge au P&L,
   au profit factor et au drawdown out-of-sample.
+
+## troglodyte_v1_1 (v0.7.1) : ce qui change, et pourquoi
+
+v1_0 reste disponible et **inchangée** : avant et après la refonte du
+paquet, son modèle et ses 3 000 décisions sur une série de test sont
+identiques octet pour octet, et son walk-forward synthétique redonne
+exactement les mêmes 38 trades. v1_1 répond aux trois premières limites
+ci-dessus. Aucune de ses améliorations n'a été mesurée sur un historique
+réel : ce sont des corrections de défauts connus, pas des gains prouvés.
+
+| | v1_0 | v1_1 |
+|---|---|---|
+| Ce que filtre Kalman | ln(prix) | ln(prix) **normalisé par sa volatilité** |
+| Entrée | \|z\| ≥ 1,5 | \|z\| ≥ s_in **calibré** dans {1 ; 1,5 ; 2 ; 2,5} |
+| Sortie sur z | \|z\| < 0,5 | \|z\| < s_in / 3 |
+| Stop | 3 ATR, fixe | k ATR **suiveur « chandelier »**, k calibré dans {2 ; 3 ; 4} |
+| Sorties | `Exit` | `Exit`, `ExitLong`, `ExitShort` (sorties orientées) |
+| Actualités | non | **filtre déclaré** ([`actualites.md`](actualites.md)) |
+
+### 1. Un z qui ne dépend plus du régime de volatilité
+
+Le filtre travaille sur le chemin du prix normalisé (`decision.go`) :
+
+```
+r_t = ln P_t − ln P_{t−1}
+x_0 = 0      x_t = x_{t−1} + r_t / σ_{t−1}
+σ²_t = λ σ²_{t−1} + (1 − λ) r_t²        λ = 2^(−1/30)   (demi-vie 30 bougies)
+```
+
+σ²_0 est la moyenne des r² sur la première demi-vie. Chaque rendement
+est divisé par la volatilité connue **avant** lui. En période agitée, les
+pas se contractent : une pente de « 2 écarts-types par bougie » veut dire
+la même chose en 2020 qu'en 2014, et les seuils sur z se transposent d'un
+régime à l'autre. C'est une normalisation en volatilité au sens de la
+littérature du suivi de tendance (Moskowitz, Ooi et Pedersen, 2012,
+pondèrent leurs positions par l'inverse de la volatilité ex ante) ; la
+demi-vie de 30 bougies est une **convention**. La normalisation est
+calculée sur la fenêtre de décision seule : la décision reste une
+fonction des 500 dernières bougies, identique en backtest et en live. Un
+test vérifie qu'elle rend le chemin indépendant de l'échelle (rendements
+triplés → chemin identique à 10⁻⁹ près).
+
+### 2. Un stop qui suit le prix : le « chandelier »
+
+Le contrat ne sait pas déplacer un stop posé chez le courtier. La
+stratégie, sans état, émet donc elle-même la sortie, **orientée** :
+
+```
+suiveur long  = plus haut des 22 dernières bougies − k × ATR(14)
+suiveur court = plus bas  des 22 dernières bougies + k × ATR(14)
+
+entrée longue   si  z ≥ s_in   ET  close > suiveur long     stop initial = close − k × ATR
+entrée courte   si  z ≤ −s_in  ET  close < suiveur court    stop initial = close + k × ATR
+sortie longue   si  z < s_out  OU  close < suiveur long
+sortie courte   si  z > −s_out OU  close > suiveur court
+```
+
+(les deux sorties vraies ensemble → `Exit`). C'est le « chandelier exit »
+attribué à Chuck LeBeau et décrit par Alexander Elder (*Come Into My
+Trading Room*, 2002) ; les 22 périodes y sont des jours, ici des bougies,
+par convention. Les sorties orientées (`core.ExitLong`, `core.ExitShort`)
+ne ferment qu'une position de leur sens : sans elles, « le prix a reculé
+de 3 ATR sous son plus haut » fermerait aussi une position courte.
+
+### 3. Des seuils choisis sur le passé, jugés sur l'avenir
+
+À l'entraînement (`calibrate.go`), après l'estimation des variances, la
+règle est **rejouée** sur le jeu d'entraînement pour chacun des 12 points
+de la grille s_in × k, comme le moteur de backtest l'exécuterait : entrée
+au close, stop servi au pire du niveau et de l'ouverture, sorties au
+close, retournement sans réouverture, liquidation finale. Chaque trade
+donne un rendement logarithmique net du spread médian (un demi-spread par
+côté, comme le moteur). Le critère est le t de Student de la moyenne des
+trades :
+
+```
+score = moyenne / écart-type × √n        (n ≥ 20 trades, sinon point non jugé)
+```
+
+Le point de meilleur score est retenu ; égalité → le premier de la
+grille. Sans point jugeable, les valeurs de repli (1,5 ; 3) sont gardées
+et le manifeste le dit (`calibration.fallback`). La grille entière, avec
+le nombre de trades et le score de chaque point, est archivée dans
+`metadata.json`.
+
+**Ce que le calibrage n'est pas** : une mesure. Il choisit in-sample ; le
+walk-forward calibre chaque pli sur son passé et le juge sur son bloc de
+test. La grille est volontairement petite (12 points) : plus on essaie
+de réglages, plus le meilleur doit sa place au hasard.
+
+**Le calibrage juge exactement ce qui tradera** : décision partagée
+(`decide`, appelée par `OnBar` ET par la simulation), et un test qui
+confronte la simulation au VRAI moteur de backtest, trade par trade —
+117 trades identiques (sens, bougies d'entrée et de sortie, prix).
+
+### Coût mesuré
+
+Même machine qu'au-dessus : **27 µs par décision** (deux allocations de
+4 Ko), **0,31 s** pour un entraînement complet sur 10 000 bougies
+(estimation, puis une fenêtre refiltrée par bougie pour le calibrage —
+le poste dominant).
+
+### Tests propres à v1_1
+
+| Test | Ce qu'il garantit |
+|---|---|
+| `TestNormalizedPathIsScaleFree` | Chemin normalisé indépendant de l'échelle ; prix figés refusés |
+| `TestChandelierRule` | Entrées, sorties des deux sens et sorties orientées de la règle |
+| `TestCalibrationSimulationMatchesTheBacktestEngine` | Simulation du calibrage = moteur de backtest, trade par trade |
+| `TestCalibrationPicksAGridPointAndRecordsTheGrid` | Point retenu dans la grille, grille archivée, seuil hors grille refusé au chargement |
+| `TestCalibrationFallsBackWithoutEnoughTrades` | Repli gardé ET signalé |
+| `TestV11DeclaresNewsAndDirectionalExits` | Déclarations ; v1_0 ne déclare pas le filtre |
+
+### Limites de v1_1
+
+- Grilles, demi-vie, 22 bougies, sortie à s_in / 3 : **conventions**.
+- Le calibrage optimise un critère in-sample ; sur peu de trades, le
+  point retenu peut devoir sa place au hasard. Seul le walk-forward le dit.
+- Les variances restent constantes sur l'entraînement ; la normalisation
+  corrige l'échelle de z, pas la forme du modèle.
+- Le filtre d'actualités ne filtre rien sur un historique antérieur à
+  l'archive, et le dit.

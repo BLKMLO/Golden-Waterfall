@@ -12,6 +12,7 @@ import (
 	"github.com/BLKMLO/Golden-Waterfall/internal/broker"
 	"github.com/BLKMLO/Golden-Waterfall/internal/config"
 	"github.com/BLKMLO/Golden-Waterfall/internal/data"
+	"github.com/BLKMLO/Golden-Waterfall/internal/news"
 	"github.com/BLKMLO/Golden-Waterfall/internal/strategy"
 	"github.com/BLKMLO/Golden-Waterfall/internal/tui/component"
 	"github.com/BLKMLO/Golden-Waterfall/internal/tui/theme"
@@ -347,6 +348,49 @@ func settingsFields() []settingField {
 				c.Training.Seed = n
 				return nil
 			},
+		},
+
+		// --- Actualités ---
+		{
+			Section: "Actualités", Path: "news.enabled", Label: "Filtre d'actualités", Kind: kindBool,
+			Help: "Aucune entrée autour des annonces importantes, pour les stratégies qui le déclarent (Troglodyte v1_1). Colibri n'y a jamais accès.",
+			Get:  func(c *config.Config) string { return strconv.FormatBool(c.News.Enabled) },
+			Set: func(c *config.Config, s string) error {
+				c.News.Enabled = s == "true"
+				return nil
+			},
+		},
+		{
+			Section: "Actualités", Path: "news.source", Label: "Source du calendrier", Kind: kindEnum,
+			Help:    "forexfactory : flux public de la semaine en cours, archivé à chaque récupération. none : archive seule (gw news import).",
+			Choices: func() []string { return news.List() },
+			Get:     func(c *config.Config) string { return c.News.Source },
+			Set:     func(c *config.Config, s string) error { c.News.Source = s; return nil },
+		},
+		{
+			Section: "Actualités", Path: "news.min_impact", Label: "Impact minimal", Kind: kindEnum,
+			Help:    "Impact à partir duquel une annonce bloque une entrée.",
+			Choices: func() []string { return []string{"low", "medium", "high"} },
+			Get:     func(c *config.Config) string { return c.News.MinImpact },
+			Set:     func(c *config.Config, s string) error { c.News.MinImpact = s; return nil },
+		},
+		{
+			Section: "Actualités", Path: "news.before_minutes", Label: "Minutes avant l'annonce", Kind: kindNumber, Step: 5,
+			Help: "Pas d'entrée si une annonce tombe dans les N minutes qui suivent la décision. Convention, pas mesure.",
+			Get:  func(c *config.Config) string { return strconv.Itoa(c.News.BeforeMinutes) },
+			Set:  func(c *config.Config, s string) error { return setInt(&c.News.BeforeMinutes, s) },
+		},
+		{
+			Section: "Actualités", Path: "news.after_minutes", Label: "Minutes après l'annonce", Kind: kindNumber, Step: 5,
+			Help: "Pas d'entrée si une annonce est survenue dans les N minutes qui précèdent la décision.",
+			Get:  func(c *config.Config) string { return strconv.Itoa(c.News.AfterMinutes) },
+			Set:  func(c *config.Config, s string) error { return setInt(&c.News.AfterMinutes, s) },
+		},
+		{
+			Section: "Actualités", Path: "news.refresh_minutes", Label: "Récupération (min)", Kind: kindNumber, Step: 15,
+			Help: "Cadence de récupération du calendrier pendant une séance live.",
+			Get:  func(c *config.Config) string { return strconv.Itoa(c.News.RefreshMinutes) },
+			Set:  func(c *config.Config, s string) error { return setInt(&c.News.RefreshMinutes, s) },
 		},
 
 		// --- Interface ---
