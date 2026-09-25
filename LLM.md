@@ -186,6 +186,7 @@ d'être vraie.
 
 ### Modèle et cible
 
+- **GBDT maison ≈ LightGBM sans GOSS ni EFB** (`docs/gbdt.md`).
 - **Anti-fuite** : test de stabilité par préfixe
   (`Compute(s)[:k] == Compute(s[:k])`). Ne jamais le désactiver.
 - **v1_0/v1_1** : deux barrières dans la même bougie → la basse (faux
@@ -226,6 +227,9 @@ d'être vraie.
 - **Un seul `risk.Manager`** partagé (backtest, walk-forward parallèle,
   live) : ses compteurs sont sous `sync.Mutex`, et `Fork()` donne des
   compteurs par run.
+- **Live multi-paires dans UNE instance** : moteur à état par symbole,
+  risque et équité partagés, aucune corrélation modélisée
+  (`docs/architecture.md` § 5 ter).
 - **Rejeu** : horodate au temps du marché rejoué, jamais l'heure réelle.
 - **bbolt** verrouille le fichier : une seconde instance échoue, c'est
   voulu.

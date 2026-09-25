@@ -174,6 +174,25 @@ inopérante en silence.
 
 `broker.mode` dans `config.yaml`. Rien d'autre.
 
+### 5 ter. Une instance trade toutes les paires
+
+Paper ou live, un seul processus suit toutes les paires de `live.symbols`
+(vide = `history.instruments`) : un abonnement, un moteur, une instance de
+stratégie. Il n'y a rien à lancer par symbole — et bbolt, qui verrouille
+son fichier, refuserait de toute façon une seconde instance.
+
+Ce sont les goroutines et les canaux qui rendent cela naturel : la
+passerelle livre les ticks de toutes les paires depuis sa propre
+goroutine, le moteur tient son état **par symbole** (tampon de bougies,
+ordre en vol, jambe ouverte) sous un seul verrou, puis rediffuse ticks,
+signaux et exécutions sur le bus sans jamais bloquer (§ 3).
+
+Les paires décident indépendamment, mais partagent le compte : l'équité
+qui dimensionne chaque entrée, `max_open_positions` (plafond global),
+`max_daily_loss_pct` (plus aucune entrée nulle part une fois atteint) et
+le kill switch. Aucune gestion de corrélation entre paires : le seul lien
+est ce plafond commun.
+
 ### 5 bis. Le dimensionnement REFUSE plutôt que de deviner
 
 `risk_per_trade_pct` (0,5 % par défaut) calcule la taille pour que la
