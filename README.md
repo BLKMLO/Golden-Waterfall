@@ -151,27 +151,32 @@ coûts d'un trade, et n'entre que si l'espérance le justifie. Positions
 fermées avant chaque week-end. Détail et mesures :
 [`docs/colibri.md`](docs/colibri.md), [`docs/gbdt.md`](docs/gbdt.md).
 
-**Troglodyte** (`troglodyte_v1_0`, nouveau en v0.7.0) est un **suivi de
-tendance structurel**. Le logarithme du prix est décrit par un modèle
-espace-état — un niveau et une pente, chacun soumis à ses propres chocs — et
-un **filtre de Kalman** en estime la pente à chaque bougie, avec son
-incertitude. Le rapport des deux, `z`, décide :
+**Troglodyte** est un **suivi de tendance structurel** : un **filtre de
+Kalman** estime, à chaque bougie, la pente de la tendance et son
+incertitude ; leur rapport `z` décide. Il porte ses positions pendant le
+week-end, n'a pas d'AUC (« — » à l'écran) et se juge au P&L out-of-sample.
 
-| `z` = pente / écart-type de la pente | Décision |
-|---|---|
-| ≥ +1,5 | entrée longue, stop à 3 ATR, pas de limite |
-| ≤ −1,5 | entrée courte, même stop |
-| entre −0,5 et +0,5 | sortie : la tendance a disparu |
-| signal opposé à la position | sortie |
+| | `troglodyte_v1_0` | `troglodyte_v1_1` (v0.7.1) |
+|---|---|---|
+| Entrée du filtre | log du prix | log du prix **normalisé par sa volatilité** |
+| Entrée / sortie | z ≥ 1,5 / \|z\| < 0,5 | seuil **calibré** à l'entraînement, sortie à un tiers |
+| Stop | 3 ATR fixe | **suiveur « chandelier »**, 2 à 4 ATR calibré |
+| Actualités | non | **filtre déclaré** |
 
-L'entraînement estime les trois variances du modèle par **maximum de
-vraisemblance**, paire par paire (40 ms mesurées pour 10 000 bougies).
-Troglodyte **porte ses positions pendant le week-end** : une tendance ne
-s'arrête pas le vendredi, et le gap du lundi est assumé. Ce n'est pas un
-classifieur : il n'a pas d'AUC (l'écran affiche « — »), on le juge au P&L
-out-of-sample du walk-forward. Ses seuils sont des **conventions de départ**,
-pas des mesures. Modèle, formules, choix et limites :
+Seuils, grilles et demi-vie sont des **conventions** ; le calibrage choisit
+in-sample, le walk-forward juge hors échantillon. Détail :
 [`docs/troglodyte.md`](docs/troglodyte.md).
+
+### Le filtre d'actualités
+
+Pour les stratégies qui le **déclarent** (Troglodyte v1_1), aucune entrée
+dans les 30 minutes autour d'une annonce à fort impact sur l'une des deux
+devises de la paire. **Colibri n'y a jamais accès.** Le calendrier (flux
+public de la semaine en cours) est récupéré pendant une séance live ou par
+`gw news fetch`, et **archivé** : le backtest ne filtre que les périodes
+archivées et compte à part les entrées qu'il n'a pas pu vérifier. Les
+sources sont des modules remplaçables. Détail :
+[`docs/actualites.md`](docs/actualites.md).
 
 ## Ligne de commande
 
@@ -191,13 +196,15 @@ gw backtest EURUSD --csv           # + trades, équité et métriques en CSV
 gw runs                            # entraînements archivés
 gw paths                           # où vivent configuration et données
 gw config --default                # le modèle de configuration commenté
+gw news fetch                      # récupère et archive le calendrier économique
+gw news import cal.json            # verse un calendrier historique (format du flux)
 ```
 
 Variables d'environnement (elles ont le dernier mot sur le fichier, et l'écran
 Paramètres le signale) : `GW_CONFIG_DIR`, `GW_DATA_DIR`, `GW_BROKER`,
 `GW_MODE`, `GW_STRATEGY`, `GW_STRATEGY_ENABLED`, `GW_LOG_LEVEL`, `GW_THEME`,
 `GW_TIMEFRAME`, `GW_SEED`, `GW_BROKER_HOST`, `GW_BROKER_PORT`,
-`GW_BROKER_CLIENT_ID`, `GW_BROKER_ACCOUNT`.
+`GW_BROKER_CLIENT_ID`, `GW_BROKER_ACCOUNT`, `GW_NEWS`.
 
 ## Documentation
 
@@ -205,7 +212,8 @@ Paramètres le signale) : `GW_CONFIG_DIR`, `GW_DATA_DIR`, `GW_BROKER`,
 |---|---|
 | [docs/architecture.md](docs/architecture.md) | Arborescence, règles, où ajouter du code |
 | [docs/colibri.md](docs/colibri.md) | Colibri : features, cible, décision, révisions, mesures |
-| [docs/troglodyte.md](docs/troglodyte.md) | Troglodyte : modèle espace-état, filtre de Kalman, estimation, décision |
+| [docs/troglodyte.md](docs/troglodyte.md) | Troglodyte : modèle espace-état, filtre de Kalman, estimation, calibrage, décision |
+| [docs/actualites.md](docs/actualites.md) | Filtre d'actualités : sources, archive, règle, honnêteté |
 | [docs/gbdt.md](docs/gbdt.md) | Le gradient boosting maison : algorithme et choix |
 | [docs/donnees.md](docs/donnees.md) | Dukascopy, stockage Parquet, import, unités de temps |
 | [docs/brokers.md](docs/brokers.md) | Contrat de passerelle, rejeu, brancher un courtier |
@@ -219,7 +227,8 @@ make test   # la suite complète        make race   # avec le détecteur de conc
 make lint   # format + analyse         make dist   # les cinq binaires
 ```
 
-Aucun test n'appelle le réseau. La suite vérifie les propriétés dont dépend
+Aucun test n'appelle le réseau (le calendrier est éprouvé contre un faux
+serveur HTTP). La suite vérifie les propriétés dont dépend
 l'honnêteté des résultats, pas seulement que le code s'exécute : stabilité par
 préfixe des features ET des décisions, cible identique à l'issue du moteur
 d'exécution, fenêtre avant incomplète = pas de label, blocs de walk-forward
@@ -228,7 +237,7 @@ stratégie inscrite au catalogue passe d'office le banc de conformité
 (`internal/strategy/strategytest`).
 
 Pour publier : onglet **Actions** → **Release** → **Run workflow** avec le
-numéro (`v0.7.0`), ou pousser un tag `v*`.
+numéro (`v0.7.1`), ou pousser un tag `v*`.
 
 ## Avertissement
 

@@ -383,3 +383,22 @@ func TestSizingRefusalsSeparatesWhatItShould(t *testing.T) {
 		t.Fatalf("sans refus de dimensionnement, il n'y a rien à dire : %d %q", n, detail)
 	}
 }
+
+func TestDirectionalExitClosesOnlyItsSide(t *testing.T) {
+	m := newManager(baseConfig())
+	long := []core.Position{{Symbol: "EURUSD", Quantity: 5}}
+	short := []core.Position{{Symbol: "EURUSD", Quantity: -5}}
+
+	if d := m.Evaluate(core.Signal{Symbol: "EURUSD", Action: core.ExitLong}, long, nil); !d.Accepted() || d.Order.Side != core.Sell {
+		t.Fatalf("ExitLong doit fermer une position longue : %+v", d)
+	}
+	if d := m.Evaluate(core.Signal{Symbol: "EURUSD", Action: core.ExitShort}, long, nil); d.Accepted() || d.Reason != ReasonNothingToClose {
+		t.Fatalf("ExitShort ne doit PAS fermer une position longue : %+v", d)
+	}
+	if d := m.Evaluate(core.Signal{Symbol: "EURUSD", Action: core.ExitShort}, short, nil); !d.Accepted() || d.Order.Side != core.Buy {
+		t.Fatalf("ExitShort doit fermer une position courte : %+v", d)
+	}
+	if d := m.Evaluate(core.Signal{Symbol: "EURUSD", Action: core.ExitLong}, short, nil); d.Accepted() {
+		t.Fatalf("ExitLong ne doit PAS fermer une position courte : %+v", d)
+	}
+}

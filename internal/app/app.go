@@ -11,12 +11,14 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/BLKMLO/Golden-Waterfall/internal/backtest"
 	"github.com/BLKMLO/Golden-Waterfall/internal/config"
 	"github.com/BLKMLO/Golden-Waterfall/internal/core"
 	"github.com/BLKMLO/Golden-Waterfall/internal/data"
 	"github.com/BLKMLO/Golden-Waterfall/internal/live"
+	"github.com/BLKMLO/Golden-Waterfall/internal/news"
 	"github.com/BLKMLO/Golden-Waterfall/internal/risk"
 	"github.com/BLKMLO/Golden-Waterfall/internal/storage"
 	"github.com/BLKMLO/Golden-Waterfall/internal/strategy"
@@ -42,6 +44,10 @@ type App struct {
 	Live     *live.Runtime
 	Backtest *backtest.Engine
 	Training *training.Runner
+	// News : calendrier économique et filtre, pour les stratégies qui le
+	// déclarent. Toujours construit (l'écran et `gw news` en montrent
+	// l'état), inerte quand news.enabled est faux.
+	News *news.Service
 }
 
 // New construit l'application à partir des chemins résolus.
@@ -83,6 +89,13 @@ func New(paths config.Paths) (*App, error) {
 		return nil, err
 	}
 
+	newsSvc, err := news.NewService(NewsOptions(cfg), logger)
+	if err != nil {
+		store.Close()
+		logging.Close()
+		return nil, err
+	}
+
 	rm := risk.New(cfg.Risk, cfg.Backtest.AccountCurrency, logger)
 	a := &App{
 		Config:   cfg,
@@ -91,10 +104,11 @@ func New(paths config.Paths) (*App, error) {
 		Bus:      bus,
 		Store:    store,
 		Risk:     rm,
-		Backtest: backtest.NewEngine(cfg, rm),
-		Training: training.NewRunner(cfg, rm),
+		News:     newsSvc,
+		Backtest: backtest.NewEngine(cfg, rm).WithNews(newsSvc),
+		Training: training.NewRunner(cfg, rm).WithNews(newsSvc),
 	}
-	a.Live = live.NewRuntime(cfg, bus, logger, store, rm)
+	a.Live = live.NewRuntime(cfg, bus, logger, store, rm).WithNews(newsSvc)
 
 	logger.Info("Golden Waterfall démarré",
 		"config", paths.ConfigFile(), "donnees", paths.DataDir,
@@ -158,10 +172,25 @@ func (a *App) SetRiskPerTrade(pct float64) error {
 	a.Config.Risk.RiskPerTradePct = pct
 	rm := risk.New(a.Config.Risk, a.Config.Backtest.AccountCurrency, a.Logger)
 	a.Risk = rm
-	a.Backtest = backtest.NewEngine(a.Config, rm)
-	a.Training = training.NewRunner(a.Config, rm)
-	a.Live = live.NewRuntime(a.Config, a.Bus, a.Logger, a.Store, rm)
+	a.Backtest = backtest.NewEngine(a.Config, rm).WithNews(a.News)
+	a.Training = training.NewRunner(a.Config, rm).WithNews(a.News)
+	a.Live = live.NewRuntime(a.Config, a.Bus, a.Logger, a.Store, rm).WithNews(a.News)
 	return nil
+}
+
+// NewsOptions traduit la section `news` de la configuration (déjà
+// validée) pour le paquet news, qui n'importe pas config.
+func NewsOptions(cfg config.Config) news.Options {
+	impact, _ := news.ParseImpact(cfg.News.MinImpact)
+	return news.Options{
+		Enabled:   cfg.News.Enabled,
+		Source:    cfg.News.Source,
+		MinImpact: impact,
+		Before:    time.Duration(cfg.News.BeforeMinutes) * time.Minute,
+		After:     time.Duration(cfg.News.AfterMinutes) * time.Minute,
+		Refresh:   time.Duration(cfg.News.RefreshMinutes) * time.Minute,
+		Dir:       cfg.Paths.NewsDir(),
+	}
 }
 
 // Close arrête proprement ce qui doit l'être.

@@ -12,6 +12,7 @@ import (
 	"github.com/BLKMLO/Golden-Waterfall/internal/config"
 	"github.com/BLKMLO/Golden-Waterfall/internal/core"
 	"github.com/BLKMLO/Golden-Waterfall/internal/data"
+	"github.com/BLKMLO/Golden-Waterfall/internal/news"
 	"github.com/BLKMLO/Golden-Waterfall/internal/risk"
 	"github.com/BLKMLO/Golden-Waterfall/internal/strategy"
 )
@@ -27,11 +28,13 @@ type scriptedStrategy struct {
 	// weekend, reversal : règles d'exécution DÉCLARÉES
 	// (HoldsOverWeekend, ExitOnReversal).
 	weekend, reversal bool
+	// usesNews : la stratégie DÉCLARE accepter le filtre d'actualités.
+	usesNews bool
 }
 
 func (s *scriptedStrategy) Describe() strategy.Description {
 	return strategy.Description{Name: "scriptee", Version: "test", MaxHold: s.maxHold,
-		HoldsOverWeekend: s.weekend, ExitOnReversal: s.reversal}
+		HoldsOverWeekend: s.weekend, ExitOnReversal: s.reversal, UsesNews: s.usesNews}
 }
 func (s *scriptedStrategy) Warmup(context.Context, strategy.WarmupRequest) error { return nil }
 func (s *scriptedStrategy) Shutdown() error                                      { return nil }
@@ -1011,5 +1014,99 @@ func TestReversalClosesOnlyWhenDeclared(t *testing.T) {
 	silent := run(false)
 	if len(silent.Trades) != 1 || silent.Trades[0].ExitReason != "final" {
 		t.Fatalf("sans ExitOnReversal, la position doit survivre au signal opposé : %+v", silent.Trades)
+	}
+}
+
+func TestDirectionalExitsInTheEngine(t *testing.T) {
+	series := makeBars([][4]float64{
+		{100, 100, 100, 100},
+		{100, 101, 100, 101},
+		{101, 102, 101, 102},
+		{102, 102, 102, 102},
+	}, 0)
+	res, err := newEngine(testConfig()).Run(context.Background(), Request{
+		Symbol: "TEST", Series: series, From: 0, Timeframe: data.H1,
+		Strategy: &scriptedStrategy{script: map[int]core.Signal{
+			0: {Action: core.EnterLong, StopLoss: 90},
+			1: {Action: core.ExitShort}, // mauvais sens : ignorée
+			2: {Action: core.ExitLong},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Trades) != 1 || res.Trades[0].ExitReason != "signal" || !res.Trades[0].ExitTime.Equal(series[2].Time) {
+		t.Fatalf("seule ExitLong doit fermer la position longue, à la bougie 2 : %+v", res.Trades)
+	}
+}
+
+// fixedNews : filtre figé, construit depuis une archive temporaire.
+type fixedNews struct{ gate *news.Gate }
+
+func (f fixedNews) Gate() *news.Gate { return f.gate }
+
+func newsGate(t *testing.T, feed string) fixedNews {
+	t.Helper()
+	events, err := news.ParseFeedJSON([]byte(feed))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := news.NewArchive(t.TempDir())
+	if _, err := a.Save(news.Batch{Events: events, Weeks: news.WeeksOf(events)}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	cal, err := a.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fixedNews{&news.Gate{Calendar: cal, Before: 30 * time.Minute, After: 30 * time.Minute, MinImpact: news.ImpactHigh}}
+}
+
+// makeBars démarre le lundi 1er janvier 2024 à 0 h : la bougie 1 se
+// clôt à 2 h UTC, et une annonce USD à 2 h 15 tombe dans sa fenêtre.
+const usdAt0215 = `[{"title":"CPI","country":"USD","date":"2024-01-01T02:15:00Z","impact":"High"}]`
+
+func TestNewsFilterBlocksOnlyStrategiesThatDeclareIt(t *testing.T) {
+	series := makeBars([][4]float64{
+		{100, 100, 100, 100}, {100, 100, 100, 100}, {100, 100, 100, 100}, {100, 100, 100, 100},
+	}, 0)
+	script := map[int]core.Signal{1: {Action: core.EnterLong, StopLoss: 90}}
+	run := func(declares bool) *Result {
+		res, err := newEngine(testConfig()).WithNews(newsGate(t, usdAt0215)).Run(context.Background(), Request{
+			Symbol: "EURUSD", Series: series, From: 0, Timeframe: data.H1,
+			Strategy: &scriptedStrategy{script: script, usesNews: declares},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	filtered := run(true)
+	if len(filtered.Trades) != 0 || !filtered.Stats.NewsFilter || filtered.Stats.NewsBlocked != 1 {
+		t.Fatalf("l'entrée à 2 h doit être écartée par l'annonce de 2 h 15 : %+v / %+v", filtered.Trades, filtered.Stats)
+	}
+	// Une stratégie qui ne déclare pas le filtre (Colibri) n'y a pas accès.
+	colibriLike := run(false)
+	if len(colibriLike.Trades) != 1 || colibriLike.Stats.NewsFilter {
+		t.Fatalf("sans déclaration, aucun filtre : %+v / %+v", colibriLike.Trades, colibriLike.Stats)
+	}
+}
+
+func TestNewsFilterCountsWhatItCannotSee(t *testing.T) {
+	series := makeBars([][4]float64{{100, 100, 100, 100}, {100, 100, 100, 100}, {100, 100, 100, 100}}, 0)
+	// Calendrier d'une AUTRE semaine : l'entrée n'est pas couverte.
+	gate := newsGate(t, `[{"title":"NFP","country":"USD","date":"2024-03-08T13:30:00Z","impact":"High"}]`)
+	res, err := newEngine(testConfig()).WithNews(gate).Run(context.Background(), Request{
+		Symbol: "EURUSD", Series: series, From: 0, Timeframe: data.H1,
+		Strategy: &scriptedStrategy{usesNews: true, script: map[int]core.Signal{0: {Action: core.EnterLong, StopLoss: 90}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Trades) != 1 || res.Stats.NewsUncovered != 1 || res.Stats.NewsBlocked != 0 {
+		t.Fatalf("hors calendrier : entrée transmise ET comptée non couverte : %+v", res.Stats)
+	}
+	if msg, warn := res.Stats.NewsSummary(); !warn || msg == "" {
+		t.Fatal("une entrée non couverte doit produire un avertissement")
 	}
 }

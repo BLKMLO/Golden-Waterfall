@@ -182,6 +182,16 @@ func Stats(path string, s backtest.Stats) error {
 	// chiffres peuvent être additionnés.
 	add("couts_modelises", boolean(s.CostsModelled))
 	add("devise_exacte", boolean(s.CurrencyExact))
+	// Filtre d'actualités : ses compteurs n'ont de sens que s'il était
+	// actif. Inactif, les deux cellules restent VIDES — « 0 écartée »
+	// dirait qu'il a cherché et rien trouvé.
+	add("filtre_actualites", boolean(s.NewsFilter))
+	blocked, uncovered := "", ""
+	if s.NewsFilter {
+		blocked, uncovered = strconv.Itoa(s.NewsBlocked), strconv.Itoa(s.NewsUncovered)
+	}
+	add("actualites_ecartees", blocked)
+	add("actualites_hors_calendrier", uncovered)
 	return write(path, rows)
 }
 

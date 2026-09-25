@@ -10,6 +10,7 @@ import (
 	"github.com/BLKMLO/Golden-Waterfall/internal/config"
 	"github.com/BLKMLO/Golden-Waterfall/internal/core"
 	"github.com/BLKMLO/Golden-Waterfall/internal/data"
+	"github.com/BLKMLO/Golden-Waterfall/internal/news"
 	"github.com/BLKMLO/Golden-Waterfall/internal/risk"
 	"github.com/BLKMLO/Golden-Waterfall/internal/storage"
 	"github.com/BLKMLO/Golden-Waterfall/internal/strategy"
@@ -20,17 +21,18 @@ import (
 type declaredStrategy struct {
 	action            core.SignalAction
 	weekend, reversal bool
+	usesNews          bool
 }
 
 func (s declaredStrategy) Describe() strategy.Description {
 	return strategy.Description{Name: "declaree", Version: "test",
-		HoldsOverWeekend: s.weekend, ExitOnReversal: s.reversal}
+		HoldsOverWeekend: s.weekend, ExitOnReversal: s.reversal, UsesNews: s.usesNews}
 }
 func (declaredStrategy) Warmup(context.Context, strategy.WarmupRequest) error { return nil }
 func (declaredStrategy) Shutdown() error                                      { return nil }
 func (declaredStrategy) Ready() (bool, string)                                { return true, "" }
-func (s declaredStrategy) OnBar(_ context.Context, symbol string, _ core.Series, _ int) (core.Signal, error) {
-	sig := core.Signal{Symbol: symbol, Action: s.action, Price: 100}
+func (s declaredStrategy) OnBar(_ context.Context, symbol string, series core.Series, i int) (core.Signal, error) {
+	sig := core.Signal{Symbol: symbol, Action: s.action, Price: 100, Time: series[i].Time}
 	switch s.action {
 	case core.EnterLong:
 		sig.StopLoss = 98
@@ -178,5 +180,40 @@ func TestReversalClosesOnlyWhenDeclared(t *testing.T) {
 	silent.onBarClosed(ctx, "TEST", bar)
 	if n := len(sgw.placed()); n != 0 {
 		t.Fatalf("%d ordre(s) : sans ExitOnReversal, le signal opposé est ignoré tant que la position vit", n)
+	}
+}
+
+type fixedNews struct{ gate *news.Gate }
+
+func (f fixedNews) Gate() *news.Gate { return f.gate }
+
+func TestLiveNewsFilterMatchesTheBacktestRule(t *testing.T) {
+	events, err := news.ParseFeedJSON([]byte(`[{"title":"CPI","country":"USD","date":"2024-03-05T12:15:00Z","impact":"High"}]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := news.NewArchive(t.TempDir())
+	if _, err := a.Save(news.Batch{Events: events, Weeks: news.WeeksOf(events)}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	cal, _ := a.Load()
+	gate := fixedNews{&news.Gate{Calendar: cal, Before: 30 * time.Minute, After: 30 * time.Minute, MinImpact: news.ImpactHigh}}
+	// Bougie H4 de 8 h : décision à sa clôture, 12 h ; annonce à 12 h 15.
+	bar := core.Bar{Time: time.Date(2024, 3, 5, 8, 0, 0, 0, time.UTC), BidOpen: 1, BidHigh: 1, BidLow: 1, BidClose: 1}
+
+	for _, declares := range []bool{true, false} {
+		eng, gw := newDeclaredEngine(t, declaredStrategy{action: core.EnterLong, usesNews: declares}, 0, time.Time{})
+		eng.SetNews(gate)
+		if err := eng.store.SetTrading("EURUSD", true); err != nil {
+			t.Fatal(err)
+		}
+		eng.onBarClosed(context.Background(), "EURUSD", bar)
+		n := len(gw.placed())
+		if declares && (n != 0 || eng.Stats().NewsBlocked != 1) {
+			t.Fatalf("stratégie qui déclare le filtre : entrée écartée attendue (%d ordre(s), %d écartée(s))", n, eng.Stats().NewsBlocked)
+		}
+		if !declares && n != 1 {
+			t.Fatalf("stratégie qui ne le déclare pas : l'entrée doit partir (%d ordre(s))", n)
+		}
 	}
 }

@@ -48,8 +48,8 @@ broker:
 
 strategy:
   # Moteur de décision actif (clé du registre de stratégies) : colibri_v1_0,
-  # colibri_v1_1, colibri_v1_2 (classifieur GBDT) ou troglodyte_v1_0
-  # (suivi de tendance, filtre de Kalman). Un modèle n'est chargé que par
+  # colibri_v1_1, colibri_v1_2 (classifieur GBDT), troglodyte_v1_0 ou
+  # troglodyte_v1_1 (suivi de tendance, filtre de Kalman). Un modèle n'est chargé que par
   # la révision qui l'a entraîné : changer ce nom demande un nouvel
   # entraînement. `gw config` liste les stratégies disponibles.
   name: "colibri_v1_2"
@@ -192,6 +192,29 @@ training:
   # Graine du modèle : fixée, l'entraînement est REPRODUCTIBLE. Elle est
   # archivée avec chaque run.
   seed: 42
+
+news:
+  # Filtre d'actualités économiques : aucune ENTRÉE dans la fenêtre d'une
+  # annonce importante sur l'une des devises de la paire. Il ne s'applique
+  # qu'aux stratégies qui le DÉCLARENT (troglodyte_v1_1) ; Colibri n'y a
+  # jamais accès, quel que soit ce réglage.
+  enabled: true
+  # Source du calendrier : "forexfactory" (flux public de la semaine en
+  # cours, récupéré pendant une séance live et par `gw news fetch`) ou
+  # "none" (archive seule, alimentée par `gw news import`). Tout ce qui est
+  # récupéré est ARCHIVÉ : le flux ne sert que la semaine en cours, et le
+  # backtest ne filtre que les périodes archivées — le reste est compté
+  # « non couvert », jamais pris pour « aucune annonce ».
+  source: "forexfactory"
+  # Impact minimal d'une annonce filtrante : "low", "medium" ou "high".
+  min_impact: "high"
+  # Fenêtre, en minutes : pas d'entrée si une annonce tombe dans les
+  # before_minutes qui suivent la décision, ou est survenue dans les
+  # after_minutes qui la précèdent. CONVENTIONS, pas des mesures.
+  before_minutes: 30
+  after_minutes: 30
+  # Récupération pendant une séance live, en minutes (>= 5).
+  refresh_minutes: 60
 
 ui:
   # "auto" : la luminosité du fond est DÉTECTÉE par le terminal, ce qui est

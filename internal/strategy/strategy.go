@@ -75,6 +75,12 @@ type Description struct {
 	// (Colibri), un signal opposé est ignoré tant que la position vit —
 	// c'est la cible que ses révisions ont apprise.
 	ExitOnReversal bool
+	// UsesNews : la stratégie accepte le filtre d'actualités (paquet
+	// news). Les MOTEURS l'appliquent aux entrées quand `news.enabled`
+	// est vrai ; la stratégie ne va jamais elle-même sur internet. Colibri
+	// ne le déclare pas : ses révisions ont appris une cible sans
+	// actualités, et le filtre changerait ce qu'elles veulent dire.
+	UsesNews bool
 }
 
 // ModelManifest : fichier que toute stratégie entraînable DOIT écrire dans

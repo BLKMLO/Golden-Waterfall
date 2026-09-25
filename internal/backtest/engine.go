@@ -60,6 +60,7 @@ import (
 	"github.com/BLKMLO/Golden-Waterfall/internal/config"
 	"github.com/BLKMLO/Golden-Waterfall/internal/core"
 	"github.com/BLKMLO/Golden-Waterfall/internal/data"
+	"github.com/BLKMLO/Golden-Waterfall/internal/news"
 	"github.com/BLKMLO/Golden-Waterfall/internal/risk"
 	"github.com/BLKMLO/Golden-Waterfall/internal/strategy"
 )
@@ -113,6 +114,15 @@ type Stats struct {
 	AvgWin         float64 `json:"avg_win"`
 	AvgLoss        float64 `json:"avg_loss"`
 	RejectedOrders int     `json:"rejected_orders"`
+	// NewsFilter : le filtre d'actualités était actif pour ce run (la
+	// stratégie le déclare ET news.enabled). NewsBlocked : entrées
+	// écartées par une annonce. NewsUncovered : entrées décidées hors de
+	// la période archivée — NON filtrées, faute de savoir s'il y avait une
+	// annonce. Sans ce dernier compteur, un filtre sans archive aurait
+	// l'air d'un filtre qui n'a rien trouvé.
+	NewsFilter    bool `json:"news_filter,omitempty"`
+	NewsBlocked   int  `json:"news_blocked,omitempty"`
+	NewsUncovered int  `json:"news_uncovered,omitempty"`
 	// SizeCapped : entrées dont la taille a été RAMENÉE au plafond
 	// `max_position_size`. L'ordre est parti, mais il ne risquait plus le
 	// pourcentage demandé : sans ce compteur, un plafond trop bas
@@ -140,10 +150,21 @@ type Result struct {
 	Equity []EquityPoint
 }
 
+// NewsSource fournit le filtre d'actualités courant (nil = désactivé).
+type NewsSource interface{ Gate() *news.Gate }
+
 // Engine exécute les backtests.
 type Engine struct {
 	cfg  config.Config
 	risk *risk.Manager
+	news NewsSource
+}
+
+// WithNews branche le filtre d'actualités (câblé par app.New). Il ne
+// s'applique qu'aux stratégies qui le déclarent.
+func (e *Engine) WithNews(src NewsSource) *Engine {
+	e.news = src
+	return e
 }
 
 // NewEngine construit un moteur. Le gestionnaire de risque est le MÊME
@@ -234,6 +255,12 @@ func (e *Engine) Run(ctx context.Context, req Request) (*Result, error) {
 
 	// Une stratégie qui porte ses positions le week-end n'a pas de
 	// dernière bougie de semaine : ni clôture forcée, ni entrée refusée.
+	var gate *news.Gate
+	if desc.UsesNews && e.news != nil {
+		gate = e.news.Gate()
+	}
+	newsBlocked, newsUncovered := 0, 0
+
 	weekEnd := make([]bool, len(series))
 	if !desc.HoldsOverWeekend {
 		weekEnd = core.LastBarsOfWeek(series)
@@ -314,7 +341,19 @@ func (e *Engine) Run(ctx context.Context, req Request) (*Result, error) {
 			}
 			reversal := sig.Action.IsEntry()
 			sig = strategy.ApplyReversal(desc, sig, held)
-			reversal = reversal && sig.Action == core.Exit
+			reversal = reversal && sig.Action.IsExit()
+			// Filtre d'actualités : sur les seules ENTRÉES réalisables, à
+			// l'instant de la décision (close de la bougie). Même fonction
+			// que le live.
+			if gate != nil && sig.Action.IsEntry() && pos == nil {
+				switch verdict, _ := gate.Check(req.Symbol, bar.Time.Add(barDuration)); verdict {
+				case news.Blocked:
+					newsBlocked++
+					sig.Action = core.Hold
+				case news.Uncovered:
+					newsUncovered++
+				}
+			}
 			// L'équité courante est fournie pour que le dimensionnement au
 			// risque marche IDENTIQUEMENT ici et en live. DayStartEquity
 			// reste à zéro : la limite de perte journalière exige l'équité
@@ -327,7 +366,7 @@ func (e *Engine) Run(ctx context.Context, req Request) (*Result, error) {
 			dec := rm.Evaluate(sig, open, &core.AccountState{
 				Equity: equity, Currency: conv.AccountCurrency,
 			})
-			if dec.Accepted() && sig.Action == core.Exit && pos != nil {
+			if dec.Accepted() && sig.Action.IsExit() && pos != nil {
 				// Sortie demandée par la stratégie, au close de la bougie
 				// de décision — le prix auquel elle a décidé. Le live
 				// l'exécute au marché à la clôture de la même bougie.
@@ -378,6 +417,7 @@ func (e *Engine) Run(ctx context.Context, req Request) (*Result, error) {
 	stats := computeStats(req, trades, equity, e.cfg.Backtest.InitialCapital,
 		totalCosts, spread, costsModelled, rejectedOrders, exitReasons, rm.Rejections())
 	stats.SizeCapped = rm.Capped()
+	stats.NewsFilter, stats.NewsBlocked, stats.NewsUncovered = gate != nil, newsBlocked, newsUncovered
 	stats.Currency, stats.CurrencyExact = conv.AccountCurrency, conv.Exact
 	if !conv.Exact {
 		// Non convertible : on n'invente pas un taux, on dit dans quelle

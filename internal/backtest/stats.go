@@ -1,6 +1,7 @@
 package backtest
 
 import (
+	"fmt"
 	"math"
 	"time"
 
@@ -181,6 +182,9 @@ func AggregateStats(results []*Result, initialCapital float64) Stats {
 		agg.Costs += r.Stats.Costs
 		agg.RejectedOrders += r.Stats.RejectedOrders
 		agg.SizeCapped += r.Stats.SizeCapped
+		agg.NewsFilter = agg.NewsFilter || r.Stats.NewsFilter
+		agg.NewsBlocked += r.Stats.NewsBlocked
+		agg.NewsUncovered += r.Stats.NewsUncovered
 		if !r.Stats.CostsModelled {
 			// Un seul actif sans spread mesurable suffit à rendre
 			// l'agrégat incomplet : on le dit pour l'ensemble.
@@ -310,4 +314,18 @@ func MergeEquity(results []*Result, initialCapital float64, max int) []EquityPoi
 		out = append(out, EquityPoint{Time: t, Value: total})
 	}
 	return Downsample(out, max)
+}
+
+// NewsSummary : ce que le filtre d'actualités a fait, en une phrase, et
+// s'il faut en avertir (des entrées décidées hors du calendrier archivé
+// n'ont PAS été filtrées). Vide quand le filtre n'était pas actif.
+func (s Stats) NewsSummary() (string, bool) {
+	if !s.NewsFilter {
+		return "", false
+	}
+	msg := fmt.Sprintf("filtre d'actualités : %d entrée(s) écartée(s)", s.NewsBlocked)
+	if s.NewsUncovered > 0 {
+		return msg + fmt.Sprintf(" · %d décidée(s) hors du calendrier archivé, NON filtrée(s)", s.NewsUncovered), true
+	}
+	return msg, false
 }

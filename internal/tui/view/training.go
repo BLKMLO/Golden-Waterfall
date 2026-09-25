@@ -428,6 +428,9 @@ func (v *Training) renderCompactResult(res *training.Result, width, height int) 
 	if s.RejectedOrders > 0 {
 		warn = append(warn, fmt.Sprintf("⚠ %d refus de marge", s.RejectedOrders))
 	}
+	if s.NewsUncovered > 0 {
+		warn = append(warn, fmt.Sprintf("⚠ %d entrée(s) hors calendrier news", s.NewsUncovered))
+	}
 	top := params + "\n" + stats + "\n" + th.Warning.Render(component.Truncate(strings.Join(warn, " · "), width))
 	band := height - lipgloss.Height(top)
 	if band < minCompactBand {
@@ -507,6 +510,13 @@ func (v *Training) renderAggregate(res *training.Result, took time.Duration, wid
 	if n, detail := risk.SizingRefusals(s.Rejections); n > 0 {
 		body += "\n" + th.Warning.Render(component.Truncate(fmt.Sprintf(
 			"⚠ %d entrée(s) non dimensionnée(s), donc refusée(s) : %s", n, detail), width-6))
+	}
+	if msg, warn := s.NewsSummary(); msg != "" {
+		style, prefix := th.Muted, ""
+		if warn {
+			style, prefix = th.Warning, "⚠ "
+		}
+		body += "\n" + style.Render(component.Truncate(prefix+msg, width-6))
 	}
 	return component.Panel(th, "Agrégat OUT-OF-SAMPLE", body, width)
 }

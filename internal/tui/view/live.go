@@ -392,6 +392,10 @@ const (
 type check struct {
 	long, short string
 	state       checkState
+	// advisory : informe sans bloquer (le filtre d'actualités sans
+	// calendrier ne filtre rien, mais n'empêche pas de trader). Il ne
+	// décide jamais du verdict.
+	advisory bool
 }
 
 // checks : tout ce qui doit être vrai pour qu'une paire trade.
@@ -417,15 +421,21 @@ func (v *Live) checks(s live.SymbolState) []check {
 		return yes(b)
 	}
 	cfg := v.deps.App.Config
-	return []check{
-		{"passerelle", "pass.", yes(snap.Connected)},
-		{"barrières", "SL", yes(snap.SupportsBracket)},
-		{"kill-switch", "k-s", yes(snap.KillSwitch)},
-		{"paire armée", "armée", yes(s.Armed)},
-		{"modèle", "modèle", afterConnect(s.ModelLoaded)},
-		{"historique", "hist.", afterConnect(s.HistoryOK)},
-		{"devise " + cfg.Backtest.AccountCurrency, cfg.Backtest.AccountCurrency, yes(tradable(cfg, s.Symbol))},
+	items := []check{
+		{"passerelle", "pass.", yes(snap.Connected), false},
+		{"barrières", "SL", yes(snap.SupportsBracket), false},
+		{"kill-switch", "k-s", yes(snap.KillSwitch), false},
+		{"paire armée", "armée", yes(s.Armed), false},
+		{"modèle", "modèle", afterConnect(s.ModelLoaded), false},
+		{"historique", "hist.", afterConnect(s.HistoryOK), false},
+		{"devise " + cfg.Backtest.AccountCurrency, cfg.Backtest.AccountCurrency, yes(tradable(cfg, s.Symbol)), false},
 	}
+	if snap.NewsActive {
+		// Couverture du calendrier à l'instant du marché : sans elle, le
+		// filtre d'actualités laisse tout passer.
+		items = append(items, check{"calendrier news", "news", afterConnect(snap.NewsCovered), true})
+	}
+	return items
 }
 
 // renderChecklist : une ligne, pour la paire sélectionnée.
@@ -438,7 +448,7 @@ func (v *Live) renderChecklist(width int) string {
 	items := v.checks(s)
 	blocked := ""
 	for _, c := range items {
-		if c.state != checkOK && blocked == "" {
+		if c.state != checkOK && !c.advisory && blocked == "" {
 			blocked = c.long
 		}
 	}
@@ -602,6 +612,12 @@ func (v *Live) renderWatchlist(width, height int) string {
 				signal = th.Positive.Render(fmt.Sprintf("LONG %.2f", s.Confidence))
 			case core.EnterShort:
 				signal = th.Negative.Render(fmt.Sprintf("SHORT %.2f", s.Confidence))
+			case core.Exit:
+				signal = th.Muted.Render(fmt.Sprintf("sortie %.2f", s.Confidence))
+			case core.ExitLong:
+				signal = th.Muted.Render(fmt.Sprintf("sortie L %.2f", s.Confidence))
+			case core.ExitShort:
+				signal = th.Muted.Render(fmt.Sprintf("sortie S %.2f", s.Confidence))
 			default:
 				signal = th.Muted.Render(fmt.Sprintf("neutre %.2f", s.Confidence))
 			}
