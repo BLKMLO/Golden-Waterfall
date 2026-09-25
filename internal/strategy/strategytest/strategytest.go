@@ -166,9 +166,13 @@ func checkDecisions(t *testing.T, s strategy.Strategy, series core.Series, desc 
 		if sig.Symbol != "EURUSD" || sig.Strategy != desc.Name || sig.Price != close {
 			t.Fatalf("bougie %d : signal mal attribué %+v", i, sig)
 		}
+		// Stop obligatoire (sans lui, le risque ne peut pas dimensionner) ;
+		// limite facultative — zéro veut dire « aucune », comme le contrat
+		// de core.Signal le prévoit pour un suivi de tendance.
 		long := sig.Action == core.EnterLong
-		if long && !(sig.StopLoss < close && sig.TakeProfit > close) ||
-			!long && !(sig.StopLoss > close && sig.TakeProfit < close) {
+		noLimit := sig.TakeProfit == 0
+		if long && !(sig.StopLoss > 0 && sig.StopLoss < close && (noLimit || sig.TakeProfit > close)) ||
+			!long && !(sig.StopLoss > close && (noLimit || sig.TakeProfit < close)) {
 			t.Fatalf("bougie %d : barrières du mauvais côté pour %s : stop %v, limite %v, prix %v",
 				i, sig.Action, sig.StopLoss, sig.TakeProfit, close)
 		}

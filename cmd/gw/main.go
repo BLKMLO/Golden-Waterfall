@@ -94,6 +94,9 @@ PREMIERS PAS — dans cet ordre, chaque étape a besoin de la précédente :
                                 (ou écran 4 Entraînement : p paires, r lancer)
                                 Seul l'agrégat OUT-OF-SAMPLE dit si le modèle
                                 vaut quelque chose : 0,50 d'AUC = hasard.
+                                Moteur : strategy.name — colibri_v1_2 (défaut,
+                                classifieur) ou troglodyte_v1_0 (tendance,
+                                sans AUC : juger le P&L out-of-sample).
   3. Inspecter un rejeu         gw backtest EURUSD
                                 (ou écran 3 Backtest : r) — rejeu IN-SAMPLE,
                                 pour comprendre, pas pour juger.

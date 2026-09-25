@@ -27,6 +27,9 @@ cessait d'être vraie — ce ne sont pas des intentions.
 | Proposer au même rang des paires qui ne peuvent pas trader | ne propose que les paires dimensionnables dans la devise du compte (`v` pour tout voir) |
 | Laisser « pourquoi rien ne se passe ? » sans réponse | une ligne de contrôle nomme, pour la paire sélectionnée, la condition qui bloque |
 | Couper un écran sur un petit terminal | passe en disposition compacte ; rien n'est coupé dès 60×18 |
+| Laisser une position traverser le week-end en live quand le backtest l'aurait fermée | ferme dans les 5 minutes avant la clôture hebdomadaire (vendredi 17 h, New York) ; en retard si aucun tick n'est arrivé à temps, et le journal le dit |
+| Appliquer les variances d'une paire, d'une unité de temps ou d'une définition à une autre (Troglodyte) | refuse le modèle en nommant ce qui diffère |
+| Afficher une AUC pour un moteur qui n'est pas un classifieur | affiche `—` |
 
 
 ## Quand ça se passe mal

@@ -12,11 +12,15 @@
 
 - **Golden Waterfall** = le LOGICIEL (binaire `gw`, TUI, paquets
   `internal/`). Toute l'identité visible dit « Golden Waterfall ».
-- **Colibri** = uniquement le **moteur de décision**, entièrement dans
-  `internal/strategy/colibri/`. Ne jamais appeler le logiciel « Colibri ».
-- **Une GÉNÉRATION de moteur = un nom d'oiseau** (Colibri est la
-  première). Les révisions d'une génération sont numérotées :
-  `colibri_v1_0`, `v1_1`, `v1_2` (défaut des nouvelles installations).
+- **Colibri** et **Troglodyte** = uniquement des **moteurs de décision**,
+  entièrement dans `internal/strategy/colibri/` et
+  `internal/strategy/troglodyte/`. Ne jamais appeler le logiciel par le
+  nom d'un moteur.
+- **Une GÉNÉRATION de moteur = un nom d'oiseau** : Colibri (classifieur
+  GBDT) est la première, Troglodyte (suivi de tendance, filtre de
+  Kalman, v0.7.0) la deuxième. Les révisions d'une génération sont
+  numérotées : `colibri_v1_0`, `v1_1`, `v1_2` (défaut des nouvelles
+  installations), `troglodyte_v1_0`.
 
 ## Commandes
 
@@ -72,8 +76,9 @@ identique).
    barrières, seuils) : nouvelle **révision**, ou nouvelle **génération**.
 8. **Une stratégie est un module remplaçable.** Moteurs, walk-forward, TUI
    et CLI ne connaissent que `strategy.Strategy` et sa `Description`
-   (`ContextBars`, `MaxHold`, `ModelManifest`). Règles d'exécution
-   partagées dans `core/horizon.go`. Le catalogue `internal/strategies`
+   (`ContextBars`, `MaxHold`, `HoldsOverWeekend`, `ExitOnReversal`,
+   `ModelManifest`). Règles d'exécution partagées dans `core/horizon.go`
+   et `strategy.ApplyReversal`, appelées par les DEUX moteurs. Le catalogue `internal/strategies`
    est le SEUL paquet qui nomme une implémentation ; toute stratégie qui y
    figure passe le banc `strategy/strategytest`.
 9. **Une passerelle DÉCLARE ses capacités** (`Info.Simulated`,
@@ -110,6 +115,10 @@ d'être vraie.
 | Stabilité par préfixe des DÉCISIONS (`strategytest`) | toute stratégie | Une décision qui dépend du futur |
 | Cible v1_2 confrontée au moteur de backtest | colibri | Apprendre des gains que l'exécution ne verse pas |
 | Modèle rangé PAR PAIRE | colibri | Décider EURUSD avec le modèle d'USDJPY |
+| Modèle refusé hors de sa paire, unité de temps, révision, définition | troglodyte | Des variances H4 d'EURUSD appliquées au M15 d'USDJPY |
+| `negligible_eps` / `negligible_zeta` (test du rapport de vraisemblance), `at_upper_bound` | troglodyte | Prendre une variance au bord pour une estimation, ou l'inverse |
+| `ScoreOOS` → non calculable | troglodyte | Une AUC inventée pour un moteur qui n'est pas un classifieur |
+| Sortie de fin de semaine au temps des TICKS, en retard plutôt que jamais, `WeekendExits`/`WeekendSkipped` | live | Une position que le backtest a fermée, portée en live pendant le week-end |
 | Avertissement IN-SAMPLE | backtest (TUI + CLI) | Lire un rejeu comme une performance |
 | Brouillon + « prend effet au démarrage » ; `GW_*` non modifiable ; `Validate()` avant écriture | TUI Paramètres | Croire un réglage actif ; éditer une valeur que l'environnement réécrira ; se rendre le démarrage impossible |
 | `Table` : `+N col.` ; `Fit` : lignes masquées ; `StatRowMax` : `+N` | TUI | Perdre une information sans le dire |
@@ -169,7 +178,14 @@ d'être vraie.
 - **Dukascopy** : mois **0-based** dans les URLs ; `.bi5` = LZMA, champs
   **`offset, open, CLOSE, LOW, HIGH, volume`** ; 404 = marché fermé ;
   429 = backoff LONG, concurrence 3. Le bac à sable de dev reçoit 429 :
-  aucun historique réel n'y a jamais été téléchargé.
+  aucun historique réel n'y a jamais été téléchargé (25/09/2026 : le
+  réseau répondait, mais 4 jours sur 260 en un quart d'heure).
+- **Samedi ET dimanche ne sont jamais demandés** (`daysOfYear`) : les
+  heures de réouverture du dimanche soir manquent à l'historique (le
+  fichier existe : 200, 2 724 octets pour le 7/1/2024). ⚠ La clôture de
+  fin de semaine du backtest (`LastBarsOfWeek`, semaine ISO) SUPPOSE
+  cette absence : un historique importé avec des bougies du dimanche
+  ferait clore la semaine APRÈS le week-end.
 - **Parquet** (`data/parquet.go`) : `time` (TIMESTAMP MILLIS UTC),
   `bid_*`, `ask_*` (NULLABLES), `volume` ; métadonnée `gw.failures` ;
   groupes de 32 768 bougies ; prix ARRONDIS seulement si l'aller-retour
@@ -207,16 +223,42 @@ d'être vraie.
 - `Stats` a un `MarshalJSON` (NaN → `null`, ±∞ → `"inf"`) : sinon
   `run.json` refuse d'être écrit.
 
+### Troglodyte (`docs/troglodyte.md`)
+
+- **Fenêtre FIXE de 500 bougies refiltrée à chaque décision** : la pente
+  a une mémoire longue quand σ²_ζ est petit ; filtrée depuis le début de
+  la série, la décision dépendrait du début du bloc (backtest) ou du
+  tampon (live). Ne pas « optimiser » en filtre incrémental.
+- **Initialisation diffuse EXACTE** sur y₁, y₂ (pas de « grand κ »).
+- **Vraisemblance concentrée en σ²_η**, pas σ²_ε : un taux de change n'a
+  presque pas de bruit d'observation ; rapportées à σ²_ε, les variances
+  butaient sur les bornes (trouvé par un essai du binaire, pas par les
+  tests). Variance « nulle » = test du rapport de vraisemblance,
+  2ΔlnL < 2,71 (½χ²₀ + ½χ²₁, Self et Liang 1987).
+- Seuils 1,5 / 0,5, stop 3 ATR, fenêtre 500 : **CONVENTIONS**, jamais
+  mesurées. Pas de limite (`TakeProfit` = 0 permis par le banc).
+- Filtre confronté à un conditionnement gaussien DENSE, vraisemblance à
+  une densité de Cholesky ; estimation vérifiée sur séries simulées.
+
 ### Exécution et risque
 
 - **Règles de sortie dans `core/horizon.go`** (`HoldDeadline`,
   `HoldExpired`, `LastBarsOfWeek`, `MedianSpread`), appelées par les
   moteurs ET l'étiquetage v1_2. `HoldExpired` raisonne sur la bougie
   courante et la cadence, jamais sur la bougie suivante.
-- ⚠ Le **live n'a pas de règle de fin de semaine** : la dernière bougie
-  du vendredi n'y est close qu'à la réouverture ; seule la barrière de
-  5 jours y fait filet.
-- Backtest : **aucune entrée sur la dernière bougie de la semaine**.
+- **Fin de semaine = déclarée** (`HoldsOverWeekend`, v0.7.0). Backtest :
+  semaine ISO des données, **aucune entrée sur la dernière bougie**. Live :
+  la dernière bougie du vendredi n'y est close qu'à la réouverture, d'où
+  une règle HORAIRE (`core.WeeklyClose` = vendredi 17 h New York,
+  `time/tzdata` embarqué ; sortie dans les 5 min avant, `WeekendGuard`,
+  CONVENTION ; en retard au premier tick suivant sinon ; aucune entrée
+  sur `LastBarBeforeWeekend`). Heure des TICKS, jamais de la machine.
+  Métaux/indices : même heure, non vérifiée (IB : forex seulement).
+- **`Exit` et retournement** (v0.7.0) : le backtest ferme au close de la
+  bougie de décision (motifs `signal`, `reversal`). Avant v0.7.0 il
+  IGNORAIT `Exit` alors que le live l'exécutait — sans effet, Colibri
+  n'en émet pas. Colibri vérifié identique AU BIT PRÈS après ce
+  changement (walk-forward complet, binaire de `main` contre la branche).
 - **Stop = ordre au marché** (gap : pire de la barrière et de
   l'ouverture) ; **limite = prix exact**.
 - **Dimensionnement au risque actif, 0,5 %** — CONVENTION, pas mesure.
@@ -278,6 +320,8 @@ d'être vraie.
 `parquet-go/parquet-go` — six directes, **aucune native**, `CGO_ENABLED=0`
 partout (promesse « un seul binaire »). Parquet fait passer le binaire de
 8,8 à 15,2 Mo : prix assumé d'un format lisible par d'autres outils.
+v0.7.0 : 15 536 312 → 16 093 368 octets (`-s -w`, mesurés côte à côte),
+base des fuseaux `time/tzdata` et Troglodyte compris.
 `muesli/termenv` est directe pour les SEULS tests du thème.
 
 ⚠ `go.mod` exige **Go 1.25** (`bbolt` v1.5, `x/sys` v0.45). Un repli sur
@@ -288,17 +332,17 @@ Dependabot hebdomadaire, `charmbracelet/x/*` GROUPÉS.
 
 Licence **MIT**, choisie par le propriétaire du projet.
 
-## État du projet (24 septembre 2026, v0.6.0)
+## État du projet (25 septembre 2026, v0.7.0)
 
-24 paquets, suite verte avec `-race`. `wc -l` des fichiers `.go` :
-20 875 lignes hors tests, 9 592 de tests.
+25 paquets, suite verte avec `-race`. `wc -l` des fichiers `.go` :
+22 721 lignes hors tests, 10 741 de tests.
 
-Couverture mesurée le 24 septembre 2026 (`go test -cover`) :
-`cmd/gw` 26 %, `tui/view` 51 %, `config` 57 %, `core` 67 %, `tui` 68 %,
+Couverture mesurée le 25 septembre 2026 (`go test -cover`) :
+`cmd/gw` 26 %, `config` 57 %, `tui/view` 61 %, `core` 68 %, `tui` 69 %,
 `data` 70 %, `tui/component` 74 %, `training` 75 %, `indicator` 77 %,
-`storage` 79 %, `app` 79 %, `live` 80 %, `broker` 82 %, `ml/gbdt` 83 %,
-`backtest` 84 %, `strategy/colibri` 87 %, `export` 88 %, `risk` 90 %,
-`label` 97 %, `tui/theme` 100 %.
+`storage` 79 %, `app` 79 %, `live` 81 %, `broker` 82 %, `ml/gbdt` 83 %,
+`backtest` 85 %, `strategy/troglodyte` 87 %, `strategy/colibri` 87 %,
+`export` 88 %, `risk` 90 %, `label` 97 %, `tui/theme` 100 %.
 
 Validé réellement : walk-forward et backtest de bout en bout sur un
 historique importé depuis pyarrow ; Parquet écrit relu par pyarrow ; rendu
@@ -306,19 +350,25 @@ TUI contrôlé de 60×18 à 200×60 ; sélecteur de paires sous tmux ; binaire
 connecté à un **faux TWS** sous tmux (équité, position, ticks, refus
 « compte papier en mode live ») ; en v0.6.0, binaire sous tmux à 60×18
 et 132×34 sur un rejeu d'historique SYNTHÉTIQUE (liste de contrôle,
-filtre tradables, dispositions compactes).
+filtre tradables, dispositions compactes) ; en v0.7.0, `gw train` et
+`gw backtest` avec `troglodyte_v1_0` sur trois ans de M1 SYNTHÉTIQUE
+(aucune clôture de week-end, sorties sur signal, AUC « — »), et Colibri
+v1_2 identique au bit près entre `main` et la branche.
 
 **Jamais validé** : un téléchargement Dukascopy réel, une mesure sur
-données réelles, une séance contre un vrai TWS.
+données réelles (ni Colibri ni Troglodyte), une séance contre un vrai
+TWS, la règle de fin de semaine live sur un vrai flux.
 
 ## Reste à faire, par ordre de valeur
 
 1. **Éprouver Interactive Brokers contre un VRAI TWS papier** : entrée,
    stop, limite, sortie sur signal, redémarrage ; comparer le journal au
    relevé IB. À faire avant tout `broker.mode: live`.
-2. **Mesurer `colibri_v1_2` contre `v1_1` sur historique réel** (deux
-   `gw train`, `gw runs`). Toutes les mesures de v1_2 sont SYNTHÉTIQUES ;
-   un démenti donne `colibri_v1_3`, jamais une retouche de v1_2.
+2. **Mesurer sur historique réel** `colibri_v1_2` contre `v1_1`, et
+   `troglodyte_v1_0` contre les deux (`gw train`, `gw runs`). Toutes les
+   mesures sont SYNTHÉTIQUES ; les seuils de Troglodyte sont des
+   conventions. Un démenti donne une nouvelle révision, jamais une
+   retouche.
 3. **Triangulation des devises** (21/31 instruments non dimensionnables
    sur un compte USD). Le taux manquant est déjà sur le disque (GBPUSD
    pour un P&L en GBP) : série de taux alignée dans le temps au backtest,
@@ -326,8 +376,10 @@ données réelles, une séance contre un vrai TWS.
    Change des résultats publiés : à traiter comme un changement de moteur.
 4. **Mesurer `risk_per_trade_pct`** (`gw train --risk-per-trade 0` puis
    `0.5`, `gw runs`).
-5. **Règle de fin de semaine en live** (divergence backtest/live, voir
-   plus haut).
+5. **Troglodyte, suite** : volatilité variable (les variances sont
+   constantes sur l'entraînement), stop suiveur (le contrat ne sait pas
+   déplacer un stop), et, avec un contrat multi-jambes, une génération
+   d'arbitrage statistique qui réutiliserait le filtre.
 6. **IB, suite** : reconnexion automatique, métaux et indices (contrat
    à définir, pas à deviner), P&L latent via `reqAccountUpdates`.
 7. **Exposition croisée** dans le walk-forward (drawdown et Sharpe
@@ -369,7 +421,19 @@ de défaire.
   le README n'y renvoie qu'en une ligne. Pas d'assistant de premier
   lancement dans la TUI : décision du propriétaire du projet.
 - **README abrégé, détail dans `docs/`** (`architecture`, `brokers`,
-  `colibri`, `depannage`, `donnees`, `gbdt`).
+  `colibri`, `depannage`, `donnees`, `gbdt`, `troglodyte`).
+- **Deuxième génération = tendance structurelle** (Kalman), pas
+  cointégration (deux jambes : contrat à refaire ; croisées non
+  dimensionnables ; identité ln EURGBP = ln EURUSD − ln GBPUSD), ni
+  Markowitz (des poids : sa place est dans le RISQUE, reste-à-faire
+  « exposition croisée »), ni microstructure (aucune donnée ; l'exécution
+  est à la passerelle). Ni les quatre à la fois : rien ne serait
+  attribuable.
+- **Troglodyte porte le week-end et sort sur retournement** : déclaré
+  dans sa `Description`, jamais codé dans les moteurs ; Colibri garde
+  l'ancien comportement (sa cible v1_2 l'a appris).
+- **Pas d'AUC pour Troglodyte** : `ScoreOOS` répond « non calculable » ;
+  `PositiveRate` et `Rounds` sont `omitempty` dans `run.json`.
 
 ## Leçons (bugs corrigés dont la cause peut revenir)
 
@@ -392,10 +456,17 @@ de défaire.
   disparaît.
 - **Un champ de trop dans un message IB** (version 163) : trouvé par la
   comparaison octet pour octet, pas par la relecture.
+- **Une paramétrisation mal conditionnée** (Troglodyte, variances
+  rapportées à σ²_ε) : tests unitaires verts, trouvée par le premier
+  `gw train` sur le binaire. Toujours faire tourner le binaire.
 
 ## Performance (mesurée)
 
-Bancs : `internal/{indicator,ml/gbdt,label,data,tui}/bench_test.go`.
+Bancs : `internal/{indicator,ml/gbdt,label,data,tui,strategy/troglodyte}/bench_test.go`.
+
+Troglodyte (Xeon 2,1 GHz du bac à sable) : 21 à 24 µs par décision
+(fenêtre de 500, une allocation de 4 Ko) ; 40 ms pour estimer les
+variances sur 10 000 bougies.
 
 | Changement | Avant | Après |
 |---|---|---|

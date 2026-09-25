@@ -85,3 +85,47 @@ func TestMedianSpreadIgnoresMissingAsk(t *testing.T) {
 		t.Fatal("sans côté ask, aucun spread ne doit être annoncé")
 	}
 }
+
+func TestWeeklyCloseFollowsNewYorkDaylightSaving(t *testing.T) {
+	cases := []struct {
+		at   time.Time
+		want time.Time
+	}{
+		// Hiver (heure normale de l'Est, UTC−5) : 17 h = 22 h UTC.
+		{time.Date(2024, 1, 3, 12, 0, 0, 0, time.UTC), time.Date(2024, 1, 5, 22, 0, 0, 0, time.UTC)},
+		// Été (UTC−4) : 17 h = 21 h UTC.
+		{time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC), time.Date(2024, 7, 5, 21, 0, 0, 0, time.UTC)},
+		// Pile sur la clôture : c'est elle.
+		{time.Date(2024, 1, 5, 22, 0, 0, 0, time.UTC), time.Date(2024, 1, 5, 22, 0, 0, 0, time.UTC)},
+		// Juste après : la semaine suivante.
+		{time.Date(2024, 1, 5, 22, 0, 1, 0, time.UTC), time.Date(2024, 1, 12, 22, 0, 0, 0, time.UTC)},
+		// Dimanche soir, réouverture : la clôture du vendredi qui vient.
+		{time.Date(2024, 1, 7, 22, 30, 0, 0, time.UTC), time.Date(2024, 1, 12, 22, 0, 0, 0, time.UTC)},
+		// Semaine du passage à l'heure d'été (dimanche 10 mars 2024).
+		{time.Date(2024, 3, 8, 12, 0, 0, 0, time.UTC), time.Date(2024, 3, 8, 22, 0, 0, 0, time.UTC)},
+		{time.Date(2024, 3, 11, 12, 0, 0, 0, time.UTC), time.Date(2024, 3, 15, 21, 0, 0, 0, time.UTC)},
+	}
+	for _, c := range cases {
+		if got := WeeklyClose(c.at); !got.Equal(c.want) {
+			t.Errorf("WeeklyClose(%s) = %s, %s attendu", c.at, got.UTC(), c.want)
+		}
+	}
+}
+
+func TestLastBarBeforeWeekend(t *testing.T) {
+	const h4 = 4 * time.Hour
+	// Hiver : clôture vendredi 22 h UTC. La bougie H4 de 20 h la contient.
+	if !LastBarBeforeWeekend(time.Date(2024, 1, 5, 20, 0, 0, 0, time.UTC), h4) {
+		t.Fatal("la bougie H4 de 20 h UTC est la dernière de la semaine")
+	}
+	if LastBarBeforeWeekend(time.Date(2024, 1, 5, 16, 0, 0, 0, time.UTC), h4) {
+		t.Fatal("la bougie H4 de 16 h UTC se clôt avant la garde : ce n'est pas la dernière")
+	}
+	// M1 : la garde de cinq minutes compte.
+	if !LastBarBeforeWeekend(time.Date(2024, 1, 5, 21, 54, 0, 0, time.UTC), time.Minute) {
+		t.Fatal("une bougie qui se clôt dans la garde est la dernière")
+	}
+	if LastBarBeforeWeekend(time.Date(2024, 1, 5, 21, 50, 0, 0, time.UTC), time.Minute) {
+		t.Fatal("une bougie close avant la garde n'est pas la dernière")
+	}
+}

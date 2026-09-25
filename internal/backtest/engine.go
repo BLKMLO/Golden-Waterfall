@@ -26,10 +26,18 @@
 //     DERNIÈRE bougie commencée dans l'horizon que la stratégie DÉCLARE
 //     (`Description.MaxHold`). Le moteur ne connaît pas cet horizon : il
 //     le lit, si bien qu'aucune stratégie n'est câblée ici.
-//   - CLÔTURE DE FIN DE SEMAINE ISO et LIQUIDATION FINALE au close : aucun
-//     portage de week-end, aucune position résiduelle fantôme. Et donc
-//     AUCUNE ENTRÉE sur la dernière bougie de la semaine : elle serait
-//     portée tout le week-end, la seule chose que cette règle interdit.
+//   - CLÔTURE DE FIN DE SEMAINE ISO au close, pour une stratégie qui ne
+//     déclare pas porter ses positions le week-end
+//     (`Description.HoldsOverWeekend`) : aucun portage de week-end, et
+//     donc AUCUNE ENTRÉE sur la dernière bougie de la semaine — elle
+//     serait portée tout le week-end, la seule chose que cette règle
+//     interdit. Une stratégie qui porte le week-end garde sa position ;
+//     un stop franchi par le gap de réouverture est servi à l'ouverture.
+//   - SORTIE SUR SIGNAL au close de la bougie de décision : un signal
+//     `Exit`, ou une entrée opposée pour une stratégie qui déclare
+//     `ExitOnReversal`. La bougie de sortie ne rouvre rien.
+//   - LIQUIDATION FINALE au close de la dernière bougie : aucune position
+//     résiduelle fantôme.
 //   - COÛTS : le spread est MESURÉ dans les données (médiane de
 //     ask_close − bid_close) et facturé par côté, si bien qu'un
 //     aller-retour paie exactement un spread ; s'y ajoute une commission
@@ -221,9 +229,15 @@ func (e *Engine) Run(ctx context.Context, req Request) (*Result, error) {
 	// bougie commencée dans l'horizon, sans jamais lire l'horodatage de la
 	// bougie suivante — le moteur live ne l'aurait pas.
 	barDuration := req.Timeframe.Duration()
-	maxHold := req.Strategy.Describe().MaxHold
+	desc := req.Strategy.Describe()
+	maxHold := desc.MaxHold
 
-	weekEnd := core.LastBarsOfWeek(series)
+	// Une stratégie qui porte ses positions le week-end n'a pas de
+	// dernière bougie de semaine : ni clôture forcée, ni entrée refusée.
+	weekEnd := make([]bool, len(series))
+	if !desc.HoldsOverWeekend {
+		weekEnd = core.LastBarsOfWeek(series)
+	}
 	cash := e.cfg.Backtest.InitialCapital
 	leverage := e.cfg.Backtest.Leverage
 	var pos *position
@@ -294,6 +308,13 @@ func (e *Engine) Run(ctx context.Context, req Request) (*Result, error) {
 				return nil, fmt.Errorf("stratégie sur %s à %s : %w", req.Symbol, bar.Time, err)
 			}
 			open := currentPositions(pos, req.Symbol)
+			held := 0.0
+			if len(open) > 0 {
+				held = open[0].Quantity
+			}
+			reversal := sig.Action.IsEntry()
+			sig = strategy.ApplyReversal(desc, sig, held)
+			reversal = reversal && sig.Action == core.Exit
 			// L'équité courante est fournie pour que le dimensionnement au
 			// risque marche IDENTIQUEMENT ici et en live. DayStartEquity
 			// reste à zéro : la limite de perte journalière exige l'équité
@@ -306,7 +327,21 @@ func (e *Engine) Run(ctx context.Context, req Request) (*Result, error) {
 			dec := rm.Evaluate(sig, open, &core.AccountState{
 				Equity: equity, Currency: conv.AccountCurrency,
 			})
-			if dec.Accepted() && pos == nil {
+			if dec.Accepted() && sig.Action == core.Exit && pos != nil {
+				// Sortie demandée par la stratégie, au close de la bougie
+				// de décision — le prix auquel elle a décidé. Le live
+				// l'exécute au marché à la clôture de la même bougie.
+				reason := "signal"
+				if reversal {
+					reason = "reversal"
+				}
+				tr, cost := closePosition(pos, req.Symbol, bar.Close(), bar.Time, reason, costPerUnitPerSide, conv)
+				cash += tr.PnL
+				totalCosts += cost
+				trades = append(trades, tr)
+				exitReasons[reason]++
+				pos = nil
+			} else if dec.Accepted() && sig.Action.IsEntry() && pos == nil {
 				entryPrice := bar.Close()
 				notional := dec.Order.Quantity * conv.NotionalPerUnit(entryPrice)
 				margin := notional / leverage

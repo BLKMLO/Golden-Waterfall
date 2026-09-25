@@ -48,8 +48,9 @@ broker:
 
 strategy:
   # Moteur de décision actif (clé du registre de stratégies) : colibri_v1_0,
-  # colibri_v1_1 ou colibri_v1_2. Un modèle n'est chargé que par la
-  # révision qui l'a entraîné : changer ce nom demande un nouvel
+  # colibri_v1_1, colibri_v1_2 (classifieur GBDT) ou troglodyte_v1_0
+  # (suivi de tendance, filtre de Kalman). Un modèle n'est chargé que par
+  # la révision qui l'a entraîné : changer ce nom demande un nouvel
   # entraînement. `gw config` liste les stratégies disponibles.
   name: "colibri_v1_2"
   # Kill-switch GLOBAL. Le trading par paire se règle depuis la TUI et est

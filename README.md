@@ -60,8 +60,8 @@ tab écran  ·  ? aide  ·  q quitter  ·  c connecter / déconnecter  ·  k kil
 **Le chiffre qu'on vous montre est celui qui compte.** La validation se fait en
 walk-forward : chaque pli s'entraîne sur tout ce qui précède son bloc de test
 et n'est évalué que sur ce bloc. Rien n'est jamais testé sur des données vues à
-l'entraînement, et l'écran affiche l'AUC out-of-sample avec son repère —
-**0,50 = hasard**.
+l'entraînement, et l'écran affiche le résultat out-of-sample — avec, pour un
+classifieur, l'AUC et son repère : **0,50 = hasard**.
 
 **L'interface ne ment jamais.** Une donnée qu'on n'a pas s'affiche « — », pas
 « 0 ». Une passerelle simulée porte un bandeau **REJEU** en permanence. Le
@@ -136,26 +136,42 @@ trader. Live, Backtest et le choix des paires ne proposent qu'elles par
 défaut ; `v` montre toutes les paires. L'interface tient sans rien couper
 dès 60×18.
 
-## Le moteur Colibri
+## Les moteurs de décision
 
-Le logiciel s'appelle **Golden Waterfall** ; son moteur de décision s'appelle
-**Colibri**. Le moteur est un **module remplaçable** : les moteurs de backtest
-et de live, le walk-forward et l'interface ne connaissent que le contrat
-`strategy.Strategy`, et la génération suivante se branchera sans les toucher
-([`docs/architecture.md`](docs/architecture.md)).
+Le logiciel s'appelle **Golden Waterfall** ; ses moteurs de décision portent
+des noms d'oiseaux, un par génération. Un moteur est un **module
+remplaçable** : backtest, live, walk-forward et interface ne connaissent que
+le contrat `strategy.Strategy` ([`docs/architecture.md`](docs/architecture.md)).
+On choisit le moteur dans l'écran **6 Paramètres** (`strategy.name`) ; chaque
+moteur a ses propres modèles et demande son propre entraînement.
 
-Colibri apprend, sur des bougies étiquetées par **barrières à ± 1,5 ATR**, la
-probabilité qu'un trade finisse gagnant, avec un **gradient boosting écrit en
-Go** — un fichier unique, un entraînement reproductible au bit près. Depuis
-v0.4.1, la révision par défaut **`colibri_v1_2`** apprend l'issue NETTE de coûts
-que le moteur d'exécution produirait vraiment, une tête par sens, et n'entre
-que si l'espérance nette dépasse 0,10 R. `colibri_v1_0` et `v1_1` restent
-disponibles et inchangées. v1_2 n'est pas meilleure partout : sur un des
-quatre marchés synthétiques de sa mesure, v1_1 fait mieux — c'est écrit, et
-seul un `gw train` sur votre historique tranchera.
+**Colibri** (`colibri_v1_2`, par défaut) est un **classifieur** : un gradient
+boosting écrit en Go apprend, sur des barrières à ± 1,5 ATR, l'issue nette de
+coûts d'un trade, et n'entre que si l'espérance le justifie. Positions
+fermées avant chaque week-end. Détail et mesures :
+[`docs/colibri.md`](docs/colibri.md), [`docs/gbdt.md`](docs/gbdt.md).
 
-Features, cible, décision, mesures et limites :
-[`docs/colibri.md`](docs/colibri.md) et [`docs/gbdt.md`](docs/gbdt.md).
+**Troglodyte** (`troglodyte_v1_0`, nouveau en v0.7.0) est un **suivi de
+tendance structurel**. Le logarithme du prix est décrit par un modèle
+espace-état — un niveau et une pente, chacun soumis à ses propres chocs — et
+un **filtre de Kalman** en estime la pente à chaque bougie, avec son
+incertitude. Le rapport des deux, `z`, décide :
+
+| `z` = pente / écart-type de la pente | Décision |
+|---|---|
+| ≥ +1,5 | entrée longue, stop à 3 ATR, pas de limite |
+| ≤ −1,5 | entrée courte, même stop |
+| entre −0,5 et +0,5 | sortie : la tendance a disparu |
+| signal opposé à la position | sortie |
+
+L'entraînement estime les trois variances du modèle par **maximum de
+vraisemblance**, paire par paire (40 ms mesurées pour 10 000 bougies).
+Troglodyte **porte ses positions pendant le week-end** : une tendance ne
+s'arrête pas le vendredi, et le gap du lundi est assumé. Ce n'est pas un
+classifieur : il n'a pas d'AUC (l'écran affiche « — »), on le juge au P&L
+out-of-sample du walk-forward. Ses seuils sont des **conventions de départ**,
+pas des mesures. Modèle, formules, choix et limites :
+[`docs/troglodyte.md`](docs/troglodyte.md).
 
 ## Ligne de commande
 
@@ -188,7 +204,8 @@ Paramètres le signale) : `GW_CONFIG_DIR`, `GW_DATA_DIR`, `GW_BROKER`,
 | Document | Contenu |
 |---|---|
 | [docs/architecture.md](docs/architecture.md) | Arborescence, règles, où ajouter du code |
-| [docs/colibri.md](docs/colibri.md) | Features, cible, décision, révisions, mesures |
+| [docs/colibri.md](docs/colibri.md) | Colibri : features, cible, décision, révisions, mesures |
+| [docs/troglodyte.md](docs/troglodyte.md) | Troglodyte : modèle espace-état, filtre de Kalman, estimation, décision |
 | [docs/gbdt.md](docs/gbdt.md) | Le gradient boosting maison : algorithme et choix |
 | [docs/donnees.md](docs/donnees.md) | Dukascopy, stockage Parquet, import, unités de temps |
 | [docs/brokers.md](docs/brokers.md) | Contrat de passerelle, rejeu, brancher un courtier |
@@ -211,7 +228,7 @@ stratégie inscrite au catalogue passe d'office le banc de conformité
 (`internal/strategy/strategytest`).
 
 Pour publier : onglet **Actions** → **Release** → **Run workflow** avec le
-numéro (`v0.6.0`), ou pousser un tag `v*`.
+numéro (`v0.7.0`), ou pousser un tag `v*`.
 
 ## Avertissement
 
