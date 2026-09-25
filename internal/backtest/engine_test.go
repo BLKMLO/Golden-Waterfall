@@ -24,10 +24,14 @@ type scriptedStrategy struct {
 	// maxHold : barrière verticale DÉCLARÉE. Zéro = aucune, comme pour
 	// toute stratégie qui n'en annonce pas.
 	maxHold time.Duration
+	// weekend, reversal : règles d'exécution DÉCLARÉES
+	// (HoldsOverWeekend, ExitOnReversal).
+	weekend, reversal bool
 }
 
 func (s *scriptedStrategy) Describe() strategy.Description {
-	return strategy.Description{Name: "scriptee", Version: "test", MaxHold: s.maxHold}
+	return strategy.Description{Name: "scriptee", Version: "test", MaxHold: s.maxHold,
+		HoldsOverWeekend: s.weekend, ExitOnReversal: s.reversal}
 }
 func (s *scriptedStrategy) Warmup(context.Context, strategy.WarmupRequest) error { return nil }
 func (s *scriptedStrategy) Shutdown() error                                      { return nil }
@@ -903,5 +907,109 @@ func TestAggregateDoesNotInventADrawdown(t *testing.T) {
 	}
 	if !math.IsNaN(back.MaxDrawdownPct) {
 		t.Fatal("la relecture doit rétablir NaN, pas zéro")
+	}
+}
+
+// weekendSeries : vendredi 20 h et 21 h (dernière bougie de la semaine
+// ISO), puis lundi 0 h et 1 h, qui ouvre en gap à 90.
+func weekendSeries() core.Series {
+	return core.Series{
+		{Time: time.Date(2024, 1, 5, 20, 0, 0, 0, time.UTC), BidOpen: 100, BidHigh: 100, BidLow: 100, BidClose: 100},
+		{Time: time.Date(2024, 1, 5, 21, 0, 0, 0, time.UTC), BidOpen: 100, BidHigh: 100, BidLow: 100, BidClose: 100},
+		{Time: time.Date(2024, 1, 8, 0, 0, 0, 0, time.UTC), BidOpen: 90, BidHigh: 91, BidLow: 89, BidClose: 90},
+		{Time: time.Date(2024, 1, 8, 1, 0, 0, 0, time.UTC), BidOpen: 90, BidHigh: 90, BidLow: 90, BidClose: 90},
+	}
+}
+
+func TestHoldingOverWeekendKeepsThePositionAndPaysTheGap(t *testing.T) {
+	strat := &scriptedStrategy{weekend: true, script: map[int]core.Signal{
+		// Entrée sur la DERNIÈRE bougie de la semaine : refusée pour une
+		// stratégie qui ne porte pas le week-end, permise ici.
+		1: {Action: core.EnterLong, StopLoss: 95},
+	}}
+	res, err := newEngine(testConfig()).Run(context.Background(), Request{
+		Symbol: "TEST", Series: weekendSeries(), From: 0, Strategy: strat, Timeframe: data.H1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Trades) != 1 {
+		t.Fatalf("une entrée du vendredi, un trade attendu : %+v", res.Trades)
+	}
+	tr := res.Trades[0]
+	// Le stop à 95 est franchi par l'OUVERTURE du lundi à 90 : ordre au
+	// marché servi à 90, jamais à 95 — le prix que le gap a sauté.
+	if tr.ExitReason != "sl" || tr.ExitPrice != 90 {
+		t.Fatalf("stop en gap servi à l'ouverture attendu (sl à 90), reçu %q à %v", tr.ExitReason, tr.ExitPrice)
+	}
+}
+
+func TestExitSignalClosesAtTheDecisionClose(t *testing.T) {
+	series := makeBars([][4]float64{
+		{100, 100, 100, 100},
+		{100, 103, 100, 102},
+		{102, 102, 102, 102},
+		{102, 102, 102, 102},
+	}, 0)
+	strat := &scriptedStrategy{script: map[int]core.Signal{
+		0: {Action: core.EnterLong, StopLoss: 90},
+		1: {Action: core.Exit},
+	}}
+	res, err := newEngine(testConfig()).Run(context.Background(), Request{
+		Symbol: "TEST", Series: series, From: 0, Strategy: strat, Timeframe: data.H1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Trades) != 1 {
+		t.Fatalf("un trade attendu : %+v", res.Trades)
+	}
+	tr := res.Trades[0]
+	if tr.ExitReason != "signal" || tr.ExitPrice != 102 || !tr.ExitTime.Equal(series[1].Time) {
+		t.Fatalf("sortie sur signal au close de la bougie 1 attendue, reçu %q à %v (%s)",
+			tr.ExitReason, tr.ExitPrice, tr.ExitTime)
+	}
+	if res.Stats.ExitReasons["signal"] != 1 {
+		t.Fatalf("motif de sortie non compté : %v", res.Stats.ExitReasons)
+	}
+}
+
+func TestReversalClosesOnlyWhenDeclared(t *testing.T) {
+	series := makeBars([][4]float64{
+		{100, 100, 100, 100},
+		{100, 100, 98, 99},
+		{99, 99, 99, 99},
+		{99, 99, 99, 99},
+	}, 0)
+	script := map[int]core.Signal{
+		0: {Action: core.EnterLong, StopLoss: 90},
+		1: {Action: core.EnterShort, StopLoss: 110},
+	}
+	run := func(reversal bool) *Result {
+		res, err := newEngine(testConfig()).Run(context.Background(), Request{
+			Symbol: "TEST", Series: series, From: 0, Timeframe: data.H1,
+			Strategy: &scriptedStrategy{script: script, reversal: reversal},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+
+	declared := run(true)
+	if len(declared.Trades) != 1 || declared.Trades[0].ExitReason != "reversal" ||
+		!declared.Trades[0].ExitTime.Equal(series[1].Time) {
+		t.Fatalf("un signal opposé doit fermer la position à la bougie 1 : %+v", declared.Trades)
+	}
+	// La bougie de sortie ne rouvre rien : la position short n'existe pas.
+	if declared.Trades[0].Side != core.Buy {
+		t.Fatalf("seule la position longue devait exister : %+v", declared.Trades)
+	}
+
+	// Sans déclaration (Colibri), le signal opposé est ignoré : la
+	// position va jusqu'à la liquidation finale.
+	silent := run(false)
+	if len(silent.Trades) != 1 || silent.Trades[0].ExitReason != "final" {
+		t.Fatalf("sans ExitOnReversal, la position doit survivre au signal opposé : %+v", silent.Trades)
 	}
 }

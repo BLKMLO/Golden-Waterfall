@@ -19,6 +19,13 @@ bit près** à graine égale, et un test le vérifie.
 C'est l'algorithme classique du boosting par histogrammes, sans les
 extensions dont le projet n'a pas besoin.
 
+Pour le situer : c'est la lignée de **LightGBM** — croissance feuille par
+feuille, soustraction d'histogrammes, catégorielles triées par gradient,
+noms d'hyperparamètres repris tels quels — moins ses deux signatures, GOSS
+et EFB. Le gain et la valeur de feuille au second ordre, comme la
+direction apprise des manquants, viennent de la formulation d'XGBoost,
+que LightGBM partage.
+
 **1. Binning par quantiles.** Chaque feature est discrétisée en au plus
 254 bins d'effectifs équilibrés. Des bins de largeur égale mettraient
 99 % des points dans un seul bin sur des retours financiers très

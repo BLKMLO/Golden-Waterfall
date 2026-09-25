@@ -51,12 +51,17 @@ Golden-Waterfall/
 │   ├── strategy/
 │   │   ├── strategy.go         CONTRAT + registre. AUCUNE implémentation.
 │   │   ├── strategytest/       Banc de CONFORMITÉ commun à toute stratégie.
-│   │   └── colibri/            Génération Colibri, TOUT ce qui lui est propre :
-│   │       ├── revision.go     Définitions figées v1_0, v1_1, v1_2.
-│   │       ├── features_v*.go  Jeux de features (v1 : 34, v2 : 33).
-│   │       ├── strategy.go     Chauffe, décision (seuils ou espérance).
-│   │       ├── train.go        Cible, purge, poids, entraînement, AUC OOS.
-│   │       └── model.go        Manifeste, chargement vérifié colonne à colonne.
+│   │   ├── colibri/            Génération Colibri (classifieur GBDT) :
+│   │   │   ├── revision.go     Définitions figées v1_0, v1_1, v1_2.
+│   │   │   ├── features_v*.go  Jeux de features (v1 : 34, v2 : 33).
+│   │   │   ├── strategy.go     Chauffe, décision (seuils ou espérance).
+│   │   │   ├── train.go        Cible, purge, poids, entraînement, AUC OOS.
+│   │   │   └── model.go        Manifeste, chargement vérifié colonne à colonne.
+│   │   └── troglodyte/         Génération Troglodyte (tendance, Kalman) :
+│   │       ├── kalman.go       Tendance locale linéaire, filtre, vraisemblance.
+│   │       ├── mle.go          Maximum de vraisemblance (grille + Nelder-Mead).
+│   │       ├── strategy.go     Révision v1_0, décision sur z, entraînement.
+│   │       └── model.go        Manifeste = le modèle entier, chargement vérifié.
 │   │
 │   ├── strategies/             CATALOGUE : le seul paquet qui nomme une
 │   │                           implémentation (importé par app).
@@ -135,11 +140,28 @@ supposaient autrefois de Colibri est désormais DÉCLARÉ par la stratégie :
 | `feature.ContextBars` (chauffe) | `Description.ContextBars` |
 | `label.MaxHoldDays` (barrière verticale) | `Description.MaxHold` |
 | `model.json` + `metadata.json` (catalogue) | `strategy.ModelManifest` seul |
+| Clôture de toute position avant le week-end | `Description.HoldsOverWeekend` (v0.7.0) |
+| Signal opposé ignoré tant que la position vit | `Description.ExitOnReversal` (v0.7.0) |
 
 Les règles d'exécution que la stratégie a besoin de connaître pour
 étiqueter sa cible (fin de semaine ISO, barrière verticale, spread médian)
 vivent dans `core/horizon.go`, appelées à l'identique par le moteur et par
-la stratégie.
+la stratégie. La règle de retournement vit dans `strategy.ApplyReversal`,
+appelée par les deux moteurs.
+
+**Fin de semaine en live** (v0.7.0). Le live ne voit la dernière bougie du
+vendredi se clore qu'au premier tick du dimanche soir : la règle ISO du
+backtest y arriverait trop tard. Il lui faut une heure :
+`core.WeeklyClose`, vendredi 17 h à New York (heure d'été comprise, base
+des fuseaux embarquée par `time/tzdata`). Pour une stratégie qui ne porte
+pas le week-end, le moteur live demande la sortie au premier tick qui
+tombe dans les **5 minutes** précédant cette clôture (`core.WeekendGuard`,
+une convention), ou au premier tick qui suit si aucun n'est arrivé à
+temps — en retard, et le journal le dit ; et il ne transmet aucune
+entrée décidée sur la dernière bougie avant la clôture
+(`core.LastBarBeforeWeekend`). L'heure est celle des ticks, jamais celle
+de la machine : un rejeu ferme au vendredi rejoué. Kill-switch ou paire
+désarmés : rien n'est fermé de force, un avertissement l'écrit une fois.
 
 Remplacer Colibri par la génération suivante : écrire
 `strategy/<oiseau>/`, ajouter une ligne dans `strategies/strategies.go`,
@@ -173,6 +195,25 @@ inopérante en silence.
 ### 5. Paper → live = un seul réglage
 
 `broker.mode` dans `config.yaml`. Rien d'autre.
+
+### 5 ter. Une instance trade toutes les paires
+
+Paper ou live, un seul processus suit toutes les paires de `live.symbols`
+(vide = `history.instruments`) : un abonnement, un moteur, une instance de
+stratégie. Il n'y a rien à lancer par symbole — et bbolt, qui verrouille
+son fichier, refuserait de toute façon une seconde instance.
+
+Ce sont les goroutines et les canaux qui rendent cela naturel : la
+passerelle livre les ticks de toutes les paires depuis sa propre
+goroutine, le moteur tient son état **par symbole** (tampon de bougies,
+ordre en vol, jambe ouverte) sous un seul verrou, puis rediffuse ticks,
+signaux et exécutions sur le bus sans jamais bloquer (§ 3).
+
+Les paires décident indépendamment, mais partagent le compte : l'équité
+qui dimensionne chaque entrée, `max_open_positions` (plafond global),
+`max_daily_loss_pct` (plus aucune entrée nulle part une fois atteint) et
+le kill switch. Aucune gestion de corrélation entre paires : le seul lien
+est ce plafond commun.
 
 ### 5 bis. Le dimensionnement REFUSE plutôt que de deviner
 
@@ -224,10 +265,18 @@ plutôt que d'en embarquer un généraliste) :
   labeling, si bien que le modèle apprend ce que l'exécution délivre ;
 - **barrière verticale** : l'horizon que la stratégie DÉCLARE
   (`Description.MaxHold`) ; aucune si elle n'en déclare pas ;
-- **clôture de fin de semaine ISO** et **liquidation finale** au close ;
-  une bougie de clôture forcée ne rouvre rien, et **aucune entrée n'est
-  ouverte sur la dernière bougie de la semaine** (elle serait portée tout
-  le week-end — corrigé en v0.4.1) ;
+- **clôture de fin de semaine ISO** au close, pour une stratégie qui ne
+  déclare pas `HoldsOverWeekend` ; une bougie de clôture forcée ne rouvre
+  rien, et **aucune entrée n'est ouverte sur la dernière bougie de la
+  semaine** (elle serait portée tout le week-end — corrigé en v0.4.1).
+  Une stratégie qui porte le week-end garde sa position ; un stop franchi
+  par le gap du lundi est servi à l'ouverture ;
+- **sortie sur signal** (v0.7.0) au close de la bougie de décision : un
+  signal `Exit`, ou une entrée opposée pour une stratégie qui déclare
+  `ExitOnReversal` (motifs `signal` et `reversal`). Avant v0.7.0, le
+  backtest ignorait `Exit` alors que le live l'exécutait — sans effet tant
+  qu'aucune stratégie n'en émettait (Colibri n'en émet pas) ;
+- **liquidation finale** au close de la dernière bougie ;
 - **coûts** : spread MESURÉ (médiane de `ask_close − bid_close`) facturé
   par côté, plus commission optionnelle. Un aller-retour paie exactement
   un spread. Sans côté ask : aucun coût, et `CostsModelled = false` ;

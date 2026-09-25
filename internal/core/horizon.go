@@ -4,6 +4,10 @@ import (
 	"math"
 	"sort"
 	"time"
+	// Base des fuseaux EMBARQUÉE : un binaire CGO_ENABLED=0 sous Windows
+	// n'en trouve aucune sur la machine, et la clôture hebdomadaire se
+	// calcule à l'heure de New York (heure d'été comprise).
+	_ "time/tzdata"
 )
 
 // Règles de SORTIE partagées par tous les exécuteurs (backtest, live) et
@@ -97,4 +101,56 @@ func (s Series) MedianSpread() (float64, bool) {
 		return 0, false
 	}
 	return m, true
+}
+
+// WeekendGuard : avance prise sur la clôture hebdomadaire pour fermer une
+// position en live. CONVENTION, pas mesure : assez pour qu'un ordre au
+// marché soit servi avant la fermeture, sans sortir des heures plus tôt
+// que le backtest (qui ferme au close de la dernière bougie).
+const WeekendGuard = 5 * time.Minute
+
+// newYork : fuseau de la clôture hebdomadaire du forex.
+var newYork = mustLoadLocation("America/New_York")
+
+func mustLoadLocation(name string) *time.Location {
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		// Base embarquée (time/tzdata) : un échec est une incohérence du
+		// binaire, pas une donnée.
+		panic("fuseau " + name + " introuvable dans la base embarquée : " + err.Error())
+	}
+	return loc
+}
+
+// WeeklyClose renvoie la clôture hebdomadaire du forex qui suit `t` (ou
+// qui tombe exactement sur `t`) : le vendredi à 17 h, heure de New York —
+// la convention de place, qui est aussi l'heure de fermeture d'IDEALPRO.
+// Elle vaut 21 h UTC en heure d'été américaine et 22 h UTC en heure
+// d'hiver ; le fuseau le calcule, rien n'est codé en dur.
+//
+// Le backtest n'en a pas besoin : l'historique dit lui-même où la semaine
+// s'arrête (LastBarsOfWeek). Le live, lui, ne voit la dernière bougie du
+// vendredi se clore qu'au premier tick du dimanche soir — trop tard. Il
+// lui faut une heure, prise sur le temps du MARCHÉ (horodatage des ticks),
+// jamais sur l'horloge de la machine : un rejeu doit fermer au vendredi
+// rejoué.
+//
+// Métaux et indices, qui ne se jouent qu'en rejeu (IB : forex seulement),
+// reçoivent la même heure ; la leur n'a pas été vérifiée.
+func WeeklyClose(t time.Time) time.Time {
+	local := t.In(newYork)
+	days := (int(time.Friday) - int(local.Weekday()) + 7) % 7
+	close := time.Date(local.Year(), local.Month(), local.Day()+days, 17, 0, 0, 0, newYork)
+	if close.Before(t) {
+		close = close.AddDate(0, 0, 7)
+	}
+	return close
+}
+
+// LastBarBeforeWeekend : la bougie qui commence à `barTime` est-elle la
+// dernière qu'un moteur live puisse clore avant la fermeture du week-end ?
+// Une entrée décidée à sa clôture serait portée pendant la fermeture.
+func LastBarBeforeWeekend(barTime time.Time, barDuration time.Duration) bool {
+	deadline := WeeklyClose(barTime).Add(-WeekendGuard)
+	return !barTime.Add(barDuration).Before(deadline)
 }

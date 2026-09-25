@@ -11,7 +11,14 @@ Trois pièges du format, tous traités :
 
 - **le mois est 0-based dans les URLs** : janvier = `00` ;
 - **404 = marché fermé**, pas une panne. Les week-ends ne sont même pas
-  demandés (ce serait 104 requêtes inutiles par an et par symbole) ;
+  demandés (ce serait 104 requêtes inutiles par an et par symbole).
+  Conséquence : les heures du **dimanche soir**, où le forex rouvre, ne
+  sont pas dans l'historique — le fichier existe pourtant (constaté le
+  25 septembre 2026 : réponse 200 de 2 724 octets pour le dimanche
+  7 janvier 2024, contenu non décodé faute de débit). La clôture de fin de
+  semaine du backtest (`core.LastBarsOfWeek`, semaine ISO) SUPPOSE cette
+  absence : avec des bougies du dimanche, la dernière bougie de la semaine
+  ISO serait celle du dimanche soir, après le week-end ;
 - **429 = limite de débit.** La concurrence par défaut est basse (3) et le
   backoff des 429 est LONG (`Retry-After` honoré, sinon 5 s × tentative).
   Le backoff court 1-2-4-8 s des autres erreurs est inadapté à une limite

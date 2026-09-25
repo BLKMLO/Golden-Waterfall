@@ -117,6 +117,15 @@ Au passage, un défaut du moteur lui-même : il pouvait OUVRIR une position
 sur la dernière bougie de la semaine, qui traversait alors tout le
 week-end. Corrigé pour toutes les stratégies.
 
+Le live, lui, n'avait pas de règle de fin de semaine jusqu'en v0.7.0 : une
+position Colibri pouvait y traverser le week-end que le backtest (et donc
+la cible v1_2) avait fermé. Depuis v0.7.0, le live ferme la position dans
+les cinq minutes qui précèdent la clôture hebdomadaire (vendredi 17 h à
+New York) et n'ouvre rien sur la dernière bougie
+([`architecture.md`](architecture.md), règle 2 bis). Les modèles et les
+résultats de backtest de Colibri n'en changent pas : vérifié au bit près
+sur un walk-forward complet.
+
 ### 4. Des seuils de probabilité fixes ignoraient le coût du moment
 
 `p ≥ 0,60` dit la même chose que le spread vaille un centième ou un

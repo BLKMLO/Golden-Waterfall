@@ -17,4 +17,6 @@ package strategies
 import (
 	// Colibri — première génération (révisions colibri_v1_0 à v1_2).
 	_ "github.com/BLKMLO/Golden-Waterfall/internal/strategy/colibri"
+	// Troglodyte — deuxième génération (révision troglodyte_v1_0).
+	_ "github.com/BLKMLO/Golden-Waterfall/internal/strategy/troglodyte"
 )

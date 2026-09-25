@@ -43,10 +43,11 @@ type Engine struct {
 	logger   *slog.Logger
 	agg      *Aggregator
 	tf       data.Timeframe
-	// buffer : taille du tampon par symbole (BufferBars) et maxHold :
-	// barrière verticale, tous deux lus UNE fois dans la Description.
-	buffer  int
-	maxHold time.Duration
+	// buffer : taille du tampon par symbole (BufferBars) ; desc : règles
+	// d'exécution que la stratégie DÉCLARE (horizon, week-end,
+	// retournement), lues UNE fois.
+	buffer int
+	desc   strategy.Description
 
 	mu       sync.RWMutex
 	enabled  bool
@@ -54,7 +55,11 @@ type Engine struct {
 	inFlight map[string]string   // symbole → identifiant d'ordre en vol
 	openLeg  map[string]*openLeg // symbole → entrée ouverte, pour apparier
 	lastSig  map[string]core.Signal
-	stats    Stats
+	// weekendTry : dernière tentative de sortie de fin de semaine par
+	// symbole (temps du marché), pour ne pas renvoyer un ordre à chaque
+	// tick quand la sortie échoue.
+	weekendTry map[string]time.Time
+	stats      Stats
 }
 
 // openLeg : l'entrée d'un aller-retour en cours, telle que le broker l'a
@@ -66,6 +71,11 @@ type openLeg struct {
 	price    float64
 	time     time.Time
 	orderID  string
+	// weekendWarned : la position a dépassé la clôture hebdomadaire sans
+	// pouvoir être fermée (kill-switch, paire désarmée) et on l'a DIT.
+	// Une fois suffit : répété à chaque tick, l'avertissement noierait le
+	// journal pendant toute la semaine suivante.
+	weekendWarned bool
 }
 
 // Stats : compteurs du moteur, affichés par l'interface.
@@ -81,8 +91,18 @@ type Stats struct {
 	// une abstention et un refus technique ne veulent pas dire la même
 	// chose.
 	UnprotectedRefused int64
-	LastTick           time.Time
-	LastBar            time.Time
+	// WeekendExits : sorties DEMANDÉES par la règle de fin de semaine —
+	// une par tentative, au plus une par minute de marché si la
+	// précédente n'a pas abouti. Ce n'est pas un compte de sorties
+	// exécutées : celles-là, seul le compte rendu du courtier les établit.
+	// WeekendSkipped : entrées NON transmises parce que décidées à la
+	// clôture de la dernière bougie avant le week-end — elles auraient
+	// été portées pendant la fermeture, ce que la stratégie ne déclare
+	// pas accepter. Comme au backtest.
+	WeekendExits   int64
+	WeekendSkipped int64
+	LastTick       time.Time
+	LastBar        time.Time
 }
 
 // NewEngine assemble le moteur. Le câblage réel se fait dans Runtime.
@@ -90,20 +110,21 @@ func NewEngine(gw broker.Gateway, strat strategy.Strategy, rm *risk.Manager,
 	store *storage.Store, bus *core.Bus, logger *slog.Logger, tf data.Timeframe) *Engine {
 
 	return &Engine{
-		gateway:  gw,
-		strategy: strat,
-		risk:     rm,
-		store:    store,
-		bus:      bus,
-		logger:   logger,
-		agg:      NewAggregator(tf),
-		tf:       tf,
-		buffer:   BufferBars(strat),
-		maxHold:  strat.Describe().MaxHold,
-		buffers:  map[string]core.Series{},
-		inFlight: map[string]string{},
-		openLeg:  map[string]*openLeg{},
-		lastSig:  map[string]core.Signal{},
+		gateway:    gw,
+		strategy:   strat,
+		risk:       rm,
+		store:      store,
+		bus:        bus,
+		logger:     logger,
+		agg:        NewAggregator(tf),
+		tf:         tf,
+		buffer:     BufferBars(strat),
+		desc:       strat.Describe(),
+		buffers:    map[string]core.Series{},
+		inFlight:   map[string]string{},
+		openLeg:    map[string]*openLeg{},
+		lastSig:    map[string]core.Signal{},
+		weekendTry: map[string]time.Time{},
 	}
 }
 
@@ -173,6 +194,10 @@ func (e *Engine) HandleTick(ctx context.Context, tick core.Tick) {
 	e.mu.Unlock()
 	e.bus.Publish(core.TopicTick, tick)
 
+	// Avant la clôture de bougie : le premier tick du dimanche soir clôt
+	// la bougie du vendredi, et une position oubliée doit sortir d'abord.
+	e.checkWeekend(ctx, tick)
+
 	closed, ok := e.agg.Add(tick)
 	if !ok {
 		return
@@ -198,7 +223,7 @@ func (e *Engine) onBarClosed(ctx context.Context, symbol string, bar core.Bar) {
 	// Barrière VERTICALE : la position a-t-elle dépassé l'horizon que la
 	// stratégie déclare ? La règle est celle de `core`, la même qu'au
 	// backtest.
-	overdue := leg != nil && core.HoldExpired(bar.Time, e.tf.Duration(), core.HoldDeadline(leg.time, e.maxHold))
+	overdue := leg != nil && core.HoldExpired(bar.Time, e.tf.Duration(), core.HoldDeadline(leg.time, e.desc.MaxHold))
 
 	if !enabled {
 		// Le kill-switch veut dire « ne touche plus à mon compte » : on ne
@@ -242,7 +267,7 @@ func (e *Engine) onBarClosed(ctx context.Context, symbol string, bar core.Bar) {
 			Time:     bar.Time,
 		}
 		e.logger.Info("horizon atteint : sortie demandée",
-			"symbole", symbol, "entree", leg.time, "horizon", e.maxHold)
+			"symbole", symbol, "entree", leg.time, "horizon", e.desc.MaxHold)
 	} else {
 		if ready, reason := e.strategy.Ready(); !ready {
 			e.logger.Debug("bougie ignorée : stratégie non prête", "symbole", symbol, "raison", reason)
@@ -255,6 +280,16 @@ func (e *Engine) onBarClosed(ctx context.Context, symbol string, bar core.Bar) {
 			return
 		}
 	}
+	lastOfWeek := !e.desc.HoldsOverWeekend && core.LastBarBeforeWeekend(bar.Time, e.tf.Duration())
+	e.submit(ctx, symbol, sig, lastOfWeek)
+}
+
+// submit fait passer un signal par le risque puis jusqu'à la passerelle.
+//
+// `lastOfWeek` : la bougie décidée est la dernière avant la fermeture du
+// week-end, et la stratégie ne porte pas ses positions pendant celle-ci —
+// une ENTRÉE n'est alors pas transmise. Une sortie l'est toujours.
+func (e *Engine) submit(ctx context.Context, symbol string, sig core.Signal, lastOfWeek bool) {
 	e.mu.Lock()
 	e.lastSig[symbol] = sig
 	if sig.Action != core.Hold {
@@ -272,6 +307,21 @@ func (e *Engine) onBarClosed(ctx context.Context, symbol string, bar core.Bar) {
 		// s'abstient : mieux vaut une occasion manquée qu'un ordre pris
 		// sur une image périmée du compte.
 		e.logger.Warn("positions indisponibles : aucune décision prise", "symbole", symbol, "erreur", err)
+		return
+	}
+	// Règle de retournement, la MÊME qu'au backtest, appliquée sur la
+	// position que le courtier RAPPORTE.
+	if rev := strategy.ApplyReversal(e.desc, sig, heldQuantity(positions, symbol)); rev.Action != sig.Action {
+		e.logger.Info("signal opposé à la position ouverte : sortie demandée",
+			"symbole", symbol, "signal", sig.Action)
+		sig = rev
+	}
+	if lastOfWeek && sig.Action.IsEntry() {
+		e.mu.Lock()
+		e.stats.WeekendSkipped++
+		e.mu.Unlock()
+		e.logger.Info("entrée non transmise : dernière bougie avant la fermeture du week-end",
+			"symbole", symbol, "signal", sig.Action)
 		return
 	}
 	var account *core.AccountState
@@ -490,4 +540,88 @@ func (e *Engine) Describe() string {
 		return "passerelle sans barrières chez le courtier : aucune entrée ne partira"
 	}
 	return fmt.Sprintf("%d paire(s) armée(s)", len(armed))
+}
+
+// heldQuantity : quantité signée détenue sur un symbole (0 = rien).
+func heldQuantity(positions []core.Position, symbol string) float64 {
+	total := 0.0
+	for _, p := range positions {
+		if p.Symbol == symbol {
+			total += p.Quantity
+		}
+	}
+	return total
+}
+
+// checkWeekend ferme, à l'approche de la clôture hebdomadaire, la position
+// d'une stratégie qui ne déclare pas porter le week-end.
+//
+// L'heure vient du TICK (temps du marché, rejeu compris), jamais de
+// l'horloge de la machine. L'échéance est calculée depuis l'ENTRÉE
+// rapportée par le courtier : une position qu'aucun tick n'a pu fermer
+// avant la fermeture (flux coupé, kill-switch réarmé depuis) sort au
+// premier tick qui suit — en retard, et c'est écrit au journal.
+func (e *Engine) checkWeekend(ctx context.Context, tick core.Tick) {
+	if e.desc.HoldsOverWeekend {
+		return
+	}
+	symbol := tick.Symbol
+	e.mu.Lock()
+	leg := e.openLeg[symbol]
+	if leg == nil || e.inFlight[symbol] != "" {
+		e.mu.Unlock()
+		return
+	}
+	closeAt := core.WeeklyClose(leg.time)
+	if tick.Time.Before(closeAt.Add(-core.WeekendGuard)) {
+		e.mu.Unlock()
+		return
+	}
+	if last, ok := e.weekendTry[symbol]; ok && tick.Time.Sub(last) < time.Minute {
+		e.mu.Unlock()
+		return
+	}
+	enabled := e.enabled
+	warned := leg.weekendWarned
+	e.mu.Unlock()
+
+	why := ""
+	switch {
+	case !enabled:
+		why = "kill-switch désarmé"
+	case !e.store.Trading(symbol):
+		why = "paire désarmée"
+	case !e.gateway.Connected():
+		return
+	}
+	if why != "" {
+		// Même règle que l'horizon : le kill-switch veut dire « ne touche
+		// plus à mon compte ». On ne ferme rien de force, mais on le dit.
+		if !warned {
+			e.mu.Lock()
+			leg.weekendWarned = true
+			e.mu.Unlock()
+			e.logger.Warn("position portée au-delà de la clôture hebdomadaire et NON fermée : "+why,
+				"symbole", symbol, "entree", leg.time, "cloture", closeAt)
+		}
+		return
+	}
+
+	e.mu.Lock()
+	e.weekendTry[symbol] = tick.Time
+	e.stats.WeekendExits++
+	e.mu.Unlock()
+	if tick.Time.Before(closeAt) {
+		e.logger.Info("fin de semaine : sortie demandée", "symbole", symbol, "cloture", closeAt)
+	} else {
+		e.logger.Warn("fin de semaine : sortie demandée EN RETARD, la position a traversé la fermeture",
+			"symbole", symbol, "cloture", closeAt, "tick", tick.Time)
+	}
+	e.submit(ctx, symbol, core.Signal{
+		Strategy: e.desc.Name,
+		Symbol:   symbol,
+		Action:   core.Exit,
+		Price:    tick.Price(),
+		Time:     tick.Time,
+	}, false)
 }

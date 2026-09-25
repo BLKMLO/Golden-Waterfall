@@ -12,8 +12,10 @@
 //
 // Backtest, walk-forward, live, TUI et CLI ne connaissent d'une stratégie
 // que sa Description : le contexte de chauffe qu'elle exige
-// (ContextBars) et l'horizon au-delà duquel ses positions doivent être
-// liquidées (MaxHold). Aucun d'eux n'importe le paquet d'une stratégie ;
+// (ContextBars), l'horizon au-delà duquel ses positions doivent être
+// liquidées (MaxHold), si elle porte ses positions pendant le week-end
+// (HoldsOverWeekend) et si un signal opposé ferme la position
+// (ExitOnReversal). Aucun d'eux n'importe le paquet d'une stratégie ;
 // remplacer Colibri par la génération suivante ne touche donc ni aux
 // moteurs ni à l'interface.
 //
@@ -58,6 +60,21 @@ type Description struct {
 	// position ouverte sur un signal de cette stratégie est liquidée, en
 	// backtest comme en live. 0 = aucune sortie forcée par le temps.
 	MaxHold time.Duration
+	// HoldsOverWeekend : la stratégie PORTE ses positions pendant la
+	// fermeture du week-end. À false (Colibri), backtest et live ferment
+	// toute position à la dernière bougie de la semaine et n'y ouvrent
+	// rien ; à true (suivi de tendance), une tendance n'est pas coupée
+	// chaque vendredi, et le risque de gap à la réouverture est ASSUMÉ —
+	// le stop, ordre au marché, est alors servi à l'ouverture.
+	HoldsOverWeekend bool
+	// ExitOnReversal : un signal d'ENTRÉE de sens opposé à la position
+	// ouverte la ferme (sans rouvrir sur la même bougie). Une stratégie
+	// sans état ne sait pas dans quel sens le moteur est positionné :
+	// sans cette déclaration, une tendance qui se retourne d'un coup
+	// laisserait courir la position à contresens jusqu'au stop. À false
+	// (Colibri), un signal opposé est ignoré tant que la position vit —
+	// c'est la cible que ses révisions ont apprise.
+	ExitOnReversal bool
 }
 
 // ModelManifest : fichier que toute stratégie entraînable DOIT écrire dans
@@ -121,12 +138,17 @@ type TrainRequest struct {
 
 // TrainReport : ce que l'entraînement a produit. Tous les chiffres sont
 // MESURÉS ; aucun n'est estimé.
+//
+// PositiveRate et Rounds n'ont de sens que pour un classifieur à arbres
+// (Colibri). Une stratégie qui n'en a pas les laisse à zéro, et ils
+// disparaissent alors de run.json : un « taux de positifs : 0 » écrit
+// pour un modèle sans étiquettes serait un chiffre inventé.
 type TrainReport struct {
 	ModelDir     string             `json:"model_dir"`
 	Samples      int                `json:"samples"`
 	Features     int                `json:"features"`
-	PositiveRate float64            `json:"positive_rate"`
-	Rounds       int                `json:"rounds"`
+	PositiveRate float64            `json:"positive_rate,omitempty"`
+	Rounds       int                `json:"rounds,omitempty"`
 	Metrics      map[string]float64 `json:"metrics"`
 	Importance   map[string]int     `json:"importance,omitempty"`
 	Symbols      []string           `json:"symbols"`
@@ -202,4 +224,21 @@ func List() []string {
 // NoSignal est le signal neutre, renvoyé quand rien n'est décidé.
 func NoSignal(symbol string) core.Signal {
 	return core.Signal{Symbol: symbol, Action: core.Hold}
+}
+
+// ApplyReversal traduit, pour une stratégie qui déclare ExitOnReversal, un
+// signal d'entrée OPPOSÉ à la position ouverte en sortie.
+//
+// `position` est la quantité signée détenue sur le symbole (positive =
+// long, négative = short, 0 = rien). Backtest et live appellent CETTE
+// fonction : une règle de sortie écrite deux fois finit par diverger.
+func ApplyReversal(desc Description, sig core.Signal, position float64) core.Signal {
+	if !desc.ExitOnReversal {
+		return sig
+	}
+	if position > 0 && sig.Action == core.EnterShort || position < 0 && sig.Action == core.EnterLong {
+		sig.Action = core.Exit
+		sig.StopLoss, sig.TakeProfit = 0, 0
+	}
+	return sig
 }
