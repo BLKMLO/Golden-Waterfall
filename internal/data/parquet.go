@@ -125,9 +125,15 @@ func WriteSeries(path string, header FileHeader, series core.Series) error {
 		// déclarée complète sur la foi de rien.
 		options = append(options, parquet.KeyValueMetadata(metaSource, "import"))
 	} else {
+		source := header.Source
+		if source == "" {
+			// Écrit avant l'existence des sources (conversion d'un .gwb) :
+			// il n'y en avait qu'une.
+			source = DefaultSource
+		}
 		options = append(options,
 			parquet.KeyValueMetadata(metaFailures, strconv.Itoa(int(header.Failures))),
-			parquet.KeyValueMetadata(metaSource, "dukascopy"))
+			parquet.KeyValueMetadata(metaSource, source))
 	}
 	w := parquet.NewGenericWriter[parquetBar](f, options...)
 
@@ -268,6 +274,9 @@ func headerFrom(path string, pf *parquet.File) FileHeader {
 			h.Year = y
 		}
 	}
+	if v, ok := lookup(metaSource); ok {
+		h.Source = v
+	}
 	if v, ok := lookup(metaFailures); ok {
 		if n, err := strconv.Atoi(v); err == nil {
 			h.Failures = int32(n)
@@ -399,7 +408,13 @@ func ReadSeries(path string, from, to time.Time) (core.Series, FileHeader, error
 			bar.BidHigh = values[colBidHigh][i]
 			bar.BidLow = values[colBidLow][i]
 			bar.BidClose = values[colBidClose][i]
-			bar.Volume = values[colVolume][i]
+			// Volume absent (fichier tiers sans colonne, cellule NULL) :
+			// NaN, « non mesuré ». Zéro dirait « aucun échange ».
+			if present[colVolume][i] {
+				bar.Volume = values[colVolume][i]
+			} else {
+				bar.Volume = math.NaN()
+			}
 			// Une seule valeur absente suffit à considérer que la bougie
 			// n'a pas de côté ask : un demi-ask ne mesure aucun spread.
 			if present[colAskOpen][i] && present[colAskHigh][i] &&

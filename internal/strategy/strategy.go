@@ -81,6 +81,11 @@ type Description struct {
 	// ne le déclare pas : ses révisions ont appris une cible sans
 	// actualités, et le filtre changerait ce qu'elles veulent dire.
 	UsesNews bool
+	// UsesVolume : les décisions dépendent du VOLUME des bougies. Sans
+	// volume mesuré (source FXCM, passerelle qui n'en publie pas), une
+	// telle stratégie ne décide pas : l'entraînement le refuse en le
+	// disant, et l'écran Live le montre dans sa ligne de contrôle.
+	UsesVolume bool
 }
 
 // ModelManifest : fichier que toute stratégie entraînable DOIT écrire dans

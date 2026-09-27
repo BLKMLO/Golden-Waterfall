@@ -193,10 +193,10 @@ func TestConnectTwiceIsClean(t *testing.T) {
 }
 
 func TestUnknownGatewayIsReported(t *testing.T) {
-	rt, cfg, store := setupRuntime(t)
+	_, cfg, store := setupRuntime(t)
 	cfg.Broker.Name = "inexistante"
 	logger := slog.New(slog.DiscardHandler)
-	rt = NewRuntime(cfg, core.NewBus(), logger, store, risk.New(cfg.Risk, cfg.Backtest.AccountCurrency, logger))
+	rt := NewRuntime(cfg, core.NewBus(), logger, store, risk.New(cfg.Risk, cfg.Backtest.AccountCurrency, logger))
 	if err := rt.Connect(context.Background()); err == nil {
 		t.Fatal("une passerelle inconnue doit faire échouer la connexion, clairement")
 	}

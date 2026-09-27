@@ -389,19 +389,54 @@ func TestMigrateConvertsAndVerifies(t *testing.T) {
 	}
 }
 
+// TestMigrateNeverOverwritesNewerParquet : un vieux .gwb oublié à côté
+// d'une année retéléchargée depuis ne doit pas écraser le Parquet — c'est
+// lui que l'historique lit, et il est plus récent.
+func TestMigrateNeverOverwritesNewerParquet(t *testing.T) {
+	dir := t.TempDir()
+	old := m1Year(2018, 100, 0)
+	writeLegacySeries(t, legacyFilePath(dir, "EURUSD", 2018),
+		FileHeader{Symbol: "EURUSD", Year: 2018, Scale: 100000}, old)
+	newer := m1Year(2018, 300, 0)
+	if err := WriteSeries(FilePath(dir, "EURUSD", 2018),
+		FileHeader{Symbol: "EURUSD", Year: 2018, Scale: 100000, Source: "fxcm"}, newer); err != nil {
+		t.Fatal(err)
+	}
+	report, err := Migrate(dir, true, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Skipped != 1 || report.Converted != 0 || report.Freed != 0 {
+		t.Fatalf("migration : %+v", report)
+	}
+	back, h, err := ReadSeries(FilePath(dir, "EURUSD", 2018), time.Time{}, time.Time{})
+	if err != nil || len(back) != 300 || h.Source != "fxcm" {
+		t.Fatalf("le Parquet récent a été touché : %d bougies, source %q (%v)", len(back), h.Source, err)
+	}
+	if _, err := os.Stat(legacyFilePath(dir, "EURUSD", 2018)); err != nil {
+		t.Fatal("le .gwb doit rester intact : c'est à l'utilisateur de décider")
+	}
+}
+
 // TestImportMarksWhatItDoesNotKnow : un historique importé n'a pas de
 // compte de jours manquants. Le déclarer complet serait affirmer une
 // chose que personne n'a vérifiée.
 func TestImportMarksWhatItDoesNotKnow(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "eurusd.parquet")
-	series := append(m1Year(2020, 600, 0), m1Year(2021, 600, 0)...)
+	// Le 3 janvier 2021 est un DIMANCHE, que l'import écarte : la série
+	// 2021 est décalée au lundi 4.
+	y2021 := m1Year(2021, 600, 0)
+	for i := range y2021 {
+		y2021[i].Time = y2021[i].Time.AddDate(0, 0, 1)
+	}
+	series := append(m1Year(2020, 600, 0), y2021...)
 	if err := WriteSeries(src, FileHeader{
 		Symbol: "EURUSD", Year: 2020, Scale: 100000}, series); err != nil {
 		t.Fatal(err)
 	}
 
 	dir := t.TempDir()
-	report, err := Import(dir, "EURUSD", []string{src})
+	report, err := Import(dir, "EURUSD", []string{src}, ImportOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -486,7 +521,7 @@ func TestReadsAFileWrittenByAnotherTool(t *testing.T) {
 
 	// Et il s'importe dans l'historique, découpé par année.
 	dir := t.TempDir()
-	report, err := Import(dir, "EURUSD", []string{path})
+	report, err := Import(dir, "EURUSD", []string{path}, ImportOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

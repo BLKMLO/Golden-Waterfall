@@ -42,6 +42,11 @@ type Info struct {
 	// au moteur de refuser l'entrée plutôt que de découvrir le problème
 	// sur un relevé de courtier.
 	SupportsBracket bool
+	// SuppliesVolume : les ticks portent-ils un volume ? Une stratégie qui
+	// en dépend (Colibri) ne peut pas décider sur des bougies live dont le
+	// volume est inconnu : le moteur l'écrit alors NaN (« non mesuré »),
+	// jamais 0, et l'écran Live le dit.
+	SuppliesVolume bool
 	// Requirements : ce qu'il faut avoir installé/lancé à côté.
 	Requirements string
 }

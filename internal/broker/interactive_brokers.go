@@ -181,6 +181,8 @@ func init() {
 		// Chaque entrée part en bracket : parent au marché, limite et stop
 		// attachés (parentId), transmis ensemble — TWS les lie en OCA.
 		SupportsBracket: true,
+		// Les cotations forex d'IB (bid/ask) ne portent aucun volume.
+		SuppliesVolume: false,
 		Requirements: "TWS ou IB Gateway lancé et connecté ; API activée (Configure → API → Settings : " +
 			"« Enable ActiveX and Socket Clients », « Read-Only API » décoché) ; port 7497 (TWS papier), " +
 			"7496 (TWS réel), 4002/4001 (IB Gateway). Forex uniquement.",

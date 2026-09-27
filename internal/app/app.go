@@ -82,6 +82,12 @@ func New(paths config.Paths) (*App, error) {
 		logging.Close()
 		return nil, err
 	}
+	// Même règle pour la source d'historique : config ne connaît pas le
+	// registre de data, c'est donc ici qu'un nom inconnu est refusé.
+	if _, err := data.DescribeSource(cfg.History.Source); err != nil {
+		logging.Close()
+		return nil, fmt.Errorf("history.source : %w", err)
+	}
 
 	store, err := storage.Open(paths.DatabaseFile())
 	if err != nil {

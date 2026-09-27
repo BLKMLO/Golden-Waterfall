@@ -35,11 +35,13 @@ make dist       # les cinq binaires (Linux ×2, macOS ×2, Windows)
 ./gw            # interface terminal
 ```
 
-Sous-commandes : `download [--year A | --from A --to B]`,
+Sous-commandes : `download [--year A | --from A --to B] [--source S]`,
 `train [PAIRES…] [--risk-per-trade X]`, `backtest PAIRE [--csv]`, `runs`,
-`migrate [--remove]`, `import --symbol S FICHIER…`,
-`news [fetch | import FICHIER…]`, `paths`, `config [--default]`,
-`version`. `gw news` n'ouvre pas la base (utilisable TUI ouverte).
+`migrate [--remove]`,
+`import --symbol S [--tz Z] [--time-format F] [--columns C] [--replace] FICHIER…`
+(Parquet, CSV/TSV, gzip), `news [fetch | import FICHIER…]`, `paths`,
+`config [--default]`, `version`. `gw news` n'ouvre pas la base
+(utilisable TUI ouverte).
 
 Les options sont remises devant les paires avant parsing
 (`partitionArgs`) : le paquet `flag` s'arrête au premier argument
@@ -49,6 +51,9 @@ passer par là.
 
 Six écrans : **Live**, **Données**, **Backtest**, **Entraînement**,
 **Journal**, **Paramètres**.
+
+Sources d'historique : `history.source` = `dukascopy` (défaut) ou
+`fxcm` ; détail dans `docs/donnees.md`.
 
 Configuration : `config.yaml` dans le dossier utilisateur, créé au premier
 lancement depuis le modèle **embarqué** (`internal/config/default_config.yaml`).
@@ -86,8 +91,15 @@ identique).
    est le SEUL paquet qui nomme une implémentation ; toute stratégie qui y
    figure passe le banc `strategy/strategytest`.
 9. **Une passerelle DÉCLARE ses capacités** (`Info.Simulated`,
-   `Info.SupportsBracket`) ; le moteur refuse une entrée à barrières si la
-   passerelle ne les porte pas.
+   `Info.SupportsBracket`, `Info.SuppliesVolume`) ; le moteur refuse une
+   entrée à barrières si la passerelle ne les porte pas, et écrit un
+   volume NaN si elle n'en publie pas.
+10. **Une source d'historique est un module remplaçable** (`data.Source`,
+    `internal/data/source.go`) : un fichier + `RegisterSource` dans un
+    `init()`. Le téléchargeur, la config, la CLI et la TUI ne lisent que
+    le registre. Obligations : UTC, aucune bougie samedi/dimanche
+    (`data.IsWeekend`), volume NaN si non publié, `Fetched.Missing` qui
+    compte les unités de marché vides.
 
 ## L'honnêteté, en pratique dans le code
 
@@ -140,6 +152,13 @@ d'être vraie.
 | Filtre du Journal rappelé ; période de téléchargement affichée | TUI | Un filtre oublié ; croire télécharger tout l'historique |
 | Export = copie, cellule VIDE si non mesuré, drapeaux exportés | export CSV | Un fichier qui contredit l'écran ; un zéro inventé |
 | `theme.Apply` force réellement le fond | TUI | Une clé de configuration qui n'agit pas |
+| `gw.source` par fichier, colonne Source, « N sources », « non publié (FXCM) » | data, TUI Données, `gw config` | Mêler deux fournisseurs sans le savoir ; attendre d'une source une paire qu'elle ne publie pas |
+| `Fetched.Missing` en SEMAINES chez FXCM (trous comptés, jamais comblés) | data | Une année FXCM trouée déclarée complète |
+| Volume NaN (FXCM, import, passerelle sans volume), `Description.UsesVolume`, `✗ vol.` | data, live, colibri, TUI Live | Un volume 0 qui dit « aucun échange » ; Colibri muet sans raison |
+| Import : refus d'une année présente (`--replace`), du non-M1, des dates ambiguës, d'un CSV sans entête sans `--columns` ; week-end écarté et compté | data, CLI | Écraser un historique complet ; des bougies plausibles et fausses |
+| Migration : Parquet différent déjà présent = conversion sautée | data | Un vieux `.gwb` qui efface une année retéléchargée |
+| Erreurs de pli et du modèle final affichées (`FinalErr`) | CLI, TUI Entraînement | « 0 trade, AUC — » sans cause |
+| Taux de gain « — » sans trade | CLI | « 0 % » là où rien n'est mesuré |
 
 ## Conventions
 
@@ -183,6 +202,29 @@ d'être vraie.
 
 ### Données
 
+- **Sources** (`history.source`, `GW_HISTORY_SOURCE`, `gw download
+  --source`) : `dukascopy` (défaut) et `fxcm`. Nom inconnu = refus de
+  démarrer dans `app.New` (config ne connaît pas le registre). Changer
+  de source ne réécrit pas une année complète.
+- **FXCM** (`fxcm.go`, constaté le 27/09/2026) :
+  `candledata.fxcorporate.com/m1/<PAIRE>/<année>/<semaine>.csv.gz`, UTC,
+  bid+ask, AUCUN volume, depuis 2012, 25 paires (ni EURCAD, GBPAUD,
+  CHFJPY, métaux, indices). **Numérotation des semaines instable**
+  (2019/53 = semaine du 29/12/2019 ; 2026/1 = 04/01/2026) → on demande
+  52-53 de l'année précédente + 1-53, on filtre l'année. Des semaines
+  manquent (2026 : 18 à 31) → comptées (`missingMarketWeeks` : ≥ 2 jours
+  ouvrés dans l'année hors 1/1 et 25/12). Publie le DIMANCHE soir →
+  écarté. Aucune limite de débit constatée ; ≈ 3 s par année et paire.
+- **Pas de bougie samedi/dimanche, quelle que soit la source**
+  (`data.IsWeekend`) : `LastBarsOfWeek` découpe par semaine ISO ; un
+  dimanche soir clorait la semaine APRÈS le week-end. FXCM et l'import
+  (Parquet comme CSV) les écartent ; l'import les compte.
+- **Volume NaN = non publié** (FXCM, import sans colonne, Parquet sans
+  colonne, passerelle IB). Jamais 0. `core.HasVolume`.
+- **Colibri exige le volume** (3 features obligatoires dans TOUTES les
+  révisions publiées ; seul `spread_atr` est optionnel) : entraînement
+  refusé en le disant, `✗ vol.` en live. Ne PAS rendre ces features
+  optionnelles dans une révision publiée : nouvelle révision.
 - **Dukascopy** : mois **0-based** dans les URLs ; `.bi5` = LZMA, champs
   **`offset, open, CLOSE, LOW, HIGH, volume`** ; 404 = marché fermé ;
   429 = backoff LONG, concurrence 3. Le bac à sable de dev reçoit 429 :
@@ -340,6 +382,9 @@ d'être vraie.
   relisent pas les variables du paquet — course de données en test).
 - Forex IDEALPRO seulement ; pas de reconnexion automatique ; valeur
   liquidative rafraîchie par IB toutes les 3 min.
+- **Aucun volume dans les cotations** (`SuppliesVolume: false`) : bougies
+  live à volume NaN → Colibri ne décide pas sur IB (avant v0.7.3 : volume
+  0, donc features décalées puis NaN au bout de 20 bougies, en silence).
 
 ### Interface
 
@@ -356,7 +401,9 @@ partout (promesse « un seul binaire »). Parquet fait passer le binaire de
 8,8 à 15,2 Mo : prix assumé d'un format lisible par d'autres outils.
 v0.7.0 : 15 536 312 → 16 093 368 octets (`-s -w`, mesurés côte à côte),
 base des fuseaux `time/tzdata` et Troglodyte compris ; v0.7.1 :
-16 212 152 octets (`net/http` était déjà là pour Dukascopy).
+16 212 152 octets (`net/http` était déjà là pour Dukascopy) ; v0.7.3 :
+16 216 248 → 16 310 456 octets (sources, FXCM, import CSV ;
+`compress/gzip` de la bibliothèque standard).
 `muesli/termenv` est directe pour les SEULS tests du thème.
 
 ⚠ `go.mod` exige **Go 1.25** (`bbolt` v1.5, `x/sys` v0.45). Un repli sur
@@ -367,65 +414,72 @@ Dependabot hebdomadaire, `charmbracelet/x/*` GROUPÉS.
 
 Licence **MIT**, choisie par le propriétaire du projet.
 
-## État du projet (25 septembre 2026, v0.7.1)
+## État du projet (27 septembre 2026, v0.7.3)
 
-26 paquets, suite verte avec `-race`. `wc -l` des fichiers `.go` :
-24 320 lignes hors tests, 11 364 de tests.
+26 paquets, suite verte avec `-race`. `cat` des fichiers `.go` :
+25 850 lignes hors tests, 12 481 de tests.
 
-Couverture mesurée le 25 septembre 2026 (`go test -cover`) :
-`cmd/gw` 23 %, `config` 57 %, `tui/view` 61 %, `core` 67 %, `tui` 69 %,
-`data` 70 %, `tui/component` 74 %, `training` 74 %, `news` 76 %,
-`app` 77 %, `indicator` 77 %, `storage` 79 %, `live` 80 %, `broker` 82 %,
-`ml/gbdt` 83 %, `backtest` 86 %, `strategy/colibri` 87 %, `export` 88 %,
-`strategy/troglodyte` 89 %, `risk` 90 %, `label` 97 %, `tui/theme` 100 %.
+Couverture mesurée le 27 septembre 2026 (`go test -cover`) :
+`cmd/gw` 46 %, `tui/view` 61 %, `core` 65 %, `tui` 69 %,
+`training` 74 %, `tui/component` 74 %, `app` 75 %, `news` 76 %,
+`indicator` 77 %, `storage` 79 %, `live` 80 %, `broker` 83 %,
+`config` 83 %, `ml/gbdt` 83 %, `data` 85 %, `backtest` 86 %,
+`strategy/colibri` 88 %, `export` 88 %, `strategy/troglodyte` 89 %,
+`risk` 90 %, `label` 97 %, `feature` 100 %, `tui/theme` 100 %.
 
 Validé réellement : walk-forward et backtest de bout en bout sur un
 historique importé depuis pyarrow ; Parquet écrit relu par pyarrow ; rendu
 TUI contrôlé de 60×18 à 200×60 ; sélecteur de paires sous tmux ; binaire
 connecté à un **faux TWS** sous tmux (équité, position, ticks, refus
 « compte papier en mode live ») ; en v0.6.0, binaire sous tmux à 60×18
-et 132×34 sur un rejeu d'historique SYNTHÉTIQUE (liste de contrôle,
-filtre tradables, dispositions compactes) ; en v0.7.0, `gw train` et
-`gw backtest` avec `troglodyte_v1_0` sur trois ans de M1 SYNTHÉTIQUE
-(aucune clôture de week-end, sorties sur signal, AUC « — »), et Colibri
-v1_2 identique au bit près entre `main` et la branche ; en v0.7.1, même
-essai avec `troglodyte_v1_1` (avertissement « hors calendrier » affiché),
-`gw news fetch` contre le VRAI flux (une semaine archivée), TUI sous tmux
-(`✗ news` informatif, section Actualités de Paramètres), Colibri et
-Troglodyte v1_0 à nouveau identiques au bit près.
+et 132×34 sur un rejeu d'historique SYNTHÉTIQUE ; en v0.7.0 et v0.7.1,
+`gw train`/`gw backtest` Troglodyte sur M1 SYNTHÉTIQUE, `gw news fetch`
+contre le VRAI flux, Colibri et Troglodyte v1_0 identiques au bit près.
+En **v0.7.3** : **téléchargement RÉEL** depuis FXCM (EURUSD, GBPUSD,
+USDJPY, 2012 → 18/09/2026, 15 530 792 bougies, Parquet relu par
+pyarrow) ; **première mesure sur historique réel** : walk-forward
+`troglodyte_v1_0` et `v1_1` (tableau dans `docs/troglodyte.md` : v1_1
+PF 1,13 sur 60 trades, v1_0 PF 0,71 sur 62 — compatible avec le hasard) ;
+`gw backtest` Troglodyte sur ces données ; Colibri refusé avec sa cause ;
+import CSV réel (fichier FXCM brut : date ambiguë refusée,
+`--time-format` accepté, `--replace` exigé) ; TUI sous tmux (écran
+Données avec source et « non publié », Live avec `✗ vol.`).
 
-**Jamais validé** : un téléchargement Dukascopy réel, une mesure sur
-données réelles (ni Colibri ni Troglodyte), une séance contre un vrai
-TWS, la règle de fin de semaine live sur un vrai flux, le filtre
-d'actualités sur une période archivée (aucun historique de calendrier).
+**Jamais validé** : un téléchargement Dukascopy réel (429 encore le
+27/09/2026, 3 requêtes sur 3), Colibri sur données réelles (FXCM n'a pas
+de volume), une séance contre un vrai TWS, la règle de fin de semaine
+live sur un vrai flux, le filtre d'actualités sur une période archivée.
 
 ## Reste à faire, par ordre de valeur
 
 1. **Éprouver Interactive Brokers contre un VRAI TWS papier** : entrée,
    stop, limite, sortie sur signal, redémarrage ; comparer le journal au
    relevé IB. À faire avant tout `broker.mode: live`.
-2. **Mesurer sur historique réel** `colibri_v1_2` contre `v1_1`, et
-   `troglodyte_v1_0` contre les deux (`gw train`, `gw runs`). Toutes les
-   mesures sont SYNTHÉTIQUES ; les seuils de Troglodyte sont des
-   conventions. Un démenti donne une nouvelle révision, jamais une
-   retouche.
-3. **Triangulation des devises** (21/31 instruments non dimensionnables
+2. **Mesurer Colibri sur historique réel** (`colibri_v1_2` contre
+   `v1_1`, et contre Troglodyte) : il faut un historique AVEC volume
+   (Dukascopy, depuis un réseau que Dukascopy ne limite pas). Troglodyte
+   est mesuré sur FXCM (v0.7.3) ; élargir à plus de paires. Un démenti
+   donne une nouvelle révision, jamais une retouche.
+3. **Colibri sans volume** : une révision (`colibri_v1_3` ?) sans les
+   trois features de volume rendrait FXCM et IB utilisables par Colibri.
+   Nouvelle révision OBLIGATOIRE (définition publiée) ; à mesurer contre
+   v1_2 sur Dukascopy avant d'en faire le défaut.
+4. **Triangulation des devises** (21/31 instruments non dimensionnables
    sur un compte USD). Le taux manquant est déjà sur le disque (GBPUSD
    pour un P&L en GBP) : série de taux alignée dans le temps au backtest,
    cotation supplémentaire en live, `Conversion` qui prend un instant.
    Change des résultats publiés : à traiter comme un changement de moteur.
-4. **Mesurer `risk_per_trade_pct`** (`gw train --risk-per-trade 0` puis
+5. **Mesurer `risk_per_trade_pct`** (`gw train --risk-per-trade 0` puis
    `0.5`, `gw runs`).
-5. **Troglodyte, suite** : mesurer v1_1 contre v1_0 sur historique réel ;
-   archiver un calendrier historique (`gw news import`) pour que le
-   filtre compte dans une mesure ; variances variables dans le modèle
-   lui-même ; avec un contrat multi-jambes, une génération d'arbitrage
-   statistique qui réutiliserait le filtre de Kalman.
-6. **IB, suite** : reconnexion automatique, métaux et indices (contrat
+6. **Troglodyte, suite** : archiver un calendrier historique (`gw news
+   import`) pour que le filtre compte dans une mesure ; variances
+   variables dans le modèle lui-même ; avec un contrat multi-jambes, une
+   génération d'arbitrage statistique qui réutiliserait le filtre de
+   Kalman.
+7. **IB, suite** : reconnexion automatique, métaux et indices (contrat
    à définir, pas à deviner), P&L latent via `reqAccountUpdates`.
-7. **Exposition croisée** dans le walk-forward (drawdown et Sharpe
+8. **Exposition croisée** dans le walk-forward (drawdown et Sharpe
    agrégés à NaN faute de courbe commune).
-8. **Import CSV** (le lecteur de colonnes par alias existe).
 9. **Icône Windows** : il manque `build/icon.ico` (256×256).
 
 ## Décisions en vigueur (et pourquoi)
@@ -511,6 +565,21 @@ de défaire.
   `gw train` sur le binaire. Toujours faire tourner le binaire.
 - **Un fichier étranger lu comme une semaine d'archive** (test d'import
   posé dans `news/`) → noms de fichiers vérifiés.
+- **Une source qui publie le dimanche soir** (FXCM) aurait décalé la
+  clôture de fin de semaine APRÈS le week-end : trouvé en relisant
+  l'hypothèse écrite dans ce fichier, pas par les tests. Toute nouvelle
+  source ou tout import passe par `IsWeekend`.
+- **Volume 0 ≠ volume inconnu** : Colibri exigeait un volume que FXCM et
+  IB ne donnent pas ; le walk-forward disait « 0 trade, AUC — » sans
+  cause. Trouvé par le premier `gw train` sur données réelles. Toujours
+  faire tourner le binaire, et afficher la cause d'un échec.
+- **Écrasements silencieux** : `gw import` remplaçait une année complète,
+  `gw migrate` remplaçait un Parquet plus récent par un vieux `.gwb`.
+- **Proxy ignoré** : le `http.Transport` du téléchargeur n'avait pas
+  `Proxy: http.ProxyFromEnvironment`.
+- **Symbole en minuscules** (`gw download eurusd`) écrivait dans
+  `history/eurusd/`, un autre dossier que `EURUSD` : symboles mis en
+  majuscules à l'entrée.
 
 ## Performance (mesurée)
 

@@ -125,6 +125,9 @@ func (c *colibri) Describe() strategy.Description {
 		Definition:  def,
 		ContextBars: contextBars,
 		MaxHold:     c.rev.maxHold(),
+		// Toutes les révisions publiées ont trois features de volume
+		// OBLIGATOIRES (vol_rel_20, vol_spike_20, obv_z_20).
+		UsesVolume: true,
 	}
 }
 

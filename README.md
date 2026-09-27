@@ -100,10 +100,14 @@ démarrage ; `./gw paths` dit où. Tout se règle ensuite depuis l'écran
 **6 Paramètres**.
 
 **2. Téléchargez l'historique** — écran **2 Données**, `D` pour tout, `d` pour
-la paire sélectionnée. La source est Dukascopy : des bougies M1 en **bid et en
-ask**, et c'est le côté ask qui permet de *mesurer* le spread au lieu de
-l'inventer. Comptez plusieurs heures pour trente instruments sur quinze ans —
-ou réglez une période plus courte aux flèches pour essayer.
+la paire sélectionnée. Des bougies M1 en **bid et en ask** : c'est le côté ask
+qui permet de *mesurer* le spread au lieu de l'inventer. Deux sources, au
+choix dans **Paramètres** (`history.source`) : **Dukascopy** (défaut, depuis
+2003, tout le catalogue, volume de ticks — plusieurs heures pour trente
+instruments sur quinze ans) ou **FXCM** (depuis 2012, 25 paires forex, rapide,
+mais sans volume : Colibri ne peut pas s'en servir, Troglodyte oui). Un
+historique venu d'ailleurs s'importe en Parquet ou en CSV (`gw import`).
+Détail : [docs/donnees.md](docs/donnees.md).
 
 **3. Entraînez et validez** — écran **4 Entraînement**, `r`. C'est le seul
 écran qui dise si la stratégie vaut quelque chose. Un modèle de **production**
@@ -186,11 +190,13 @@ Les mêmes calculs sans interface, pour une tâche planifiée ou un conteneur :
 gw download                        # historique M1 complet (long)
 gw download EURUSD --year 2019     # une paire, une année
 gw download EURUSD --from 2019 --to 2021
+gw download EURUSD --source fxcm   # une autre source, pour ce téléchargement
 gw train                           # walk-forward sur toutes les paires
 gw train EURUSD GBPUSD             # ... ou seulement celles-là
 gw train --risk-per-trade 0        # comparer les régimes de taille
 gw migrate [--remove]              # convertit les anciens .gwb en Parquet
 gw import --symbol EURUSD f.parquet  # verse un historique venu d'ailleurs
+gw import --symbol EURUSD --tz Europe/Athens f.csv  # ... ou un CSV (MetaTrader, HistData…)
 gw backtest EURUSD                 # rejeu d'une paire
 gw backtest EURUSD --csv           # + trades, équité et métriques en CSV
 gw runs                            # entraînements archivés
@@ -204,7 +210,7 @@ Variables d'environnement (elles ont le dernier mot sur le fichier, et l'écran
 Paramètres le signale) : `GW_CONFIG_DIR`, `GW_DATA_DIR`, `GW_BROKER`,
 `GW_MODE`, `GW_STRATEGY`, `GW_STRATEGY_ENABLED`, `GW_LOG_LEVEL`, `GW_THEME`,
 `GW_TIMEFRAME`, `GW_SEED`, `GW_BROKER_HOST`, `GW_BROKER_PORT`,
-`GW_BROKER_CLIENT_ID`, `GW_BROKER_ACCOUNT`, `GW_NEWS`.
+`GW_BROKER_CLIENT_ID`, `GW_BROKER_ACCOUNT`, `GW_NEWS`, `GW_HISTORY_SOURCE`.
 
 ## Documentation
 
@@ -215,7 +221,7 @@ Paramètres le signale) : `GW_CONFIG_DIR`, `GW_DATA_DIR`, `GW_BROKER`,
 | [docs/troglodyte.md](docs/troglodyte.md) | Troglodyte : modèle espace-état, filtre de Kalman, estimation, calibrage, décision |
 | [docs/actualites.md](docs/actualites.md) | Filtre d'actualités : sources, archive, règle, honnêteté |
 | [docs/gbdt.md](docs/gbdt.md) | Le gradient boosting maison : algorithme et choix |
-| [docs/donnees.md](docs/donnees.md) | Dukascopy, stockage Parquet, import, unités de temps |
+| [docs/donnees.md](docs/donnees.md) | Sources (Dukascopy, FXCM, en brancher une), stockage Parquet, import Parquet/CSV, unités de temps |
 | [docs/brokers.md](docs/brokers.md) | Contrat de passerelle, rejeu, brancher un courtier |
 | [docs/depannage.md](docs/depannage.md) | Garanties, pannes courantes, emplacement des données |
 | [LLM.md](LLM.md) | Architecture et invariants — la mémoire de travail du projet |
@@ -227,8 +233,8 @@ make test   # la suite complète        make race   # avec le détecteur de conc
 make lint   # format + analyse         make dist   # les cinq binaires
 ```
 
-Aucun test n'appelle le réseau (le calendrier est éprouvé contre un faux
-serveur HTTP). La suite vérifie les propriétés dont dépend
+Aucun test n'appelle le réseau (le calendrier et les sources d'historique sont
+éprouvés contre de faux serveurs HTTP). La suite vérifie les propriétés dont dépend
 l'honnêteté des résultats, pas seulement que le code s'exécute : stabilité par
 préfixe des features ET des décisions, cible identique à l'issue du moteur
 d'exécution, fenêtre avant incomplète = pas de label, blocs de walk-forward
@@ -237,7 +243,7 @@ stratégie inscrite au catalogue passe d'office le banc de conformité
 (`internal/strategy/strategytest`).
 
 Pour publier : onglet **Actions** → **Release** → **Run workflow** avec le
-numéro (`v0.7.1`), ou pousser un tag `v*`.
+numéro (`v0.7.3`), ou pousser un tag `v*`.
 
 ## Avertissement
 

@@ -41,11 +41,17 @@ Golden-Waterfall/
 │   │
 │   ├── data/
 │   │   ├── instrument.go       Symboles, décimales, devises base/cotation.
-│   │   ├── dukascopy.go        Téléchargeur bi5 (LZMA), backoff 429.
+│   │   ├── source.go           CONTRAT d'une source d'historique + registre,
+│   │   │                       HTTP commun (backoff 429, proxy).
+│   │   ├── download.go         Téléchargeur générique : une année, un
+│   │   │                       fichier, le compte des manques ; IsWeekend.
+│   │   ├── dukascopy.go        Source Dukascopy : bi5 (LZMA), par jour.
+│   │   ├── fxcm.go             Source FXCM : CSV gzip, par semaine.
 │   │   ├── store.go            Inventaire + relecture bornée, tous formats.
-│   │   ├── parquet.go          Le stockage : lecture, écriture, import.
+│   │   ├── parquet.go          Le stockage : lecture, écriture.
+│   │   ├── csvimport.go        Lecteur CSV (alias, dates, fuseau).
 │   │   ├── gwb.go              L'ANCIEN format, en lecture seule.
-│   │   ├── migrate.go          .gwb → Parquet, vérifié avant suppression.
+│   │   ├── migrate.go          .gwb → Parquet vérifié ; import Parquet/CSV.
 │   │   └── timeframe.go        M1…MN1, planchers de bucket, agrégation.
 │   │
 │   ├── strategy/
@@ -150,6 +156,7 @@ supposaient autrefois de Colibri est désormais DÉCLARÉ par la stratégie :
 | Clôture de toute position avant le week-end | `Description.HoldsOverWeekend` (v0.7.0) |
 | Signal opposé ignoré tant que la position vit | `Description.ExitOnReversal` (v0.7.0) |
 | Aucun filtre d'actualités | `Description.UsesNews` (v0.7.1) ; Colibri ne le déclare jamais |
+| Volume supposé présent | `Description.UsesVolume` (v0.7.3) ; Colibri le déclare, le moteur live écrit NaN si la passerelle n'a pas de volume (`Info.SuppliesVolume`) |
 
 **Sorties orientées** (v0.7.1) : `core.ExitLong` et `core.ExitShort` ne
 ferment qu'une position de leur sens (`SignalAction.Closes`), en backtest

@@ -212,6 +212,14 @@ func (c *colibri) Train(ctx context.Context, req strategy.TrainRequest) (*strate
 		if req.Progress != nil {
 			req.Progress(float64(idx)/float64(len(symbols))*0.6, fmt.Sprintf("features %s", sym))
 		}
+		if !core.HasVolume(req.Datasets[sym]) {
+			// Sans ce refus, toutes les lignes tombaient au filtrage (les
+			// features de volume sont obligatoires) et l'erreur parlait
+			// d'un « jeu trop petit » — cause introuvable.
+			return nil, fmt.Errorf("%s : l'historique de %s n'a AUCUN volume mesuré (source FXCM, ou "+
+				"import sans colonne volume). %s exige le volume : retélécharger depuis Dukascopy "+
+				"(history.source: dukascopy) ou choisir troglodyte", c.rev.name, sym, c.rev.name)
+		}
 		set := c.buildSet(sym, req.Datasets[sym], categories, barDuration)
 		if set.n == 0 {
 			continue

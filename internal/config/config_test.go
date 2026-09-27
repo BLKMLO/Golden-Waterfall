@@ -186,3 +186,106 @@ func TestSaveRoundTrip(t *testing.T) {
 		t.Fatalf("valeurs perdues à la sauvegarde : %+v", back.Risk)
 	}
 }
+
+func TestHistorySourceKey(t *testing.T) {
+	if Default().History.Source != "dukascopy" {
+		t.Fatal("la source par défaut doit rester dukascopy : changer de source change l'historique")
+	}
+	c := Default()
+	c.History.Source = " "
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "history.source") {
+		t.Fatalf("source vide : refus nommant la clé attendu (%v)", err)
+	}
+	dir := t.TempDir()
+	t.Setenv("GW_CONFIG_DIR", dir)
+	t.Setenv("GW_DATA_DIR", dir)
+	t.Setenv("GW_HISTORY_SOURCE", "fxcm")
+	cfg, err := Load(DefaultPaths())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.History.Source != "fxcm" {
+		t.Fatalf("GW_HISTORY_SOURCE ignorée : %q", cfg.History.Source)
+	}
+	if EnvOverrides()["history.source"] != "GW_HISTORY_SOURCE" {
+		t.Fatal("l'écran Paramètres doit savoir que history.source est forcée par l'environnement")
+	}
+}
+
+// TestEveryEnvironmentVariableActs : une variable GW_* documentée qui
+// n'agirait pas serait un piège (cf. ui.theme).
+func TestEveryEnvironmentVariableActs(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("GW_CONFIG_DIR", dir)
+	t.Setenv("GW_DATA_DIR", dir)
+	env := map[string]string{
+		"GW_BROKER": "interactive_brokers", "GW_MODE": "live", "GW_BROKER_HOST": "10.0.0.2",
+		"GW_BROKER_PORT": "4002", "GW_BROKER_CLIENT_ID": "7", "GW_BROKER_ACCOUNT": "DU123",
+		"GW_STRATEGY": "troglodyte_v1_1", "GW_STRATEGY_ENABLED": "true", "GW_LOG_LEVEL": "debug",
+		"GW_THEME": "light", "GW_TIMEFRAME": "H1", "GW_SEED": "9", "GW_NEWS": "false",
+		"GW_HISTORY_SOURCE": "fxcm",
+	}
+	for k, v := range env {
+		t.Setenv(k, v)
+	}
+	cfg, err := Load(DefaultPaths())
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := cfg.Broker
+	if b.Name != "interactive_brokers" || b.Mode != "live" || b.Host != "10.0.0.2" || b.Port != 4002 ||
+		b.ClientID != 7 || b.Account != "DU123" {
+		t.Fatalf("broker : %+v", b)
+	}
+	if cfg.Strategy.Name != "troglodyte_v1_1" || !cfg.Strategy.Enabled || cfg.Logging.Level != "debug" ||
+		cfg.UI.Theme != "light" || cfg.Training.Timeframe != "H1" || cfg.Training.Seed != 9 ||
+		cfg.News.Enabled || cfg.History.Source != "fxcm" {
+		t.Fatalf("configuration : %+v", cfg)
+	}
+	if len(EnvOverrides()) != len(env) {
+		t.Fatalf("chaque variable doit être déclarée comme surcharge : %v", EnvOverrides())
+	}
+	for _, bad := range []struct{ key, value string }{
+		{"GW_SEED", "x"}, {"GW_NEWS", "peut-être"}, {"GW_BROKER_PORT", "port"},
+	} {
+		t.Setenv(bad.key, bad.value)
+		if _, err := Load(DefaultPaths()); err == nil || !strings.Contains(err.Error(), bad.key) {
+			t.Errorf("%s=%s accepté (%v)", bad.key, bad.value, err)
+		}
+		t.Setenv(bad.key, env[bad.key])
+	}
+}
+
+func TestDefaultPathsWithoutOverride(t *testing.T) {
+	t.Setenv("GW_CONFIG_DIR", "")
+	t.Setenv("GW_DATA_DIR", "")
+	t.Setenv("XDG_CONFIG_HOME", "/tmp/xdg-config")
+	t.Setenv("XDG_DATA_HOME", "/tmp/xdg-data")
+	p := DefaultPaths()
+	if p.ConfigDir == "" || p.DataDir == "" {
+		t.Fatalf("chemins vides : %+v", p)
+	}
+	for _, f := range []string{p.ConfigFile(), p.DatabaseFile(), p.HistoryDir(), p.ModelsDir(), p.LogFile()} {
+		if !strings.Contains(f, "olden") {
+			t.Errorf("%s : hors du dossier de l'application", f)
+		}
+	}
+}
+
+func TestKnownTimeframesAreAllValid(t *testing.T) {
+	names := KnownTimeframes()
+	if len(names) == 0 {
+		t.Fatal("aucune unité de temps connue")
+	}
+	for _, n := range names {
+		if _, err := parseTimeframeName(n); err != nil {
+			t.Errorf("%s : %v", n, err)
+		}
+	}
+	if _, err := parseTimeframeName("M7"); err == nil {
+		t.Error("M7 accepté")
+	}
+	if len(DefaultYAML()) == 0 {
+		t.Error("modèle de configuration embarqué vide")
+	}
+}

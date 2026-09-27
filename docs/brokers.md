@@ -27,7 +27,10 @@ combler le vide.
 **2. Une passerelle simulée le DÉCLARE** (`Info.Simulated`). L'interface
 affiche alors un bandeau **REJEU — COMPTE SIMULÉ** en permanence.
 L'utilisateur ne doit jamais pouvoir confondre un compte fictif avec un
-compte réel.
+compte réel. De même, `Info.SupportsBracket` déclare le port des
+barrières et `Info.SuppliesVolume` la présence d'un volume dans les
+ticks : sans lui, le moteur écrit un volume NaN et une stratégie qui en
+dépend (`Description.UsesVolume`) s'abstient, ce que l'écran Live dit.
 
 Une passerelle s'enregistre dans un `init()` :
 
@@ -165,6 +168,11 @@ l'entrée — et le dit.
 - **Valeur liquidative rafraîchie par IB toutes les trois minutes** : la
   limite de perte journalière s'appuie sur ce chiffre.
 - Les positions **non forex** du compte ne sont pas vues par le risque.
+- **Aucun volume** dans les cotations forex d'IB (`SuppliesVolume` à
+  false) : les bougies live portent un volume NaN. **Colibri**, dont les
+  trois features de volume sont obligatoires, ne décide donc pas sur IB ;
+  la ligne de contrôle Live l'affiche (« ✗ vol. ») et la liste des paires
+  en donne le motif. Troglodyte n'utilise pas le volume.
 
 ### Comment le protocole a été écrit
 

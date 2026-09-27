@@ -349,6 +349,25 @@ La liste ordonnée des symboles vus à l'entraînement est figée dans le
 manifeste et rechargée avec le modèle. Un symbole inconnu reçoit une
 valeur manquante : le modèle n'a rien appris sur lui, et c'est dit.
 
+### Le volume est obligatoire
+
+Les trois features de volume (`vol_rel_20`, `vol_spike_20`, `obv_z_20`)
+sont OBLIGATOIRES dans toutes les révisions publiées : une bougie sans
+volume mesuré ne produit aucune décision. D'où deux cas, dits plutôt que
+subis (v0.7.3) :
+
+- **historique sans volume** (source FXCM, import sans colonne volume) :
+  l'entraînement est refusé en nommant la paire et le remède
+  (`history.source: dukascopy`, ou Troglodyte). Avant, toutes les lignes
+  tombaient au filtrage et l'erreur parlait d'un « jeu trop petit » ;
+- **passerelle sans volume** (Interactive Brokers) : les bougies live ont
+  un volume NaN, Colibri ne décide pas, et la ligne de contrôle Live
+  affiche `✗ vol.`. Avant, le volume y valait 0 : features décalées par
+  rapport à l'entraînement, puis NaN au bout de 20 bougies, en silence.
+
+Rendre ces features optionnelles changerait une définition publiée :
+c'est une nouvelle révision, à mesurer (reste-à-faire de `LLM.md`).
+
 ## Lire un résultat sans se mentir
 
 | Métrique | Ce qu'elle dit |

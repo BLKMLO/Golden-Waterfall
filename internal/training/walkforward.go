@@ -83,20 +83,23 @@ type Fold struct {
 
 // Result : sortie complète d'un walk-forward.
 type Result struct {
-	RunID      string                    `json:"run_id"`
-	Strategy   string                    `json:"strategy"`
-	Symbols    []string                  `json:"symbols"`
-	Timeframe  string                    `json:"timeframe"`
-	Seed       int64                     `json:"seed"`
-	StartedAt  time.Time                 `json:"started_at"`
-	Duration   time.Duration             `json:"duration"`
-	Folds      []Fold                    `json:"folds"`
-	Aggregate  backtest.Stats            `json:"aggregate"`
-	PerSymbol  map[string]backtest.Stats `json:"per_symbol"`
-	Equity     []backtest.EquityPoint    `json:"equity"`
-	FinalDir   string                    `json:"final_model_dir,omitempty"`
-	MeanOOSAUC float64                   `json:"mean_oos_auc"`
-	HasMeanAUC bool                      `json:"has_mean_oos_auc"`
+	RunID     string                    `json:"run_id"`
+	Strategy  string                    `json:"strategy"`
+	Symbols   []string                  `json:"symbols"`
+	Timeframe string                    `json:"timeframe"`
+	Seed      int64                     `json:"seed"`
+	StartedAt time.Time                 `json:"started_at"`
+	Duration  time.Duration             `json:"duration"`
+	Folds     []Fold                    `json:"folds"`
+	Aggregate backtest.Stats            `json:"aggregate"`
+	PerSymbol map[string]backtest.Stats `json:"per_symbol"`
+	Equity    []backtest.EquityPoint    `json:"equity"`
+	FinalDir  string                    `json:"final_model_dir,omitempty"`
+	// FinalErr : pourquoi le modèle de production n'a pas été écrit.
+	// Sans lui, « aucun modèle » ne disait pas pourquoi.
+	FinalErr   string  `json:"final_model_error,omitempty"`
+	MeanOOSAUC float64 `json:"mean_oos_auc"`
+	HasMeanAUC bool    `json:"has_mean_oos_auc"`
 }
 
 // Runner exécute les walk-forwards.
@@ -293,6 +296,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 		report(Progress{Phase: "final", Ratio: 0.92, Message: "modèle de production sur tout l'historique"})
 		finalDir := filepath.Join(runRoot, "final")
 		if err := r.trainFinal(ctx, req, series, symbols, finalDir); err != nil {
+			result.FinalErr = err.Error()
 			report(Progress{Phase: "final", Ratio: 0.95,
 				Message: fmt.Sprintf("modèle de production non produit : %v", err)})
 		} else {

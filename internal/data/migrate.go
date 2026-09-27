@@ -2,9 +2,12 @@ package data
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/BLKMLO/Golden-Waterfall/internal/core"
@@ -17,6 +20,9 @@ type Converted struct {
 	Bars   int64
 	Before int64 // taille du .gwb, en octets
 	After  int64 // taille du .parquet, en octets
+	// Skipped : un Parquet de la même année existait déjà ; rien n'a été
+	// écrit ni supprimé.
+	Skipped bool
 	// Removed : l'original a été supprimé après vérification.
 	Removed bool
 	Err     error
@@ -27,9 +33,12 @@ type MigrationReport struct {
 	Files     []Converted
 	Converted int
 	Failed    int
-	Before    int64
-	After     int64
-	Freed     int64
+	// Skipped : .gwb laissés intacts parce qu'un Parquet de la même année
+	// existe déjà.
+	Skipped int
+	Before  int64
+	After   int64
+	Freed   int64
 }
 
 // LegacyFiles liste les .gwb restant dans un dossier d'historique.
@@ -79,7 +88,9 @@ func Migrate(historyDir string, remove bool, progress func(Converted)) (Migratio
 	for _, path := range files {
 		c := convertOne(path, remove)
 		report.Files = append(report.Files, c)
-		if c.Err != nil {
+		if c.Skipped {
+			report.Skipped++
+		} else if c.Err != nil {
 			report.Failed++
 		} else {
 			report.Converted++
@@ -117,7 +128,21 @@ func convertOne(path string, remove bool) Converted {
 	}
 
 	target := path[:len(path)-len(legacyExt)] + parquetExt
-	if err := WriteSeries(target, header, series); err != nil {
+	if _, err := os.Stat(target); err == nil {
+		// Un Parquet existe déjà pour cette année. Soit c'est la
+		// conversion de CE fichier (premier passage sans --remove) : on la
+		// garde et on passe à la vérification. Soit l'année a été
+		// retéléchargée ou importée depuis : c'est ce Parquet que
+		// l'historique lit, et le remplacer par l'ancien fichier effaçait
+		// des données plus récentes. Le .gwb reste alors intact.
+		existing, _, err := ReadSeries(target, time.Time{}, time.Time{})
+		if err != nil || sameSeries(series, existing) != nil {
+			c.Skipped = true
+			c.Err = fmt.Errorf("%s existe déjà avec un autre contenu : conversion sautée, .gwb laissé intact",
+				filepath.Base(target))
+			return c
+		}
+	} else if err := WriteSeries(target, header, series); err != nil {
 		c.Err = err
 		return c
 	}
@@ -174,7 +199,7 @@ func sameSeries(want, got core.Series) error {
 			{a.AskLow, b.AskLow}, {a.AskClose, b.AskClose},
 			{a.Volume, b.Volume},
 		} {
-			if pair[0] != pair[1] {
+			if pair[0] != pair[1] && !(math.IsNaN(pair[0]) && math.IsNaN(pair[1])) {
 				return fmt.Errorf("bougie %d champ %d : %v au lieu de %v", i, j, pair[1], pair[0])
 			}
 		}
@@ -188,23 +213,49 @@ type ImportReport struct {
 	Years  []int
 	Bars   int64
 	Files  []string
+	// WeekendDropped : bougies du samedi et du dimanche écartées (cf.
+	// IsWeekend). Dites, jamais passées sous silence.
+	WeekendDropped int
+	// Duplicates : horodatages présents plusieurs fois (la dernière
+	// occurrence est gardée).
+	Duplicates int
 }
 
-// Import verse un ou plusieurs fichiers Parquet extérieurs dans
-// l'historique local, découpés par année.
+// ImportOptions : réglages d'un import.
+type ImportOptions struct {
+	// CSV : ce que les fichiers texte ne disent pas d'eux-mêmes.
+	CSV CSVOptions
+	// Replace : autorise l'écrasement d'années déjà présentes. Sans lui,
+	// l'import REFUSE : un fichier tiers de trois mois écrasait en silence
+	// une année téléchargée et complète.
+	Replace bool
+}
+
+// Import verse des fichiers extérieurs (Parquet, CSV/TSV, éventuellement
+// gzip) dans l'historique local, découpés par année.
 //
 // Ce qui est écrit est marqué IMPORTÉ : personne n'a compté les jours
 // manquants de ces fichiers, donc `Complete()` répond non et l'écran
 // Données le distingue d'une année téléchargée. Supposer complet un
 // fichier dont on ne sait rien serait la pire des politesses.
-func Import(historyDir, symbol string, paths []string) (ImportReport, error) {
+//
+// Trois refus protègent l'historique : un fichier qui n'est pas du M1,
+// une année déjà présente (sauf Replace), un fichier illisible. Rien
+// n'est écrit si l'un d'eux tombe.
+func Import(historyDir, symbol string, paths []string, opts ImportOptions) (ImportReport, error) {
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
 	inst, err := LookupInstrument(symbol)
 	if err != nil {
 		return ImportReport{}, err
 	}
 	var all core.Series
 	for _, p := range paths {
-		s, _, err := ReadSeries(p, time.Time{}, time.Time{})
+		var s core.Series
+		if isTextHistory(p) {
+			s, err = ReadCSV(p, opts.CSV)
+		} else {
+			s, _, err = ReadSeries(p, time.Time{}, time.Time{})
+		}
 		if err != nil {
 			return ImportReport{}, fmt.Errorf("%s : %w", p, err)
 		}
@@ -213,21 +264,46 @@ func Import(historyDir, symbol string, paths []string) (ImportReport, error) {
 		}
 		all = append(all, s...)
 	}
+	report := ImportReport{Symbol: symbol}
+	n := len(all)
 	all = Sanitize(all)
+	report.Duplicates = n - len(all)
+	all, report.WeekendDropped = DropWeekend(all)
 	if len(all) == 0 {
-		return ImportReport{}, fmt.Errorf("aucune bougie à importer")
+		return report, fmt.Errorf("aucune bougie à importer (%d écartées : samedi ou dimanche)",
+			report.WeekendDropped)
 	}
+	if step, ok := medianStep(all); ok && step != time.Minute {
+		return report, fmt.Errorf("l'historique doit être en M1 : écart médian entre bougies de %s. "+
+			"Les autres unités de temps sont calculées à partir du M1", step)
+	}
+	report.Bars = int64(len(all))
 
 	byYear := map[int]core.Series{}
 	for _, bar := range all {
 		y := bar.Time.UTC().Year()
 		byYear[y] = append(byYear[y], bar)
 	}
-	report := ImportReport{Symbol: symbol, Bars: int64(len(all))}
 	for y := range byYear {
 		report.Years = append(report.Years, y)
 	}
 	sort.Ints(report.Years)
+
+	if !opts.Replace {
+		var taken []string
+		for _, y := range report.Years {
+			if _, err := os.Stat(FilePath(historyDir, symbol, y)); err == nil {
+				taken = append(taken, strconv.Itoa(y))
+			} else if _, err := os.Stat(legacyFilePath(historyDir, symbol, y)); err == nil {
+				taken = append(taken, strconv.Itoa(y))
+			}
+		}
+		if len(taken) > 0 {
+			return report, fmt.Errorf("%s : année(s) %s déjà présente(s) dans l'historique — "+
+				"rien n'a été écrit. --replace pour les remplacer par l'import",
+				symbol, strings.Join(taken, ", "))
+		}
+	}
 
 	for _, y := range report.Years {
 		path := FilePath(historyDir, symbol, y)
@@ -240,4 +316,15 @@ func Import(historyDir, symbol string, paths []string) (ImportReport, error) {
 		report.Files = append(report.Files, path)
 	}
 	return report, nil
+}
+
+// isTextHistory : l'extension dit s'il s'agit d'un fichier texte.
+func isTextHistory(path string) bool {
+	p := strings.ToLower(strings.TrimSuffix(strings.ToLower(path), ".gz"))
+	for _, ext := range []string{".csv", ".txt", ".tsv"} {
+		if strings.HasSuffix(p, ext) {
+			return true
+		}
+	}
+	return false
 }

@@ -7,7 +7,8 @@
 //
 //	gw                      interface terminal
 //	gw download [PAIRE…]    historique M1 (toutes les paires si aucune)
-//	                        --year / --from / --to limitent la période
+//	                        --year / --from / --to limitent la période,
+//	                        --source choisit le fournisseur
 //	gw train                walk-forward complet
 //	gw backtest PAIRE       rejeu d'une paire avec le modèle de production
 //	                        (--csv écrit trades, équité et métriques)
@@ -23,6 +24,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -116,16 +118,21 @@ PREMIERS PAS — dans cet ordre, chaque étape a besoin de la précédente :
 COMMANDES
 
   gw                      interface terminal (par défaut)
-  gw download [PAIRE…]    télécharge l'historique M1 Dukascopy
+  gw download [PAIRE…]    télécharge l'historique M1 (source : history.source)
      --year A             une seule année        (ex. gw download EURUSD --year 2019)
      --from A --to B      une période            (bornes comprises)
+     --source S           dukascopy ou fxcm, pour ce téléchargement seulement
   gw train [PAIRE…]       lance un walk-forward (toutes les paires par défaut)
      --risk-per-trade X   force le dimensionnement pour CE run (0 = taille fixe)
   gw backtest PAIRE       rejoue une paire avec le modèle de production
      --csv                écrit aussi trades, équité et métriques en CSV
   gw runs                 liste les entraînements archivés
   gw migrate [--remove]   convertit les anciens .gwb en Parquet
-  gw import --symbol S F… verse des fichiers Parquet extérieurs dans l'historique
+  gw import --symbol S F… verse des fichiers Parquet ou CSV extérieurs dans l'historique
+     --tz Z               fuseau des dates du CSV (défaut UTC)
+     --time-format F      format des dates (défaut : détecté, refusé si ambigu)
+     --columns C          noms des colonnes d'un CSV sans entête
+     --replace            remplace les années déjà présentes
   gw news [fetch]         état du calendrier économique ; fetch le récupère
   gw news import F…       verse un calendrier JSON (format du flux) dans l'archive
   gw paths                affiche les emplacements utilisés
@@ -137,7 +144,7 @@ VARIABLES D'ENVIRONNEMENT
   GW_CONFIG_DIR, GW_DATA_DIR   forcent les emplacements (installation portable)
   GW_BROKER, GW_MODE, GW_STRATEGY, GW_STRATEGY_ENABLED, GW_LOG_LEVEL,
   GW_THEME, GW_TIMEFRAME, GW_SEED, GW_BROKER_HOST, GW_BROKER_PORT,
-  GW_BROKER_CLIENT_ID, GW_BROKER_ACCOUNT, GW_NEWS
+  GW_BROKER_CLIENT_ID, GW_BROKER_ACCOUNT, GW_NEWS, GW_HISTORY_SOURCE
 `)
 }
 
@@ -205,6 +212,17 @@ func runConfig(args []string) error {
 				strings.Join(inexact, " "))
 		}
 	}
+	if info, err := data.DescribeSource(cfg.History.Source); err == nil {
+		src, _ := data.NewSource(cfg.History.Source, data.SourceOptions{})
+		_, unserved := data.ServedSymbols(src, cfg.History.Instruments)
+		fmt.Printf("historique         : %s depuis %d (start_year %d)\n",
+			info.Label, info.FirstYear, cfg.History.StartYear)
+		if len(unserved) > 0 {
+			fmt.Printf("  ⚠ non publiées par %s : %s\n", info.Label, strings.Join(unserved, " "))
+		}
+	} else {
+		fmt.Printf("historique         : ⚠ %v\n", err)
+	}
 	fmt.Printf("instruments        : %d (%s)\n", len(cfg.History.Instruments),
 		strings.Join(cfg.History.Instruments, " "))
 	fmt.Printf("stratégies         : %s\n", strings.Join(strategy.List(), ", "))
@@ -239,7 +257,8 @@ func runDownload(args []string) error {
 	from := fs.Int("from", 0, "première année à télécharger (défaut : history.start_year)")
 	to := fs.Int("to", 0, "dernière année à télécharger (défaut : année courante)")
 	year := fs.Int("year", 0, "une seule année (raccourci pour --from A --to A)")
-	flags, symbols := partitionArgs(args, map[string]bool{"from": true, "to": true, "year": true})
+	source := fs.String("source", "", "source de l'historique pour CE téléchargement (défaut : history.source)")
+	flags, symbols := partitionArgs(args, map[string]bool{"from": true, "to": true, "year": true, "source": true})
 	if err := fs.Parse(flags); err != nil {
 		return err
 	}
@@ -253,7 +272,31 @@ func runDownload(args []string) error {
 
 	if len(symbols) == 0 {
 		symbols = a.Config.History.Instruments
+	} else {
+		for i, sym := range symbols {
+			symbols[i] = strings.ToUpper(sym)
+			if _, err := data.LookupInstrument(symbols[i]); err != nil {
+				return err
+			}
+		}
 	}
+	srcName := a.Config.History.Source
+	if *source != "" {
+		srcName = *source
+	}
+	dl, err := data.NewDownloader(srcName, a.Config.Paths.HistoryDir(), a.Config.History.Concurrency, a.Logger)
+	if err != nil {
+		return err
+	}
+	info := dl.Source.Info()
+	served, unserved := data.ServedSymbols(dl.Source, symbols)
+	if len(unserved) > 0 {
+		fmt.Printf("⚠ %s ne publie pas : %s — ignorée(s).\n", info.Label, strings.Join(unserved, " "))
+	}
+	if len(served) == 0 {
+		return fmt.Errorf("aucune des paires demandées n'est publiée par %s", info.Label)
+	}
+	symbols = served
 	span := data.FullRange(a.Config.History.StartYear)
 	if *year > 0 {
 		span = data.YearRange{From: *year, To: *year}.Normalize()
@@ -266,23 +309,34 @@ func runDownload(args []string) error {
 		}
 		span = span.Normalize()
 	}
-	fmt.Printf("Période : %s · %d paire(s)\n", span, len(symbols))
+	fmt.Printf("Source : %s · période : %s · %d paire(s)\n", info.Label, span, len(symbols))
+	if span.From < info.FirstYear {
+		fmt.Printf("⚠ %s ne sert rien avant %d : les années antérieures sont sautées.\n",
+			info.Label, info.FirstYear)
+	}
+	if !info.HasVolume {
+		fmt.Printf("⚠ %s ne publie pas de volume : il est écrit « non mesuré » (NaN), jamais 0.\n", info.Label)
+	}
 
-	dl := data.NewDownloader(a.Config.Paths.HistoryDir(), a.Config.History.Concurrency, a.Logger)
 	endYear := time.Now().UTC().Year()
 	total := 0
+	// Une année en échec n'arrête pas les autres : un téléchargement de
+	// trente paires lancé pour la nuit ne doit pas s'arrêter à la
+	// première coupure réseau. Les échecs sont récapitulés à la fin, et
+	// la commande sort en erreur s'il y en a eu.
+	var failed, partial []string
 	for _, sym := range symbols {
 		for _, year := range span.Years() {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			if !data.NeedsDownload(a.Config.Paths.HistoryDir(), sym, year, endYear) {
+			if year < info.FirstYear || !data.NeedsDownload(a.Config.Paths.HistoryDir(), sym, year, endYear) {
 				continue
 			}
 			last := ""
 			n, err := dl.DownloadYear(ctx, sym, year, func(p data.DownloadProgress) {
-				line := fmt.Sprintf("\r%s %d : %d/%d jours · %d bougies · %d échecs   ",
-					p.Symbol, p.Year, p.DaysDone, p.DaysTotal, p.Bars, p.Failures)
+				line := fmt.Sprintf("\r%s %d : %d/%d %s · %d bougies · %d échecs   ",
+					p.Symbol, p.Year, p.UnitsDone, p.UnitsTotal, p.Unit, p.Bars, p.Failures)
 				if line != last {
 					fmt.Print(line)
 					last = line
@@ -290,12 +344,28 @@ func runDownload(args []string) error {
 			})
 			fmt.Println()
 			if err != nil {
-				return err
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				fmt.Printf("  ✗ %s %d : %v\n", sym, year, err)
+				failed = append(failed, fmt.Sprintf("%s %d", sym, year))
+				continue
 			}
 			total += n
+			if h, err := data.ReadHeader(data.FilePath(a.Config.Paths.HistoryDir(), sym, year)); err == nil && h.Failures > 0 {
+				fmt.Printf("  ⚠ %s %d incomplète (%d %s sans donnée) — redemandée au prochain téléchargement.\n",
+					sym, year, h.Failures, info.Unit)
+				partial = append(partial, fmt.Sprintf("%s %d", sym, year))
+			}
 		}
 	}
 	fmt.Printf("Terminé : %d bougies écrites dans %s\n", total, a.Config.Paths.HistoryDir())
+	if len(partial) > 0 {
+		fmt.Printf("⚠ %d année(s) incomplète(s) : %s\n", len(partial), strings.Join(partial, ", "))
+	}
+	if len(failed) > 0 {
+		return fmt.Errorf("%d année(s) en échec : %s", len(failed), strings.Join(failed, ", "))
+	}
 	return nil
 }
 
@@ -373,9 +443,13 @@ func runTrain(args []string) error {
 	}
 	fmt.Printf("Run %s · %d plis · %s\n", res.RunID, len(res.Folds), res.Duration.Round(time.Second))
 	fmt.Printf("AUC out-of-sample moyenne : %s (0,50 = hasard)\n", auc)
-	fmt.Printf("Trades OOS : %d · taux de gain %.1f %% · P&L %.2f %s · profit factor %s\n",
-		res.Aggregate.Trades, res.Aggregate.WinRate, res.Aggregate.NetPnL,
-		res.Aggregate.Currency, ratio(res.Aggregate.ProfitFactor))
+	cur := res.Aggregate.Currency
+	if cur == "" {
+		cur = a.Config.Backtest.AccountCurrency
+	}
+	fmt.Printf("Trades OOS : %d · taux de gain %s · P&L %.2f %s · profit factor %s\n",
+		res.Aggregate.Trades, winRate(res.Aggregate.Trades, res.Aggregate.WinRate), res.Aggregate.NetPnL,
+		cur, ratio(res.Aggregate.ProfitFactor))
 	if !res.Aggregate.CurrencyExact {
 		fmt.Println("⚠ Des actifs ne sont pas convertibles vers la devise du compte : " +
 			"la somme des P&L mélange des devises. Les ratios restent exacts.")
@@ -385,12 +459,42 @@ func runTrain(args []string) error {
 			res.Aggregate.RejectedOrders)
 	}
 	printSizing(a.Config.Risk, res.Aggregate)
+	printFoldErrors(res.Folds)
 	if res.FinalDir != "" {
 		fmt.Printf("Modèle de production : %s\n", res.FinalDir)
+	} else if res.FinalErr != "" {
+		fmt.Printf("✗ Aucun modèle de production écrit : %s\n", res.FinalErr)
 	} else {
 		fmt.Println("Aucun modèle de production écrit.")
 	}
 	return nil
+}
+
+// printFoldErrors dit pourquoi des plis n'ont rien produit.
+//
+// Sans elle, un walk-forward dont TOUS les plis échouaient affichait
+// « 0 trades · AUC — » et rien d'autre : la cause (historique sans
+// volume, jeu trop petit) n'était lisible que dans run.json. Les erreurs
+// identiques sont regroupées : cinq fois la même phrase n'en dit pas plus.
+func printFoldErrors(folds []training.Fold) {
+	var order []string
+	byErr := map[string][]int{}
+	for _, f := range folds {
+		if f.Err == "" {
+			continue
+		}
+		if _, seen := byErr[f.Err]; !seen {
+			order = append(order, f.Err)
+		}
+		byErr[f.Err] = append(byErr[f.Err], f.Index)
+	}
+	for _, e := range order {
+		idx := make([]string, len(byErr[e]))
+		for i, k := range byErr[e] {
+			idx[i] = strconv.Itoa(k)
+		}
+		fmt.Printf("✗ Pli(s) %s sur %d en échec : %s\n", strings.Join(idx, ", "), len(folds), e)
+	}
 }
 
 func runBacktest(args []string) error {
@@ -452,8 +556,8 @@ func runBacktest(args []string) error {
 	s := res.Stats
 	fmt.Printf("%s en %s · %s → %s · %d bougies\n", symbol, tf,
 		s.Start.Format("2006-01-02"), s.End.Format("2006-01-02"), s.Bars)
-	fmt.Printf("Trades %d (%d gagnants, %.1f %%) · P&L %.2f %s · rendement %.2f %%\n",
-		s.Trades, s.Wins, s.WinRate, s.NetPnL, s.Currency, s.ReturnPct)
+	fmt.Printf("Trades %d (%d gagnants, %s) · P&L %.2f %s · rendement %.2f %%\n",
+		s.Trades, s.Wins, winRate(s.Trades, s.WinRate), s.NetPnL, s.Currency, s.ReturnPct)
 	if !s.CurrencyExact {
 		fmt.Printf("⚠ Montants en %s, NON convertis vers %s : cette paire exigerait un taux tiers.\n",
 			s.Currency, a.Config.Backtest.AccountCurrency)
@@ -521,6 +625,10 @@ func runMigrate(args []string) error {
 	}
 
 	report, err := data.Migrate(dir, *remove, func(c data.Converted) {
+		if c.Skipped {
+			fmt.Printf("  %s %d : sauté — %v\n", c.Symbol, c.Year, c.Err)
+			return
+		}
 		if c.Err != nil {
 			fmt.Printf("  %s %d : ÉCHEC — %v\n", c.Symbol, c.Year, c.Err)
 			return
@@ -533,7 +641,8 @@ func runMigrate(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("\n%d converti(s), %d en échec.\n", report.Converted, report.Failed)
+	fmt.Printf("\n%d converti(s), %d en échec, %d sauté(s) (Parquet déjà présent).\n",
+		report.Converted, report.Failed, report.Skipped)
 	if report.Before > 0 {
 		fmt.Printf("Taille : %.1f Mo → %.1f Mo (%+.0f %%)\n",
 			float64(report.Before)/1e6, float64(report.After)/1e6,
@@ -548,16 +657,34 @@ func runMigrate(args []string) error {
 	return nil
 }
 
-// runImport verse des fichiers Parquet extérieurs dans l'historique.
+// runImport verse des fichiers extérieurs (Parquet, CSV) dans l'historique.
 func runImport(args []string) error {
 	fs := flag.NewFlagSet("import", flag.ContinueOnError)
 	symbol := fs.String("symbol", "", "paire à laquelle rattacher les fichiers (obligatoire)")
-	flags, files := partitionArgs(args, map[string]bool{"symbol": true})
+	tz := fs.String("tz", "UTC", "fuseau des dates sans décalage explicite (CSV), ex. Europe/Athens, Etc/GMT+5")
+	layout := fs.String("time-format", "", "format Go des dates (CSV), ex. \"2006.01.02 15:04\" ; défaut : détecté")
+	columns := fs.String("columns", "", "noms des colonnes d'un CSV SANS entête, ex. date,time,open,high,low,close,volume")
+	replace := fs.Bool("replace", false, "remplacer les années déjà présentes dans l'historique")
+	flags, files := partitionArgs(args, map[string]bool{
+		"symbol": true, "tz": true, "time-format": true, "columns": true})
 	if err := fs.Parse(flags); err != nil {
 		return err
 	}
 	if *symbol == "" || len(files) == 0 {
-		return fmt.Errorf("usage : gw import --symbol EURUSD FICHIER.parquet…")
+		return fmt.Errorf("usage : gw import --symbol EURUSD [--tz Europe/Athens] [--replace] FICHIER.parquet|.csv…")
+	}
+	loc, err := time.LoadLocation(*tz)
+	if err != nil {
+		return fmt.Errorf("--tz : fuseau inconnu %q (nom IANA attendu, ex. Europe/Paris)", *tz)
+	}
+	opts := data.ImportOptions{
+		CSV:     data.CSVOptions{Location: loc, TimeLayout: *layout},
+		Replace: *replace,
+	}
+	if *columns != "" {
+		for _, c := range strings.Split(*columns, ",") {
+			opts.CSV.Columns = append(opts.CSV.Columns, strings.TrimSpace(c))
+		}
 	}
 	a, _, cancel, err := open()
 	if err != nil {
@@ -566,7 +693,7 @@ func runImport(args []string) error {
 	defer cancel()
 	defer a.Close()
 
-	report, err := data.Import(a.Config.Paths.HistoryDir(), strings.ToUpper(*symbol), files)
+	report, err := data.Import(a.Config.Paths.HistoryDir(), *symbol, files, opts)
 	if err != nil {
 		return err
 	}
@@ -574,6 +701,14 @@ func runImport(args []string) error {
 		report.Symbol, report.Bars, len(report.Years))
 	for _, f := range report.Files {
 		fmt.Printf("  écrit %s\n", f)
+	}
+	if report.Duplicates > 0 {
+		fmt.Printf("%d horodatage(s) en double : la dernière occurrence est gardée.\n", report.Duplicates)
+	}
+	if report.WeekendDropped > 0 {
+		fmt.Printf("⚠ %d bougie(s) du samedi ou du dimanche (UTC) écartées : la clôture de fin de\n"+
+			"  semaine du backtest suppose un historique sans week-end. Si le fichier n'est pas\n"+
+			"  en UTC, relancer avec --tz et --replace.\n", report.WeekendDropped)
 	}
 	fmt.Println("\n⚠ Ces années sont marquées IMPORTÉES : personne n'a compté leurs jours")
 	fmt.Println("  manquants, elles ne sont donc pas déclarées complètes.")
@@ -640,6 +775,14 @@ func runRuns() error {
 			r.RunID, r.Strategy, r.Timeframe, len(r.Symbols), r.Trades, auc, r.NetPnL)
 	}
 	return nil
+}
+
+// winRate : sans trade, le taux de gain n'est pas 0 % — il n'existe pas.
+func winRate(trades int, pct float64) string {
+	if trades == 0 {
+		return "—"
+	}
+	return fmt.Sprintf("%.1f %%", pct)
 }
 
 func ratio(v float64) string {

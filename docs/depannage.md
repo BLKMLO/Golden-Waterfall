@@ -33,13 +33,26 @@ cessait d'être vraie — ce ne sont pas des intentions.
 | Prendre « aucune annonce » pour « calendrier absent » | compte à part les entrées décidées hors du calendrier archivé, et en avertit |
 | Donner les actualités à Colibri | ne les donne qu'aux stratégies qui les déclarent ; un test l'interdit à Colibri |
 | Fermer une position courte sur un signal pensé pour une longue | sorties orientées : `ExitLong` ne ferme qu'une position longue |
+| Écrire un volume `0` quand la source ou la passerelle n'en publie pas | écrit NaN (« non mesuré ») ; Colibri, qui en dépend, le dit à l'entraînement et dans la ligne de contrôle Live (`✗ vol.`) |
+| Écraser une année présente par un import | refuse et nomme les années ; `--replace` l'autorise |
+| Écraser un Parquet plus récent en convertissant un vieux `.gwb` | saute la conversion et laisse le `.gwb` intact |
+| Deviner l'ordre jour/mois d'une date ou les colonnes d'un CSV sans entête | refuse et demande `--time-format` ou `--columns` |
+| Garder les bougies du dimanche soir (FXCM, imports) | les écarte et le dit : la clôture de fin de semaine du backtest tomberait après le week-end |
+| Afficher « taux de gain 0 % » sans aucun trade | affiche `—` |
 
 
 ## Quand ça se passe mal
 
 | Ce qui arrive | Ce que fait Golden Waterfall |
 |---|---|
-| Dukascopy répond 429 (limite de débit) | attend longuement, honore `Retry-After`, et ne monte jamais la concurrence |
+| Dukascopy répond 429 (limite de débit) | attend longuement, honore `Retry-After`, et ne monte jamais la concurrence ; `history.source: fxcm` (ou `gw download --source fxcm`) télécharge ailleurs |
+| La source ne publie pas une paire (FXCM : métaux, indices, EURCAD, GBPAUD, CHFJPY) | la saute en la nommant, sans une requête ; l'écran Données la marque « non publié » |
+| FXCM n'a pas publié certaines semaines | les compte manquantes : l'année reste incomplète et redemandée, rien n'est comblé |
+| Une année échoue au milieu d'un téléchargement de plusieurs paires | continue avec les suivantes, récapitule les échecs à la fin et sort en erreur |
+| Un proxy d'entreprise est requis | honore `HTTPS_PROXY` / `HTTP_PROXY` |
+| Tous les plis d'un walk-forward échouent | affiche la cause de chaque pli et celle du modèle de production (CLI et écran Entraînement) |
+| Colibri sur un historique sans volume (FXCM) | refuse d'entraîner en nommant la paire et le remède (Dukascopy, ou Troglodyte) |
+| Colibri en live sur Interactive Brokers (aucun volume dans les cotations) | ne décide pas ; « ✗ vol. » dans la ligne de contrôle et le motif dans la liste des paires |
 | Le calendrier économique est injoignable | ne déclare rien couvert, garde l'archive, le dit (`gw news`, journal) |
 | Un fichier étranger traîne dans le dossier `news/` | l'ignore : seuls les fichiers de semaine (`AAAA-MM-JJ.json`) comptent |
 | Un jour n'a pas de donnée (week-end, férié) | le compte comme normal, pas comme un échec |

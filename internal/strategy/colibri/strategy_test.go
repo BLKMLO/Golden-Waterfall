@@ -562,3 +562,26 @@ func TestExpectedValueRule(t *testing.T) {
 		t.Fatalf("short attendu, %s", a)
 	}
 }
+
+// TestHistoryWithoutVolumeIsRefusedByName : un historique FXCM n'a pas de
+// volume. Sans ce refus explicite, toutes les lignes tombaient au filtrage
+// et l'erreur parlait d'un « jeu trop petit » — cause introuvable.
+func TestHistoryWithoutVolumeIsRefusedByName(t *testing.T) {
+	series := makeSeries(1500, 61, 1.10)
+	for i := range series {
+		series[i].Volume = math.NaN()
+	}
+	for _, name := range []string{"colibri_v1_0", "colibri_v1_1", "colibri_v1_2"} {
+		s, _ := strategy.New(name)
+		if !s.Describe().UsesVolume {
+			t.Fatalf("%s dépend du volume et doit le déclarer", name)
+		}
+		_, err := s.(strategy.Trainable).Train(context.Background(), strategy.TrainRequest{
+			Datasets:  map[string]core.Series{"EURUSD": series},
+			Timeframe: data.H4, OutputDir: t.TempDir(), Seed: 1,
+		})
+		if err == nil || !strings.Contains(err.Error(), "volume") || !strings.Contains(err.Error(), "EURUSD") {
+			t.Fatalf("%s : refus attendu, nommant le volume et la paire : %v", name, err)
+		}
+	}
+}

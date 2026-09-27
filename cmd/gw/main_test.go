@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -273,5 +275,166 @@ func TestHelpStartsWithFirstSteps(t *testing.T) {
 			t.Fatalf("étape « %s » absente ou hors d'ordre :\n%s", s, out[first:commands])
 		}
 		last = first + i
+	}
+}
+
+// --- Téléchargement : ce qui se refuse AVANT toute requête ----------------
+
+func TestDownloadRefusesUnknownSource(t *testing.T) {
+	isolate(t)
+	_, err := capture(t, func() error { return run([]string{"download", "EURUSD", "--source", "nawak"}) })
+	if err == nil || !strings.Contains(err.Error(), "nawak") {
+		t.Fatalf("source inconnue acceptée : %v", err)
+	}
+}
+
+func TestDownloadRefusesUnknownPair(t *testing.T) {
+	isolate(t)
+	_, err := capture(t, func() error { return run([]string{"download", "EURUSX", "--year", "2020"}) })
+	if err == nil || !strings.Contains(err.Error(), "EURUSX") {
+		t.Fatalf("paire inconnue acceptée : %v", err)
+	}
+}
+
+// TestDownloadSaysWhatTheSourceDoesNotServe : XAUUSD chez FXCM n'existe
+// pas. Le dire, et ne rien demander, plutôt qu'une heure de 404.
+func TestDownloadSaysWhatTheSourceDoesNotServe(t *testing.T) {
+	isolate(t)
+	out, err := capture(t, func() error {
+		return run([]string{"download", "xauusd", "--source", "fxcm", "--year", "2020"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "FXCM") {
+		t.Fatalf("aucune paire publiée : erreur attendue, reçu %v", err)
+	}
+	if !strings.Contains(out, "XAUUSD") || !strings.Contains(out, "ne publie pas") {
+		t.Fatalf("la paire non publiée doit être nommée :\n%s", out)
+	}
+}
+
+func TestConfigShowsTheHistorySource(t *testing.T) {
+	isolate(t)
+	t.Setenv("GW_HISTORY_SOURCE", "fxcm")
+	out, err := capture(t, func() error { return run([]string{"config"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "FXCM depuis 2012") || !strings.Contains(out, "non publiées par FXCM") ||
+		!strings.Contains(out, "XAUUSD") {
+		t.Fatalf("gw config doit dire la source et ce qu'elle ne publie pas :\n%s", out)
+	}
+}
+
+func TestUnknownHistorySourceRefusesToStart(t *testing.T) {
+	isolate(t)
+	t.Setenv("GW_HISTORY_SOURCE", "nawak")
+	_, err := capture(t, func() error { return run([]string{"migrate"}) })
+	if err == nil || !strings.Contains(err.Error(), "history.source") {
+		t.Fatalf("une source inconnue doit refuser le démarrage en nommant la clé : %v", err)
+	}
+}
+
+// --- Import CSV de bout en bout -------------------------------------------
+
+func TestImportCSVThenRefuseToOverwrite(t *testing.T) {
+	isolate(t)
+	csv := filepath.Join(t.TempDir(), "eurusd.csv")
+	var b strings.Builder
+	b.WriteString("Date,Open,High,Low,Close\n")
+	for i := 0; i < 90; i++ {
+		fmt.Fprintf(&b, "2024-01-02 10:%02d:00,1.1,1.2,1.0,1.15\n", i%60)
+	}
+	// 90 lignes sur 60 minutes : 30 doublons, signalés.
+	if err := os.WriteFile(csv, []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := capture(t, func() error { return run([]string{"import", csv, "--symbol", "eurusd"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "60 bougies importées") || !strings.Contains(out, "30 horodatage(s) en double") ||
+		!strings.Contains(out, "IMPORTÉES") {
+		t.Fatalf("sortie :\n%s", out)
+	}
+	_, err = capture(t, func() error { return run([]string{"import", "--symbol", "EURUSD", csv}) })
+	if err == nil || !strings.Contains(err.Error(), "--replace") {
+		t.Fatalf("une année présente ne doit pas être écrasée sans --replace : %v", err)
+	}
+	if _, err := capture(t, func() error {
+		return run([]string{"import", "--symbol", "EURUSD", "--replace", csv})
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestImportRefusesUnknownTimeZone(t *testing.T) {
+	isolate(t)
+	_, err := capture(t, func() error {
+		return run([]string{"import", "--symbol", "EURUSD", "--tz", "Mars/Olympus", "x.csv"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "Mars/Olympus") {
+		t.Fatalf("fuseau inconnu accepté : %v", err)
+	}
+}
+
+// --- Petites sorties -------------------------------------------------------
+
+func TestRunsSaysWhenThereIsNothing(t *testing.T) {
+	isolate(t)
+	out, err := capture(t, func() error { return run([]string{"runs"}) })
+	if err != nil || !strings.Contains(out, "Aucun entraînement") {
+		t.Fatalf("gw runs sans run : %q (%v)", out, err)
+	}
+}
+
+func TestNewsStatusWorksWithoutNetwork(t *testing.T) {
+	isolate(t)
+	out, err := capture(t, func() error { return run([]string{"news"}) })
+	if err != nil || !strings.Contains(out, "Calendrier économique") {
+		t.Fatalf("gw news : %q (%v)", out, err)
+	}
+	if _, err := capture(t, func() error { return run([]string{"news", "nawak"}) }); err == nil {
+		t.Fatal("une action inconnue doit être refusée")
+	}
+	if _, err := capture(t, func() error { return run([]string{"news", "import"}) }); err == nil {
+		t.Fatal("gw news import sans fichier doit être refusé")
+	}
+}
+
+func TestRatioAndTruncate(t *testing.T) {
+	if ratio(math.NaN()) != "—" || ratio(math.Inf(1)) != "∞" || ratio(1.234) != "1.23" {
+		t.Fatal("ratio : NaN → —, +∞ → ∞, sinon deux décimales")
+	}
+	if truncate("abcdef", 4) != "abc…" || truncate("abc", 4) != "abc" || truncate("éèàç", 3) != "éè…" {
+		t.Fatal("truncate doit couper en runes, pas en octets")
+	}
+}
+
+func TestSavedConfigPointsToAnExistingOption(t *testing.T) {
+	isolate(t)
+	cfg, err := config.Load(config.DefaultPaths())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(cfg.Paths.ConfigFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "gw config --default") {
+		t.Fatalf("l'en-tête du fichier réécrit doit citer une option qui existe :\n%s", raw[:200])
+	}
+	if _, err := capture(t, func() error { return runConfig([]string{"--default"}) }); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWinRateWithoutTradesIsNotZero(t *testing.T) {
+	if winRate(0, 0) != "—" {
+		t.Fatal("sans trade, le taux de gain n'existe pas : « — », pas « 0 % »")
+	}
+	if winRate(4, 25) != "25.0 %" {
+		t.Fatalf("winRate(4, 25) = %q", winRate(4, 25))
 	}
 }
