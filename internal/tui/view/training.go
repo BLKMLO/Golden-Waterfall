@@ -484,6 +484,18 @@ func (v *Training) renderAggregate(res *training.Result, took time.Duration, wid
 		note += " · " + "PAS de modèle de production"
 	}
 	body += "\n" + th.Muted.Render(component.Truncate(note, width-6))
+	// La CAUSE d'un échec, pas seulement le constat : sans elle, cinq plis
+	// en échec se lisaient « 0 trade », sans un mot de plus.
+	if res.FinalErr != "" {
+		body += "\n" + th.Negative.Render(component.Truncate("✗ modèle de production : "+res.FinalErr, width-6))
+	}
+	for _, f := range res.Folds {
+		if f.Err != "" {
+			body += "\n" + th.Negative.Render(component.Truncate(
+				fmt.Sprintf("✗ pli %d : %s", f.Index, f.Err), width-6))
+			break
+		}
+	}
 	if !s.CostsModelled {
 		body += "\n" + th.Warning.Render("⚠ Un actif au moins n'a pas de côté ask : les coûts sont incomplets.")
 	}

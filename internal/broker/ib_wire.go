@@ -243,7 +243,5 @@ func (r *ibFields) decimal() (float64, bool) {
 	return v, true
 }
 
-func (r *ibFields) bool() bool { return r.int() != 0 }
-
 // ibIsUnset : une valeur double « non renseignée » relue depuis TWS.
 func ibIsUnset(v float64) bool { return v >= 1e300 || math.IsInf(v, 0) || math.IsNaN(v) }

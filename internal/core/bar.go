@@ -64,6 +64,19 @@ func (s Series) Lows() []float64    { return s.column(func(b Bar) float64 { retu
 func (s Series) Opens() []float64   { return s.column(func(b Bar) float64 { return b.BidOpen }) }
 func (s Series) Volumes() []float64 { return s.column(func(b Bar) float64 { return b.Volume }) }
 
+// HasVolume dit si la série porte un volume MESURÉ : au moins une bougie
+// dont le volume est un nombre strictement positif. Un volume NaN veut
+// dire « non publié par la source » ; une série entièrement à zéro n'en
+// dit pas plus.
+func HasVolume(s Series) bool {
+	for _, b := range s {
+		if b.Volume > 0 { // faux pour NaN
+			return true
+		}
+	}
+	return false
+}
+
 func (s Series) column(pick func(Bar) float64) []float64 {
 	out := make([]float64, len(s))
 	for i, b := range s {

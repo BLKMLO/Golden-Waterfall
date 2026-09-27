@@ -211,12 +211,38 @@ clôture de fin de semaine, sorties sur signal, AUC affichée « — ».
 Les chiffres de P&L de cet essai ne mesurent rien : la série contenait
 des tendances fabriquées exprès.
 
-**Jamais mesuré** : Troglodyte (v1_0 comme v1_1) sur un historique réel. Tenté pendant le
-développement de v0.7.0 : Dukascopy a limité le débit au point de
-rendre le téléchargement impraticable depuis le bac à sable
-(4 jours sur 260 en un quart d'heure). À faire avant toute conclusion :
-`gw train` sur votre historique, en comparant avec `colibri_v1_2`
-(`gw runs`).
+**Première mesure sur historique réel (v0.7.3, 27 septembre 2026).**
+Dukascopy limitant le débit du bac à sable (4 jours sur 260 en un quart
+d'heure en v0.7.0), l'historique vient de la source **FXCM** : EURUSD,
+GBPUSD et USDJPY, M1 de janvier 2012 au 18 septembre 2026, bid et ask,
+sans volume, avec les semaines manquantes de FXCM (1 en 2023, 4 en 2024,
+4 en 2025, 15 en 2026). `gw train EURUSD GBPUSD USDJPY`, configuration
+par défaut : H4, 5 plis (tests du 11/05/2019 au 18/09/2026), capital
+10 000 USD, 0,5 % de l'équité risquée par trade, graine 42. Agrégat
+OUT-OF-SAMPLE tel qu'écrit dans `run.json` :
+
+| | trades | gagnants | P&L net (USD) | profit factor | SQN |
+|---|---|---|---|---|---|
+| `troglodyte_v1_0` | 62 | 8 (12,9 %) | −751,74 | 0,71 | −0,88 |
+| `troglodyte_v1_1` | 60 | 19 (31,7 %) | +141,52 | 1,13 | 0,33 |
+
+SQN = √n × moyenne des P&L / écart-type des P&L (`backtest/stats.go`).
+Sharpe et drawdown agrégés : non mesurés (NaN, faute de courbe commune
+aux paires).
+
+Par paire, v1_1 : EURUSD 17 trades, −219,99 (PF 0,42) ; GBPUSD 20,
++162,72 (PF 1,46) ; USDJPY 23, +198,79 (PF 1,58). v1_0 : EURUSD 14,
++55,61 (PF 1,10) ; GBPUSD 22, −516,34 (PF 0,45) ; USDJPY 26, −291,02
+(PF 0,73).
+
+Ce que ces chiffres permettent de dire, et rien de plus : sur ces trois
+paires et cette période, v1_1 fait mieux que v1_0 à l'agrégat. **Ils ne
+permettent pas de dire que v1_1 gagne** : soixante trades, un SQN de 0,33
+et une paire sur trois en perte sont compatibles avec le hasard. Le
+filtre d'actualités n'a rien filtré (aucun calendrier archivé pour ces
+années : 60 entrées « hors calendrier »). Colibri n'a pas pu être mesuré
+sur ces données : FXCM ne publie pas de volume, et ses révisions en
+exigent un.
 
 ## Limites connues de v1_0
 

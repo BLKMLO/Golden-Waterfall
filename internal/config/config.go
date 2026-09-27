@@ -132,10 +132,15 @@ type BacktestConfig struct {
 
 // HistoryConfig : données historiques M1.
 type HistoryConfig struct {
+	// Source : fournisseur de l'historique (clé du registre data.Source :
+	// « dukascopy », « fxcm »). Vérifiée dans app.New : config ne connaît
+	// pas le registre.
+	Source      string   `yaml:"source"`
 	StartYear   int      `yaml:"start_year"`
 	Instruments []string `yaml:"instruments"`
 	// Concurrency : nombre de téléchargements simultanés. Au-delà de 3-4,
 	// Dukascopy répond 429 (limite de débit) — la valeur basse est voulue.
+	// FXCM n'a montré aucune limite, mais rien ne la garantit.
 	Concurrency int `yaml:"concurrency"`
 }
 
@@ -209,7 +214,7 @@ func Default() Config {
 		Costs:    CostsConfig{CommissionPerUnit: 0},
 		Backtest: BacktestConfig{InitialCapital: 10000, Leverage: 30, AccountCurrency: "USD"},
 		History: HistoryConfig{
-			StartYear: 2010, Concurrency: 3,
+			Source: "dukascopy", StartYear: 2010, Concurrency: 3,
 			Instruments: []string{
 				"EURUSD", "GBPUSD", "USDJPY", "USDCHF", "USDCAD", "AUDUSD", "NZDUSD",
 				"EURGBP", "EURJPY", "EURCHF", "EURAUD", "EURCAD", "EURNZD",
@@ -298,6 +303,7 @@ func envBindings() []envBinding {
 		{"GW_TIMEFRAME", "training.timeframe", func(c *Config, v string) error { c.Training.Timeframe = v; return nil }},
 		{"GW_SEED", "training.seed", func(c *Config, v string) error { return setInt64(v, &c.Training.Seed) }},
 		{"GW_NEWS", "news.enabled", func(c *Config, v string) error { return setBool(v, &c.News.Enabled) }},
+		{"GW_HISTORY_SOURCE", "history.source", func(c *Config, v string) error { c.History.Source = v; return nil }},
 	}
 }
 
@@ -430,6 +436,9 @@ func (c Config) Validate() error {
 		add("backtest.account_currency doit être un code ISO de 3 lettres (reçu %q)",
 			c.Backtest.AccountCurrency)
 	}
+	if strings.TrimSpace(c.History.Source) == "" {
+		add("history.source est vide (« dukascopy » ou « fxcm »)")
+	}
 	if c.History.StartYear < 1990 || c.History.StartYear > 2100 {
 		add("history.start_year invraisemblable : %d", c.History.StartYear)
 	}
@@ -437,7 +446,7 @@ func (c Config) Validate() error {
 		add("history.instruments est vide : rien à télécharger ni à backtester")
 	}
 	if c.History.Concurrency < 1 || c.History.Concurrency > 16 {
-		add("history.concurrency doit être dans [1, 16] (Dukascopy répond 429 au-delà de 3-4)")
+		add("history.concurrency doit être dans [1, 16] (Dukascopy répond 429 au-delà de 3-4) (reçu %d)", c.History.Concurrency)
 	}
 	if c.Training.Folds < 2 {
 		add("training.folds doit être >= 2 (un seul pli n'est pas un walk-forward)")
@@ -497,7 +506,7 @@ func (c Config) Save() error {
 		return err
 	}
 	header := "# Configuration de Golden Waterfall — réécrite depuis l'interface.\n" +
-		"# Le modèle commenté d'origine est consultable avec `gw config --print-default`.\n"
+		"# Le modèle commenté d'origine est consultable avec `gw config --default`.\n"
 	return os.WriteFile(c.Paths.ConfigFile(), append([]byte(header), raw...), 0o644)
 }
 

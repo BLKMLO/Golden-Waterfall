@@ -21,6 +21,7 @@ type downloadProgressMsg data.DownloadProgress
 type downloadDoneMsg struct {
 	symbol string
 	bars   int
+	failed int // années en échec (les suivantes ont été tentées)
 	err    error
 }
 
@@ -30,16 +31,20 @@ type downloadDoneMsg struct {
 // Les chiffres affichés proviennent de l'inventaire RÉEL des fichiers
 // (en-têtes lus sur disque) : aucune estimation, aucune projection.
 type Data struct {
-	deps    Deps
-	rows    []data.Inventory
-	cursor  int
-	loading bool
+	deps   Deps
+	rows   []data.Inventory
+	cursor int
 
 	// span : période demandée au prochain téléchargement. Télécharger
 	// vingt ans pour éprouver une idée sur un mois n'a aucun sens, et
 	// c'est pourtant tout ce que l'écran savait faire.
 	span     data.YearRange
 	spanEdge int // 0 = borne de début sélectionnée, 1 = borne de fin
+
+	// source : le fournisseur configuré (history.source). Il dit quelles
+	// paires il publie et depuis quand — l'écran le montre avant qu'on
+	// lance une heure de requêtes vouées au 404.
+	source data.Source
 
 	mu        sync.Mutex
 	active    bool
@@ -51,7 +56,11 @@ type Data struct {
 
 // NewData construit l'écran des données.
 func NewData(deps Deps) Model {
-	return &Data{deps: deps, span: data.FullRange(deps.App.Config.History.StartYear)}
+	v := &Data{deps: deps, span: data.FullRange(deps.App.Config.History.StartYear)}
+	// app.New a déjà refusé une source inconnue : l'erreur ne peut venir
+	// que d'une configuration construite à la main (tests).
+	v.source, _ = data.NewSource(deps.App.Config.History.Source, data.SourceOptions{})
+	return v
 }
 
 func (v *Data) Title() string { return "Données" }
@@ -136,9 +145,13 @@ func (v *Data) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 		v.mu.Unlock()
 		v.refresh()
-		if msg.err != nil {
+		switch {
+		case msg.failed > 0:
+			v.deps.Status(fmt.Sprintf("%s bougies écrites · %d année(s) en échec : %s",
+				component.Count(msg.bars), msg.failed, msg.err.Error()))
+		case msg.err != nil:
 			v.deps.Status("téléchargement interrompu : " + msg.err.Error())
-		} else {
+		default:
 			v.deps.Status(fmt.Sprintf("%s : %s bougies écrites", msg.symbol, component.Count(msg.bars)))
 		}
 
@@ -182,6 +195,18 @@ func (v *Data) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 	}
 	return v, nil
+}
+
+// mixedCount compte les paires dont l'historique vient de plusieurs
+// sources.
+func (v *Data) mixedCount() int {
+	n := 0
+	for _, inv := range v.rows {
+		if len(inv.Sources) > 1 {
+			n++
+		}
+	}
+	return n
 }
 
 // legacyCount compte les années restées dans l'ancien format.
@@ -244,9 +269,20 @@ func (v *Data) startDownload(all bool) tea.Cmd {
 	} else if v.cursor < len(v.rows) {
 		symbols = append(symbols, v.rows[v.cursor].Symbol)
 	}
+	var unserved []string
+	if v.source != nil {
+		symbols, unserved = data.ServedSymbols(v.source, symbols)
+	}
 	if len(symbols) == 0 {
 		v.mu.Unlock()
+		if len(unserved) > 0 {
+			v.deps.Status(fmt.Sprintf("%s ne publie pas %s", v.sourceLabel(), strings.Join(unserved, " ")))
+		}
 		return nil
+	}
+	if len(unserved) > 0 {
+		v.deps.Status(fmt.Sprintf("%s ne publie pas %s : paire(s) sautée(s)",
+			v.sourceLabel(), strings.Join(unserved, " ")))
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	v.active, v.cancel, v.startedAt = true, cancel, time.Now()
@@ -259,8 +295,13 @@ func (v *Data) startDownload(all bool) tea.Cmd {
 	span := v.span.Normalize()
 
 	return func() tea.Msg {
-		dl := data.NewDownloader(cfg.Paths.HistoryDir(), cfg.History.Concurrency, logger)
-		total := 0
+		dl, err := data.NewDownloader(cfg.History.Source, cfg.Paths.HistoryDir(), cfg.History.Concurrency, logger)
+		if err != nil {
+			emit(downloadDoneMsg{err: err})
+			return nil
+		}
+		first := dl.Source.Info().FirstYear
+		total, failed := 0, 0
 		endYear := time.Now().UTC().Year()
 		var lastErr error
 		var lastSymbol string
@@ -268,31 +309,47 @@ func (v *Data) startDownload(all bool) tea.Cmd {
 		for _, sym := range symbols {
 			lastSymbol = sym
 			for _, year := range span.Years() {
-				select {
-				case <-ctx.Done():
+				if ctx.Err() != nil {
 					lastErr = ctx.Err()
 					break loop
-				default:
 				}
 				// Une année COMPLÈTE n'est pas retéléchargée. Une année
 				// présente mais trouée l'est, ainsi que l'année courante
-				// (incomplète par nature).
-				if !data.NeedsDownload(cfg.Paths.HistoryDir(), sym, year, endYear) {
+				// (incomplète par nature). Une année antérieure à la
+				// source n'est pas demandée : elle ne rendrait que des 404.
+				if year < first || !data.NeedsDownload(cfg.Paths.HistoryDir(), sym, year, endYear) {
 					continue
 				}
 				n, err := dl.DownloadYear(ctx, sym, year, func(p data.DownloadProgress) {
 					emit(downloadProgressMsg(p))
 				})
 				if err != nil {
-					lastErr = err
-					break loop
+					if ctx.Err() != nil {
+						lastErr = ctx.Err()
+						break loop
+					}
+					// Une année en échec n'arrête pas les suivantes : « D »
+					// lancé pour la nuit ne doit pas s'arrêter à la
+					// première coupure. L'erreur reste affichée.
+					failed++
+					lastErr = fmt.Errorf("%s %d : %w", sym, year, err)
+					logger.Warn("année non téléchargée", "symbole", sym, "annee", year, "erreur", err)
+					continue
 				}
 				total += n
 			}
 		}
-		emit(downloadDoneMsg{symbol: lastSymbol, bars: total, err: lastErr})
+		emit(downloadDoneMsg{symbol: lastSymbol, bars: total, failed: failed, err: lastErr})
 		return nil
 	}
+}
+
+// sourceLabel : nom lisible de la source configurée.
+func (v *Data) sourceLabel() string {
+	if v.source == nil {
+		return v.deps.App.Config.History.Source
+	}
+	return v.source.Info().Label
 }
 
 func (v *Data) Render(width, height int) string {
@@ -313,11 +370,16 @@ func (v *Data) Render(width, height int) string {
 		{Title: "Classe", Width: 9, Priority: 3},
 		{Title: "Années", Width: 14, Priority: 2},
 		{Title: "Bougies M1", Width: 14, Right: true, Priority: 1},
-		{Title: "Format", Width: 9, Priority: 4},
+		{Title: "Source", Width: 10, Priority: 4},
 		{Title: "Manquant", Width: 26, Flex: true, Min: 10},
 	}
 	endYear := time.Now().UTC().Year()
 	startYear := v.deps.App.Config.History.StartYear
+	if v.source != nil {
+		// Une année que la source ne sert pas n'est pas « à télécharger » :
+		// la compter manquante l'y laisserait pour toujours.
+		startYear = max(startYear, v.source.Info().FirstYear)
+	}
 	rows := make([][]string, 0, len(v.rows))
 	for _, inv := range v.rows {
 		class := component.Dash
@@ -336,13 +398,23 @@ func (v *Data) Render(width, height int) string {
 		style := th.Warning
 		if missing == "complet" {
 			style = th.Positive
+		} else if v.source != nil && !v.source.Serves(inv.Symbol) {
+			// Ce qui manque ne viendra pas de la source configurée : le
+			// dire ici plutôt qu'au moment où « d » ne fait rien.
+			missing = "non publié (" + v.source.Info().Label + ")"
 		}
-		// Le format se lit, il ne se devine pas : un .gwb reste lisible
-		// par ce programme mais par AUCUN autre, et c'est précisément ce
-		// qu'on a cessé d'écrire.
-		format := th.Muted.Render("parquet")
-		if n := len(inv.Legacy); n > 0 {
-			format = th.Warning.Render(fmt.Sprintf("%d .gwb", n))
+		// La provenance se lit, elle ne se devine pas. Un .gwb reste
+		// lisible par ce programme mais par AUCUN autre ; deux sources
+		// sur une même paire, ce sont des volumes et des spreads qui ne
+		// se comparent pas d'une année à l'autre.
+		format := component.Dash
+		switch {
+		case len(inv.Legacy) > 0:
+			format = th.Warning.Render(fmt.Sprintf("%d .gwb", len(inv.Legacy)))
+		case len(inv.Sources) > 1:
+			format = th.Warning.Render(fmt.Sprintf("%d sources", len(inv.Sources)))
+		case len(inv.Sources) == 1:
+			format = th.Muted.Render(inv.Sources[0])
 		}
 		rows = append(rows, []string{inv.Symbol, class, years, bars, format, style.Render(missing)})
 	}
@@ -354,6 +426,11 @@ func (v *Data) Render(width, height int) string {
 		footer += "\n" + th.Warning.Render(component.Truncate(fmt.Sprintf(
 			"⚠ %d année(s) encore au format .gwb, lisible par ce seul programme. "+
 				"« m » les convertit en Parquet.", n), width))
+	}
+	if n := v.mixedCount(); n > 0 {
+		footer += "\n" + th.Warning.Render(component.Truncate(fmt.Sprintf(
+			"⚠ %d paire(s) mêlent plusieurs sources : volumes et spreads ne se comparent pas "+
+				"d'une année à l'autre.", n), width))
 	}
 	footer += "\n" + th.Muted.Render(component.Truncate(
 		"Dossier : "+v.deps.App.Config.Paths.HistoryDir(), width))
@@ -382,10 +459,17 @@ func (v *Data) renderHeader(width int, compact bool) string {
 	if !active {
 		// Une seule phrase par ligne, sans coupure manuelle : le panneau
 		// habille le texte à la largeur réelle.
-		source := "Source : Dukascopy (M1 bid ET ask — c'est le côté ask qui permet de MESURER le spread). " +
-			"Concurrence basse volontaire : au-delà de 3-4 requêtes simultanées, Dukascopy répond 429."
+		source, short := "Source : "+v.sourceLabel(), "Source : "+v.sourceLabel()
+		if v.source != nil {
+			info := v.source.Info()
+			source += " (history.source) — " + info.Note
+			short += fmt.Sprintf(" depuis %d, M1 bid et ask", info.FirstYear)
+			if !info.HasVolume {
+				short += ", sans volume"
+			}
+		}
 		if compact {
-			source = component.Truncate("Source : Dukascopy, M1 bid et ask (spread mesuré).", component.PanelContent(width))
+			source = component.Truncate(short+".", component.PanelContent(width))
 		}
 		body := v.renderSpan(width) + "\n" + th.Muted.Render(source)
 		if lastErr != "" {
@@ -395,15 +479,19 @@ func (v *Data) renderHeader(width int, compact bool) string {
 	}
 
 	ratio := 0.0
-	if p.DaysTotal > 0 {
-		ratio = float64(p.DaysDone) / float64(p.DaysTotal)
+	if p.UnitsTotal > 0 {
+		ratio = float64(p.UnitsDone) / float64(p.UnitsTotal)
 	}
-	bar := component.ProgressBar(ratio, width-28, th)
-	line := fmt.Sprintf("%s %s %d/%d jours", bar, th.Accent.Render(fmt.Sprintf("%3.0f %%", ratio*100)),
-		p.DaysDone, p.DaysTotal)
-	detail := fmt.Sprintf("%s %d sur %s · %s · %s bougies · %d jours sans donnée · %d échecs · %s",
-		p.Symbol, p.Year, v.span, p.CurrentStep, component.Count(p.Bars), p.Skipped, p.Failures,
-		component.Duration(time.Since(started)))
+	unit := p.Unit
+	if unit == "" {
+		unit = "unités"
+	}
+	bar := component.ProgressBar(ratio, width-30, th)
+	line := fmt.Sprintf("%s %s %d/%d %s", bar, th.Accent.Render(fmt.Sprintf("%3.0f %%", ratio*100)),
+		p.UnitsDone, p.UnitsTotal, unit)
+	detail := fmt.Sprintf("%s %d sur %s · %s · %s · %s bougies · %d %s sans donnée · %d échecs · %s",
+		p.Symbol, p.Year, v.span, v.sourceLabel(), p.CurrentStep, component.Count(p.Bars), p.Skipped, unit,
+		p.Failures, component.Duration(time.Since(started)))
 	return component.Panel(th, "Téléchargement en cours",
 		line+"\n"+th.Muted.Render(component.Truncate(detail, component.PanelContent(width))), width)
 }

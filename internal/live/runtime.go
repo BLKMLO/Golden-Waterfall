@@ -44,6 +44,10 @@ type SymbolState struct {
 	// périmé. Faux tant que la passerelle n'a pas été connectée — la
 	// chauffe se fait à la connexion.
 	HistoryOK bool
+	// VolumeOK : la stratégie a le volume dont elle dépend (passerelle qui
+	// en publie ET historique qui en porte), ou n'en dépend pas. Faux
+	// tant que la passerelle n'a pas été connectée.
+	VolumeOK bool
 	// Notice porte l'anomalie éventuelle (modèle absent, historique
 	// périmé…). Les deux sont distincts : une paire peut avoir son modèle
 	// et un historique local incomplet, ou l'inverse, et confondre les
@@ -65,8 +69,10 @@ type Snapshot struct {
 	// dit, sans quoi l'absence d'ordre passerait pour de la prudence du
 	// modèle.
 	SupportsBracket bool
-	Mode            string
-	Message         string
+	// UsesVolume : la stratégie dépend du volume (cf. SymbolState.VolumeOK).
+	UsesVolume bool
+	Mode       string
+	Message    string
 
 	StrategyName  string
 	StrategyReady bool
@@ -109,6 +115,7 @@ type Runtime struct {
 	quotes   map[string]*Quote
 	modelOK  map[string]bool
 	histOK   map[string]bool
+	volumeOK map[string]bool
 	notices  map[string]string
 	message  string
 	cancel   context.CancelFunc
@@ -128,11 +135,12 @@ func NewRuntime(cfg config.Config, bus *core.Bus, logger *slog.Logger,
 	store *storage.Store, rm *risk.Manager) *Runtime {
 	return &Runtime{
 		cfg: cfg, bus: bus, logger: logger, store: store, risk: rm,
-		quotes:  map[string]*Quote{},
-		modelOK: map[string]bool{},
-		histOK:  map[string]bool{},
-		notices: map[string]string{},
-		message: "non connecté",
+		quotes:   map[string]*Quote{},
+		modelOK:  map[string]bool{},
+		histOK:   map[string]bool{},
+		volumeOK: map[string]bool{},
+		notices:  map[string]string{},
+		message:  "non connecté",
 	}
 }
 
@@ -221,7 +229,10 @@ func (r *Runtime) connect(ctx context.Context, account string) error {
 	// les confondre conduit à chercher le problème au mauvais endroit.
 	modelOK := map[string]bool{}
 	histOK := map[string]bool{}
+	volumeOK := map[string]bool{}
 	notices := map[string]string{}
+	needsVolume := strat.Describe().UsesVolume
+	gwVolume := gw.Info().SuppliesVolume
 	addNotice := func(sym, msg string) {
 		if notices[sym] == "" {
 			notices[sym] = msg
@@ -247,6 +258,22 @@ func (r *Runtime) connect(ctx context.Context, account string) error {
 					addNotice(sym, fmt.Sprintf("historique périmé de %d jours — le retélécharger",
 						int(age.Hours()/24)))
 				}
+			}
+		}
+
+		// Le volume : une stratégie qui en dépend s'abstient sur une bougie
+		// sans volume mesuré. Le dire ici, plutôt qu'un silence de marché.
+		volumeOK[sym] = true
+		if needsVolume {
+			switch {
+			case !gwVolume:
+				volumeOK[sym] = false
+				addNotice(sym, fmt.Sprintf("%s ne publie pas de volume et %s en exige un : aucune décision",
+					gw.Info().Label, r.cfg.Strategy.Name))
+			case histErr == nil && !core.HasVolume(series):
+				volumeOK[sym] = false
+				addNotice(sym, fmt.Sprintf("historique sans volume mesuré (source FXCM ?) et %s en exige un",
+					r.cfg.Strategy.Name))
 			}
 		}
 
@@ -279,7 +306,7 @@ func (r *Runtime) connect(ctx context.Context, account string) error {
 	r.mu.Lock()
 	r.gateway, r.engine, r.strategy = gw, engine, strat
 	r.symbols = symbols
-	r.modelOK, r.histOK, r.notices = modelOK, histOK, notices
+	r.modelOK, r.histOK, r.volumeOK, r.notices = modelOK, histOK, volumeOK, notices
 	r.cancel = cancel
 	r.message = "connecté"
 	r.mu.Unlock()
@@ -474,6 +501,10 @@ func (r *Runtime) Snapshot() Snapshot {
 	for k, v := range r.histOK {
 		histOK[k] = v
 	}
+	volumeOK := make(map[string]bool, len(r.volumeOK))
+	for k, v := range r.volumeOK {
+		volumeOK[k] = v
+	}
 	notices := make(map[string]string, len(r.notices))
 	for k, v := range r.notices {
 		notices[k] = v
@@ -509,8 +540,10 @@ func (r *Runtime) Snapshot() Snapshot {
 		snap.StrategyName = d.Name
 		snap.StrategyReady, snap.StrategyWhy = strat.Ready()
 		snap.NewsActive = d.UsesNews && r.news.Enabled()
+		snap.UsesVolume = d.UsesVolume
 	} else if probe, err := strategy.New(r.cfg.Strategy.Name); err == nil {
 		snap.NewsActive = probe.Describe().UsesNews && r.news.Enabled()
+		snap.UsesVolume = probe.Describe().UsesVolume
 	}
 	if snap.NewsActive {
 		snap.NewsStatus = r.news.Status()
@@ -541,6 +574,7 @@ func (r *Runtime) Snapshot() Snapshot {
 			Notice:      notices[sym],
 			ModelLoaded: modelOK[sym],
 			HistoryOK:   histOK[sym],
+			VolumeOK:    volumeOK[sym],
 		}
 		st.Symbol = sym
 		if engine != nil {

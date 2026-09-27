@@ -7,11 +7,10 @@ import (
 	"strings"
 )
 
-// Instrument décrit la correspondance entre un symbole du projet et un
-// instrument Dukascopy.
+// Instrument décrit un symbole du projet. Ce qui est propre à un
+// fournisseur d'historique (identifiant, disponibilité) vit dans SA
+// source, pas ici : ajouter une source ne touche pas au catalogue.
 type Instrument struct {
-	// DukascopyID : identifiant dans les URLs du flux historique.
-	DukascopyID string
 	// Decimals : les prix sont publiés en ENTIERS ; prix réel = entier / 10^Decimals.
 	Decimals int
 	// Class sert uniquement à l'affichage et au regroupement.
@@ -36,47 +35,47 @@ func (i Instrument) Scale() int32 { return int32(math.Pow10(i.Decimals)) }
 // Forex : 5 décimales (3 pour les paires JPY). Métaux et indices : 3.
 var Instruments = map[string]Instrument{
 	// Majeures
-	"EURUSD": {"EURUSD", 5, "majeure", "EUR", "USD"},
-	"GBPUSD": {"GBPUSD", 5, "majeure", "GBP", "USD"},
-	"USDJPY": {"USDJPY", 3, "majeure", "USD", "JPY"},
-	"USDCHF": {"USDCHF", 5, "majeure", "USD", "CHF"},
-	"USDCAD": {"USDCAD", 5, "majeure", "USD", "CAD"},
-	"AUDUSD": {"AUDUSD", 5, "majeure", "AUD", "USD"},
-	"NZDUSD": {"NZDUSD", 5, "majeure", "NZD", "USD"},
+	"EURUSD": {5, "majeure", "EUR", "USD"},
+	"GBPUSD": {5, "majeure", "GBP", "USD"},
+	"USDJPY": {3, "majeure", "USD", "JPY"},
+	"USDCHF": {5, "majeure", "USD", "CHF"},
+	"USDCAD": {5, "majeure", "USD", "CAD"},
+	"AUDUSD": {5, "majeure", "AUD", "USD"},
+	"NZDUSD": {5, "majeure", "NZD", "USD"},
 	// Croisées EUR
-	"EURGBP": {"EURGBP", 5, "croisée", "EUR", "GBP"},
-	"EURJPY": {"EURJPY", 3, "croisée", "EUR", "JPY"},
-	"EURCHF": {"EURCHF", 5, "croisée", "EUR", "CHF"},
-	"EURAUD": {"EURAUD", 5, "croisée", "EUR", "AUD"},
-	"EURCAD": {"EURCAD", 5, "croisée", "EUR", "CAD"},
-	"EURNZD": {"EURNZD", 5, "croisée", "EUR", "NZD"},
+	"EURGBP": {5, "croisée", "EUR", "GBP"},
+	"EURJPY": {3, "croisée", "EUR", "JPY"},
+	"EURCHF": {5, "croisée", "EUR", "CHF"},
+	"EURAUD": {5, "croisée", "EUR", "AUD"},
+	"EURCAD": {5, "croisée", "EUR", "CAD"},
+	"EURNZD": {5, "croisée", "EUR", "NZD"},
 	// Croisées GBP
-	"GBPJPY": {"GBPJPY", 3, "croisée", "GBP", "JPY"},
-	"GBPCHF": {"GBPCHF", 5, "croisée", "GBP", "CHF"},
-	"GBPAUD": {"GBPAUD", 5, "croisée", "GBP", "AUD"},
-	"GBPCAD": {"GBPCAD", 5, "croisée", "GBP", "CAD"},
-	"GBPNZD": {"GBPNZD", 5, "croisée", "GBP", "NZD"},
+	"GBPJPY": {3, "croisée", "GBP", "JPY"},
+	"GBPCHF": {5, "croisée", "GBP", "CHF"},
+	"GBPAUD": {5, "croisée", "GBP", "AUD"},
+	"GBPCAD": {5, "croisée", "GBP", "CAD"},
+	"GBPNZD": {5, "croisée", "GBP", "NZD"},
 	// Autres croisées
-	"AUDJPY": {"AUDJPY", 3, "croisée", "AUD", "JPY"},
-	"AUDCHF": {"AUDCHF", 5, "croisée", "AUD", "CHF"},
-	"AUDCAD": {"AUDCAD", 5, "croisée", "AUD", "CAD"},
-	"AUDNZD": {"AUDNZD", 5, "croisée", "AUD", "NZD"},
-	"NZDJPY": {"NZDJPY", 3, "croisée", "NZD", "JPY"},
-	"NZDCHF": {"NZDCHF", 5, "croisée", "NZD", "CHF"},
-	"NZDCAD": {"NZDCAD", 5, "croisée", "NZD", "CAD"},
-	"CADJPY": {"CADJPY", 3, "croisée", "CAD", "JPY"},
-	"CADCHF": {"CADCHF", 5, "croisée", "CAD", "CHF"},
-	"CHFJPY": {"CHFJPY", 3, "croisée", "CHF", "JPY"},
+	"AUDJPY": {3, "croisée", "AUD", "JPY"},
+	"AUDCHF": {5, "croisée", "AUD", "CHF"},
+	"AUDCAD": {5, "croisée", "AUD", "CAD"},
+	"AUDNZD": {5, "croisée", "AUD", "NZD"},
+	"NZDJPY": {3, "croisée", "NZD", "JPY"},
+	"NZDCHF": {5, "croisée", "NZD", "CHF"},
+	"NZDCAD": {5, "croisée", "NZD", "CAD"},
+	"CADJPY": {3, "croisée", "CAD", "JPY"},
+	"CADCHF": {5, "croisée", "CAD", "CHF"},
+	"CHFJPY": {3, "croisée", "CHF", "JPY"},
 	// Métaux
-	"XAUUSD": {"XAUUSD", 3, "métal", "XAU", "USD"},
-	"XAGUSD": {"XAGUSD", 3, "métal", "XAG", "USD"},
-	// Indices (historique Dukascopy souvent plus court que le forex)
-	"US500":  {"USA500IDXUSD", 3, "indice", "US500", "USD"},
-	"US30":   {"USA30IDXUSD", 3, "indice", "US30", "USD"},
-	"NAS100": {"USATECHIDXUSD", 3, "indice", "NAS100", "USD"},
-	"DE40":   {"DEUIDXEUR", 3, "indice", "DE40", "EUR"},
-	"UK100":  {"GBRIDXGBP", 3, "indice", "UK100", "GBP"},
-	"JP225":  {"JPNIDXJPY", 3, "indice", "JP225", "JPY"},
+	"XAUUSD": {3, "métal", "XAU", "USD"},
+	"XAGUSD": {3, "métal", "XAG", "USD"},
+	// Indices (historique souvent plus court que le forex)
+	"US500":  {3, "indice", "US500", "USD"},
+	"US30":   {3, "indice", "US30", "USD"},
+	"NAS100": {3, "indice", "NAS100", "USD"},
+	"DE40":   {3, "indice", "DE40", "EUR"},
+	"UK100":  {3, "indice", "UK100", "GBP"},
+	"JP225":  {3, "indice", "JP225", "JPY"},
 }
 
 // LookupInstrument renvoie la fiche d'un symbole (insensible à la casse).

@@ -211,19 +211,20 @@ func TestResampleSkipsEmptyBuckets(t *testing.T) {
 }
 
 func TestCandleURLUsesZeroBasedMonth(t *testing.T) {
-	inst, err := LookupInstrument("EURUSD")
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := CandleURL(inst, time.Date(2024, time.January, 3, 0, 0, 0, 0, time.UTC), SideBid)
+	got := CandleURL("EURUSD", time.Date(2024, time.January, 3, 0, 0, 0, 0, time.UTC), SideBid)
 	want := BaseURL + "/EURUSD/2024/00/03/BID_candles_min_1.bi5"
 	if got != want {
 		t.Fatalf("URL Dukascopy : %s\nattendue        : %s", got, want)
 	}
-	got = CandleURL(inst, time.Date(2024, time.December, 31, 0, 0, 0, 0, time.UTC), SideAsk)
+	got = CandleURL("EURUSD", time.Date(2024, time.December, 31, 0, 0, 0, 0, time.UTC), SideAsk)
 	want = BaseURL + "/EURUSD/2024/11/31/ASK_candles_min_1.bi5"
 	if got != want {
 		t.Fatalf("URL de décembre : %s\nattendue        : %s", got, want)
+	}
+	got = CandleURL("US500", time.Date(2024, time.March, 1, 0, 0, 0, 0, time.UTC), SideBid)
+	want = BaseURL + "/USA500IDXUSD/2024/02/01/BID_candles_min_1.bi5"
+	if got != want {
+		t.Fatalf("URL d'un indice : %s\nattendue        : %s", got, want)
 	}
 }
 

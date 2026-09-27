@@ -44,7 +44,6 @@ type Backtest struct {
 	err     string
 	took    time.Duration
 	cancel  context.CancelFunc
-	rows    int
 
 	// Liste des trades : curseur, et focus des flèches. ↑↓ choisissent
 	// la paire tant que le focus n'est pas sur les trades ; pgup, pgdn,

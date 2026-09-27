@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"sync"
 	"time"
 
@@ -226,6 +227,13 @@ func (e *Engine) HandleTick(ctx context.Context, tick core.Tick) {
 
 // onBarClosed est le cœur de la boucle de décision.
 func (e *Engine) onBarClosed(ctx context.Context, symbol string, bar core.Bar) {
+	if !e.gateway.Info().SuppliesVolume {
+		// La passerelle ne publie pas de volume : la somme des ticks vaut
+		// 0, ce qui dirait « aucun échange ». NaN dit « non mesuré » — et
+		// une stratégie qui en dépend s'abstient au lieu de décider sur une
+		// feature fausse.
+		bar.Volume = math.NaN()
+	}
 	e.mu.Lock()
 	buf := append(e.buffers[symbol], bar)
 	if len(buf) > e.buffer {

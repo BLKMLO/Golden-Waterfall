@@ -1,5 +1,6 @@
 // Package data gère les données de marché historiques : téléchargement
-// depuis Dukascopy, stockage local, relecture et ré-échantillonnage.
+// depuis une source interchangeable (source.go : Dukascopy, FXCM),
+// stockage local, relecture et ré-échantillonnage.
 //
 // Le stockage est en **Parquet**, un format colonne standard. Le choix
 // précédent — un format binaire maison, `.gwb` — était plus compact à
@@ -20,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -39,9 +41,10 @@ type FileHeader struct {
 	// réelle de l'instrument avant de les confier au compresseur.
 	Scale int32
 	Count int64
-	// Failures : nombre de jours que le téléchargement n'a PAS pu
-	// récupérer (erreurs réseau, 5xx épuisant les tentatives). Les jours
-	// de marché fermé n'en font pas partie : il n'y a rien à y télécharger.
+	// Failures : nombre d'unités (jours pour Dukascopy, semaines pour
+	// FXCM) que le téléchargement n'a PAS pu récupérer : erreurs réseau,
+	// 5xx épuisant les tentatives, trous du fournisseur. Les jours de
+	// marché fermé n'en font pas partie : il n'y a rien à y télécharger.
 	//
 	// Ce champ existe pour une raison précise : sans lui, une année
 	// écrite avec des trous était indiscernable d'une année complète, et
@@ -53,6 +56,9 @@ type FileHeader struct {
 	// n'est plus une mesure mais une supposition, et l'interface le dit
 	// plutôt que de compter l'année comme faite.
 	Imported bool
+	// Source : fournisseur qui a écrit le fichier (« dukascopy », « fxcm »,
+	// « import »). Vide pour un .gwb, antérieur aux sources multiples.
+	Source string
 }
 
 // Complete indique si l'année a été téléchargée sans aucun jour manquant.
@@ -258,6 +264,10 @@ type Inventory struct {
 	// convertit. Les afficher plutôt que les convertir en douce laisse la
 	// décision — et le moment — à l'utilisateur.
 	Legacy []int
+	// Sources : fournisseurs présents dans l'historique du symbole. Plus
+	// d'un = des années de provenances différentes, donc peut-être des
+	// volumes et des spreads qui ne se comparent pas : l'écran le dit.
+	Sources []string
 }
 
 // Catalog inventorie le dossier d'historique sans décoder les bougies.
@@ -292,6 +302,13 @@ func Catalog(historyDir string) ([]Inventory, error) {
 			if isLegacy(path) {
 				inv.Legacy = append(inv.Legacy, y)
 			}
+			src := h.Source
+			if src == "" {
+				src = DefaultSource
+			}
+			if !slices.Contains(inv.Sources, src) {
+				inv.Sources = append(inv.Sources, src)
+			}
 		}
 		if len(inv.Years) == 0 {
 			continue
@@ -299,6 +316,7 @@ func Catalog(historyDir string) ([]Inventory, error) {
 		sort.Ints(inv.Years)
 		sort.Ints(inv.Partial)
 		sort.Ints(inv.Legacy)
+		sort.Strings(inv.Sources)
 		inv.First = time.Date(inv.Years[0], time.January, 1, 0, 0, 0, 0, time.UTC)
 		inv.Last = time.Date(inv.Years[len(inv.Years)-1], time.December, 31, 23, 59, 0, 0, time.UTC)
 		out = append(out, inv)

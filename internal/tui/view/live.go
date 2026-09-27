@@ -430,6 +430,11 @@ func (v *Live) checks(s live.SymbolState) []check {
 		{"historique", "hist.", afterConnect(s.HistoryOK), false},
 		{"devise " + cfg.Backtest.AccountCurrency, cfg.Backtest.AccountCurrency, yes(tradable(cfg, s.Symbol)), false},
 	}
+	if snap.UsesVolume {
+		// Colibri s'abstient sur une bougie sans volume mesuré (passerelle
+		// qui n'en publie pas, historique FXCM) : bloquant, et dit.
+		items = append(items, check{"volume", "vol.", afterConnect(s.VolumeOK), false})
+	}
 	if snap.NewsActive {
 		// Couverture du calendrier à l'instant du marché : sans elle, le
 		// filtre d'actualités laisse tout passer.

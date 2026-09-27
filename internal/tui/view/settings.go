@@ -285,8 +285,17 @@ func settingsFields() []settingField {
 
 		// --- Historique ---
 		{
+			Section: "Historique", Path: "history.source", Label: "Source de l'historique", Kind: kindEnum,
+			Help: "dukascopy : depuis 2003, tout le catalogue, volume de ticks, limite de débit (429). " +
+				"fxcm : depuis 2012, 25 paires forex, bid et ask, SANS volume, des semaines manquent. " +
+				"Les années déjà complètes ne sont pas retéléchargées.",
+			Choices: data.SourceNames,
+			Get:     func(c *config.Config) string { return c.History.Source },
+			Set:     func(c *config.Config, s string) error { c.History.Source = s; return nil },
+		},
+		{
 			Section: "Historique", Path: "history.start_year", Label: "Première année", Kind: kindNumber, Step: 1,
-			Help: "Début de l'historique téléchargé depuis Dukascopy.",
+			Help: "Début de l'historique téléchargé. Une année antérieure à la source n'est pas demandée.",
 			Get:  func(c *config.Config) string { return strconv.Itoa(c.History.StartYear) },
 			Set:  func(c *config.Config, s string) error { return setInt(&c.History.StartYear, s) },
 		},

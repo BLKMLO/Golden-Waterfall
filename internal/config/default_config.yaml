@@ -139,8 +139,20 @@ backtest:
   leverage: 30.0
 
 history:
-  # Données M1 Dukascopy. Elles vivent dans le dossier de données de
-  # l'utilisateur (`gw paths` l'affiche), jamais à côté du binaire.
+  # Données M1. Elles vivent dans le dossier de données de l'utilisateur
+  # (`gw paths` l'affiche), jamais à côté du binaire.
+  #
+  # Fournisseur de l'historique :
+  #   dukascopy : depuis 2003, tout le catalogue (forex, métaux, indices),
+  #               bid ET ask, volume de ticks. Limite de débit (429).
+  #   fxcm      : depuis 2012, 25 paires forex (ni métaux, ni indices, ni
+  #               EURCAD, GBPAUD, CHFJPY), bid ET ask, AUCUN volume ; des
+  #               semaines manquent chez FXCM (comptées, jamais comblées).
+  # Changer de source ne réécrit pas les années déjà complètes ; l'écran
+  # Données signale une paire dont l'historique mélange deux sources.
+  # `gw download --source fxcm` change de source pour un seul
+  # téléchargement.
+  source: "dukascopy"
   start_year: 2010
   # Téléchargements simultanés. Au-delà de 3-4, Dukascopy répond 429.
   concurrency: 3
