@@ -35,10 +35,10 @@ func readCSV(t *testing.T, path string) [][]string {
 func sampleTrades() []core.Trade {
 	entry := time.Date(2024, 3, 4, 8, 0, 0, 0, time.UTC)
 	return []core.Trade{
-		{ID: 1, Symbol: "EURUSD", Strategy: "colibri_v1_0", Side: core.Buy, Quantity: 10000,
+		{ID: 1, Symbol: "EURUSD", Strategy: "colibri_v1_2", Side: core.Buy, Quantity: 10000,
 			EntryTime: entry, EntryPrice: 1.08123, ExitTime: entry.Add(6 * time.Hour),
 			ExitPrice: 1.08456, PnL: 33.30, Cost: 1.20, ExitReason: "tp"},
-		{ID: 2, Symbol: "EURUSD", Strategy: "colibri_v1_0", Side: core.Sell, Quantity: 10000,
+		{ID: 2, Symbol: "EURUSD", Strategy: "colibri_v1_2", Side: core.Sell, Quantity: 10000,
 			EntryTime: entry.Add(24 * time.Hour), EntryPrice: 1.08500,
 			ExitTime: entry.Add(30 * time.Hour), ExitPrice: 1.08700, PnL: -20, Cost: 1.20,
 			ExitReason: "sl"},

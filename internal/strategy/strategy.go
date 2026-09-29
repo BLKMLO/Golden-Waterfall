@@ -194,7 +194,20 @@ type Factory func() Strategy
 var (
 	registryMu sync.RWMutex
 	registry   = map[string]Factory{}
+	// retired : révisions RETIRÉES du catalogue, et celle qui les remplace.
+	// Une génération ne livre que sa dernière révision : une configuration
+	// qui nomme une révision retirée doit apprendre laquelle prendre, pas
+	// seulement qu'elle est « inconnue ».
+	retired = map[string]string{}
 )
+
+// Retire déclare une révision retirée et sa remplaçante. Appelée depuis
+// l'init() du paquet de la génération.
+func Retire(name, replacement string) {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	retired[name] = replacement
+}
 
 // Register déclare une stratégie. Appelée depuis un init() de fichier de
 // stratégie ; un doublon de nom est une erreur de programmation et panique
@@ -213,7 +226,12 @@ func Register(name string, f Factory) {
 func New(name string) (Strategy, error) {
 	registryMu.RLock()
 	f, ok := registry[name]
+	successor, gone := retired[name]
 	registryMu.RUnlock()
+	if !ok && gone {
+		return nil, fmt.Errorf("la révision %q a été retirée (seule la dernière révision d'un moteur est livrée) : "+
+			"mettre strategy.name à %q, puis réentraîner", name, successor)
+	}
 	if !ok {
 		return nil, fmt.Errorf("stratégie inconnue %q. Disponibles : %v", name, List())
 	}

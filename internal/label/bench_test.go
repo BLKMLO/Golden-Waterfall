@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/BLKMLO/Golden-Waterfall/internal/core"
+	"github.com/BLKMLO/Golden-Waterfall/internal/indicator"
 )
 
 // benchSeries fabrique une série M1 à volatilité RÉGLABLE.
@@ -36,20 +37,32 @@ func benchSeries(n int, vol float64) core.Series {
 
 const labelBars = 120_000
 
-func BenchmarkTripleBarrierAgite(b *testing.B) {
+// sided : l'étiquetage de colibri_v1_2 (1,5 × ATR(14), cinq jours, coût
+// d'un dixième de pip).
+func sided(s core.Series) SidedLabels {
+	atr := indicator.ATR(s.Highs(), s.Lows(), s.Closes(), 14)
+	ends := ExecutionWindow(s, time.Minute, 5*24*time.Hour)
+	cost := make([]float64, len(s))
+	for i := range cost {
+		cost[i] = 0.00001
+	}
+	return Sided(s, atr, 1.5, ends, cost)
+}
+
+func BenchmarkSidedAgite(b *testing.B) {
 	s := benchSeries(labelBars, 0.0004)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		std(s)
+		sided(s)
 	}
 }
 
 // Marché calme : les barrières sont rarement touchées, le balayage va donc
 // jusqu'au bout de l'horizon de cinq jours (7 200 bougies M1).
-func BenchmarkTripleBarrierCalme(b *testing.B) {
+func BenchmarkSidedCalme(b *testing.B) {
 	s := benchSeries(labelBars, 0.000002)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		std(s)
+		sided(s)
 	}
 }

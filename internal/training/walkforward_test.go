@@ -83,7 +83,7 @@ func TestWalkForwardEndToEnd(t *testing.T) {
 
 	var lastRatio float64
 	res, err := runner.Run(context.Background(), Request{
-		Strategy:   "colibri_v1_1",
+		Strategy:   "colibri_v1_2",
 		Symbols:    []string{"EURUSD", "GBPUSD"},
 		Timeframe:  data.H4,
 		Folds:      3,
@@ -133,12 +133,12 @@ func TestWalkForwardEndToEnd(t *testing.T) {
 	if res.FinalDir == "" {
 		t.Fatal("un modèle de production doit être écrit")
 	}
-	for _, f := range []string{"model.json", "metadata.json"} {
+	for _, f := range []string{"model_long.json", "model_short.json", "metadata.json"} {
 		if _, err := os.Stat(filepath.Join(res.FinalDir, f)); err != nil {
 			t.Fatalf("artefact de production manquant : %s", f)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(cfg.Paths.ModelsDir(), "colibri_v1_1", res.RunID, "run.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(cfg.Paths.ModelsDir(), "colibri_v1_2", res.RunID, "run.json")); err != nil {
 		t.Fatal("le résumé run.json doit être écrit")
 	}
 	if len(res.PerSymbol) != 2 {
@@ -160,7 +160,7 @@ func tradesOf(res *Result) int {
 func TestWalkForwardRefusesSingleFold(t *testing.T) {
 	_, runner := testSetup(t)
 	_, err := runner.Run(context.Background(), Request{
-		Strategy: "colibri_v1_1", Symbols: []string{"EURUSD"},
+		Strategy: "colibri_v1_2", Symbols: []string{"EURUSD"},
 		Timeframe: data.H4, Folds: 1,
 	})
 	if err == nil {
@@ -171,7 +171,7 @@ func TestWalkForwardRefusesSingleFold(t *testing.T) {
 func TestWalkForwardRefusesMissingHistory(t *testing.T) {
 	_, runner := testSetup(t)
 	_, err := runner.Run(context.Background(), Request{
-		Strategy: "colibri_v1_1", Symbols: []string{"EURUSD"},
+		Strategy: "colibri_v1_2", Symbols: []string{"EURUSD"},
 		Timeframe: data.H4, Folds: 3,
 	})
 	if err == nil {
@@ -185,7 +185,7 @@ func TestWalkForwardHonoursCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // annulé AVANT de démarrer
 	_, err := runner.Run(ctx, Request{
-		Strategy: "colibri_v1_1", Symbols: []string{"EURUSD"},
+		Strategy: "colibri_v1_2", Symbols: []string{"EURUSD"},
 		Timeframe: data.H4, Folds: 3,
 	})
 	if err == nil {
@@ -233,7 +233,7 @@ func TestCatalogAndSelectModel(t *testing.T) {
 	cfg, runner := testSetup(t)
 	writeHistory(t, cfg.Paths.HistoryDir(), "EURUSD", 1.10, 121, []int{2020, 2021, 2022})
 	res, err := runner.Run(context.Background(), Request{
-		Strategy: "colibri_v1_1", Symbols: []string{"EURUSD"},
+		Strategy: "colibri_v1_2", Symbols: []string{"EURUSD"},
 		Timeframe: data.H4, Folds: 2, Seed: 5, TrainFinal: true, Workers: 1,
 	})
 	if err != nil {
@@ -248,13 +248,13 @@ func TestCatalogAndSelectModel(t *testing.T) {
 		t.Fatalf("inventaire des runs incorrect : %+v", runs)
 	}
 
-	dir, why := SelectModel(cfg.Paths.ModelsDir(), "colibri_v1_1", "EURUSD")
+	dir, why := SelectModel(cfg.Paths.ModelsDir(), "colibri_v1_2", "EURUSD")
 	if dir == "" {
 		t.Fatalf("le modèle de production doit être sélectionnable : %s", why)
 	}
 
 	// Symbole jamais entraîné : pas de modèle, et une explication.
-	dir, why = SelectModel(cfg.Paths.ModelsDir(), "colibri_v1_1", "USDJPY")
+	dir, why = SelectModel(cfg.Paths.ModelsDir(), "colibri_v1_2", "USDJPY")
 	if dir != "" {
 		t.Fatal("aucun modèle ne couvre USDJPY")
 	}
@@ -263,7 +263,7 @@ func TestCatalogAndSelectModel(t *testing.T) {
 	}
 
 	// Stratégie sans aucun entraînement archivé.
-	if _, why := SelectModel(cfg.Paths.ModelsDir(), "colibri_v1_0", "EURUSD"); why == "" {
+	if _, why := SelectModel(cfg.Paths.ModelsDir(), "troglodyte_v1_1", "EURUSD"); why == "" {
 		t.Fatal("une stratégie sans run doit être signalée")
 	}
 }

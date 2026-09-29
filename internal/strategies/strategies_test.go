@@ -43,3 +43,16 @@ func TestColibriNeverUsesTheNews(t *testing.T) {
 		t.Fatal("aucune révision Colibri au catalogue : le test ne vérifie plus rien")
 	}
 }
+
+// TestRetiredRevisionsNameTheirReplacement : une configuration restée sur
+// une révision retirée apprend laquelle prendre.
+func TestRetiredRevisionsNameTheirReplacement(t *testing.T) {
+	for old, repl := range map[string]string{
+		"colibri_v1_0": "colibri_v1_2", "colibri_v1_1": "colibri_v1_2", "troglodyte_v1_0": "troglodyte_v1_1",
+	} {
+		_, err := strategy.New(old)
+		if err == nil || !strings.Contains(err.Error(), "retirée") || !strings.Contains(err.Error(), repl) {
+			t.Fatalf("%s : refus nommant %s attendu, reçu %v", old, repl, err)
+		}
+	}
+}

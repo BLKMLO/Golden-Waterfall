@@ -103,9 +103,10 @@ func TestEntriesCarryAStopAndNoLimit(t *testing.T) {
 		if sig.TakeProfit != 0 {
 			t.Fatalf("un suivi de tendance ne pose pas de limite : %+v", sig)
 		}
+		k := s.modelFor("EURUSD").StopATR // calibré
 		atr := windowATR(series[i+1-revisions[0].window:i+1], revisions[0].atrPeriod)
-		if want := sig.Price - revisions[0].stopATR*atr; math.Abs(sig.StopLoss-want) > 1e-12 {
-			t.Fatalf("stop %v, %v attendu (close − 3 × ATR)", sig.StopLoss, want)
+		if want := sig.Price - k*atr; math.Abs(sig.StopLoss-want) > 1e-12 {
+			t.Fatalf("stop %v, %v attendu (close − k × ATR, k = %v)", sig.StopLoss, want, k)
 		}
 		return
 	}
@@ -140,7 +141,7 @@ func TestModelIsRefusedOutsideItsPairTimeframeAndStrategy(t *testing.T) {
 		t.Fatal("un modèle d'une autre révision doit être refusé")
 	}
 	changed := revisions[0]
-	changed.enterZ = 2
+	changed.trailBars = 20
 	if _, err := changed.loadModel(dir, "EURUSD", "H4"); err == nil {
 		t.Fatal("un modèle estimé sous une autre définition doit être refusé")
 	}

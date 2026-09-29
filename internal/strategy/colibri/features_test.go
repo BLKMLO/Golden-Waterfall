@@ -44,14 +44,14 @@ func synthetic(n int, seed int64) core.Series {
 //
 // Si une feature regardait vers l'avant, sa valeur à l'indice k changerait
 // selon qu'on lui donne la suite de la série ou non. En exigeant
-// computeV1(série)[:k] == computeV1(série[:k]), on rend ce type de fuite
+// computeV2(série)[:k] == computeV2(série[:k]), on rend ce type de fuite
 // impossible à introduire sans casser le test.
 func TestPrefixStability(t *testing.T) {
 	series := synthetic(600, 11)
-	full := computeV1(series)
+	full := computeV2(series)
 
 	for _, k := range []int{120, 300, 455, 599} {
-		partial := computeV1(series.Slice(0, k))
+		partial := computeV2(series.Slice(0, k))
 		if partial.Rows != k {
 			t.Fatalf("préfixe %d : %d lignes calculées", k, partial.Rows)
 		}
@@ -74,29 +74,29 @@ func TestPrefixStability(t *testing.T) {
 }
 
 func TestColumnsAreStable(t *testing.T) {
-	if len(columnsV1) != 34 {
-		t.Fatalf("Colibri définit 34 features causales, %d déclarées", len(columnsV1))
+	if len(columnsV2) != 33 {
+		t.Fatalf("colibri_v1_2 définit 33 features causales, %d déclarées", len(columnsV2))
 	}
 	seen := map[string]bool{}
-	for _, c := range columnsV1 {
+	for _, c := range columnsV2 {
 		if seen[c] {
 			t.Fatalf("colonne dupliquée : %q", c)
 		}
 		seen[c] = true
 	}
-	m := computeV1(synthetic(200, 3))
-	if m.Cols != len(columnsV1) {
-		t.Fatalf("matrice à %d colonnes pour %d noms", m.Cols, len(columnsV1))
+	m := computeV2(synthetic(200, 3))
+	if m.Cols != len(columnsV2) {
+		t.Fatalf("matrice à %d colonnes pour %d noms", m.Cols, len(columnsV2))
 	}
 	for i, name := range m.Names {
-		if name != columnsV1[i] {
-			t.Fatalf("ordre des colonnes modifié à l'indice %d : %q au lieu de %q", i, name, columnsV1[i])
+		if name != columnsV2[i] {
+			t.Fatalf("ordre des colonnes modifié à l'indice %d : %q au lieu de %q", i, name, columnsV2[i])
 		}
 	}
 }
 
 func TestWarmupRowsAreNaNThenComplete(t *testing.T) {
-	m := computeV1(synthetic(400, 7))
+	m := computeV2(synthetic(400, 7))
 	if m.RowComplete(0) {
 		t.Fatal("la première ligne ne peut pas être complète : toutes les fenêtres sont vides")
 	}
@@ -131,7 +131,7 @@ func TestNoInfiniteValues(t *testing.T) {
 			BidOpen: 1.2, BidHigh: 1.2, BidLow: 1.2, BidClose: 1.2,
 		}
 	}
-	m := computeV1(series)
+	m := computeV2(series)
 	for i, v := range m.Data {
 		if math.IsInf(v, 0) {
 			t.Fatalf("valeur infinie en colonne %q (ligne %d)", m.Names[i%m.Cols], i/m.Cols)
@@ -140,13 +140,13 @@ func TestNoInfiniteValues(t *testing.T) {
 }
 
 func TestCalendarFeaturesFollowISOConvention(t *testing.T) {
-	// Lundi 6 janvier 2020, 14 h UTC → dow 0, days_to_friday 4,
-	// session 2 (US).
+	// Lundi 6 janvier 2020, 14 h UTC → dow 0, 4 jours et 7 heures avant
+	// la clôture du vendredi 21 h UTC, session 2 (US).
 	series := core.Series{{
 		Time:    time.Date(2020, 1, 6, 14, 0, 0, 0, time.UTC),
 		BidOpen: 1, BidHigh: 1, BidLow: 1, BidClose: 1,
 	}}
-	m := computeV1(series)
+	m := computeV2(series)
 	get := func(name string) float64 {
 		idx, err := m.ColumnIndex(name)
 		if err != nil {
@@ -157,8 +157,8 @@ func TestCalendarFeaturesFollowISOConvention(t *testing.T) {
 	if got := get("dow"); got != 0 {
 		t.Fatalf("lundi doit valoir 0 (convention ISO), reçu %v", got)
 	}
-	if got := get("days_to_friday"); got != 4 {
-		t.Fatalf("days_to_friday lundi = 4, reçu %v", got)
+	if got := get("hours_to_week_close"); got != 4*24+7 {
+		t.Fatalf("hours_to_week_close lundi 14 h = 103, reçu %v", got)
 	}
 	if got := get("hour_utc"); got != 14 {
 		t.Fatalf("hour_utc = 14, reçu %v", got)

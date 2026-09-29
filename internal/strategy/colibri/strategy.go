@@ -33,7 +33,7 @@ type prepared struct {
 	model  *loaded
 	matrix *feature.Matrix
 	atr    []float64
-	cost   []float64   // coût aller-retour estimé (v1_2), nil sinon
+	cost   []float64   // coût aller-retour estimé
 	probs  [][]float64 // une tranche par tête
 }
 
@@ -57,15 +57,10 @@ type colibri struct {
 	rev revision
 
 	mu sync.RWMutex
-	// models : modèle chargé PAR SYMBOLE pour une révision mono-actif, un
-	// seul (clé "") pour une révision mutualisée.
-	//
-	// Une seule instance sert toutes les paires en live. Avec un unique
-	// emplacement de modèle, chaque chauffe écrasait la précédente : en
-	// colibri_v1_0, la dernière paire chargée imposait SON modèle à toutes
-	// les autres — des décisions EURUSD prises par le modèle d'USDJPY, sans
-	// rien pour le trahir.
-	models    map[string]*loaded
+	// model : le modèle MUTUALISÉ chargé — un seul pour toutes les paires,
+	// qui se reconnaissent à la feature `symbol`. Une seule instance sert
+	// toutes les paires en live.
+	model     *loaded
 	prepCache map[string]*prepared
 	reason    string
 }
@@ -73,24 +68,15 @@ type colibri struct {
 func newColibri(rev revision) *colibri {
 	return &colibri{
 		rev:       rev,
-		models:    map[string]*loaded{},
 		prepCache: map[string]*prepared{},
 		reason:    "aucun modèle chargé",
 	}
 }
 
-// slot : clé de rangement du modèle d'un symbole.
-func (c *colibri) slot(symbol string) string {
-	if c.rev.pooled {
-		return ""
-	}
-	return symbol
-}
-
-func (c *colibri) modelFor(symbol string) *loaded {
+func (c *colibri) modelFor(string) *loaded {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.models[c.slot(symbol)]
+	return c.model
 }
 
 func (c *colibri) Describe() strategy.Description {
@@ -103,20 +89,14 @@ func (c *colibri) Describe() strategy.Description {
 		"chauffe_bougies":  warmupBars,
 		"contexte_bougies": contextBars,
 		"modele":           "GBDT histogramme (Go pur), perte logistique",
-		"mutualise":        c.rev.pooled,
-	}
-	switch c.rev.target {
-	case sidedTarget:
-		def["cible"] = "issue nette d'exécution, une tête par sens (long, short)"
-		def["decision"] = "espérance nette en R ≥ marge"
-		def["marge_min_r"] = c.rev.minEdgeR
-		def["purge"] = c.rev.purge
-		def["calibrage"] = c.rev.calibrate
-		def["poids_unicite"] = c.rev.uniqueness
-		def["fenetre_spread"] = spreadWindow
-	default:
-		def["seuil_long"] = c.rev.longThreshold
-		def["seuil_short"] = c.rev.shortThreshold
+		"mutualise":        true,
+		"cible":            "issue nette d'exécution, une tête par sens (long, short)",
+		"decision":         "espérance nette en R ≥ marge",
+		"marge_min_r":      c.rev.minEdgeR,
+		"purge":            c.rev.purge,
+		"calibrage":        c.rev.calibrate,
+		"poids_unicite":    c.rev.uniqueness,
+		"fenetre_spread":   spreadWindow,
 	}
 	return strategy.Description{
 		Name:        c.rev.name,
@@ -125,20 +105,20 @@ func (c *colibri) Describe() strategy.Description {
 		Definition:  def,
 		ContextBars: contextBars,
 		MaxHold:     c.rev.maxHold(),
-		// Toutes les révisions publiées ont trois features de volume
-		// OBLIGATOIRES (vol_rel_20, vol_spike_20, obv_z_20).
+		// Trois features de volume OBLIGATOIRES (vol_rel_20,
+		// vol_spike_20, obv_z_20).
 		UsesVolume: true,
 	}
 }
 
 // PoolsSymbols indique au walk-forward s'il doit entraîner un modèle
 // unique sur tous les actifs.
-func (c *colibri) PoolsSymbols() bool { return c.rev.pooled }
+func (c *colibri) PoolsSymbols() bool { return true }
 
 func (c *colibri) Ready() (bool, string) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	if len(c.models) == 0 {
+	if c.model == nil {
 		return false, c.reason
 	}
 	return true, ""
@@ -147,7 +127,7 @@ func (c *colibri) Ready() (bool, string) {
 func (c *colibri) Shutdown() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.models = map[string]*loaded{}
+	c.model = nil
 	c.prepCache = map[string]*prepared{}
 	c.reason = "arrêtée"
 	return nil
@@ -163,12 +143,12 @@ func (c *colibri) Warmup(ctx context.Context, req strategy.WarmupRequest) error 
 		model, err := c.cachedOrLoad(req.ModelDir)
 		c.mu.Lock()
 		if err != nil {
-			delete(c.models, c.slot(req.Symbol))
+			c.model = nil
 			c.reason = err.Error()
 			c.mu.Unlock()
 			return err
 		}
-		c.models[c.slot(req.Symbol)] = model
+		c.model = model
 		c.reason = ""
 		c.mu.Unlock()
 	}
@@ -185,13 +165,11 @@ func (c *colibri) Warmup(ctx context.Context, req strategy.WarmupRequest) error 
 // quand le live chauffe trente et une paires.
 func (c *colibri) cachedOrLoad(dir string) (*loaded, error) {
 	c.mu.RLock()
-	for _, m := range c.models {
-		if m.dir == dir {
-			c.mu.RUnlock()
-			return m, nil
-		}
-	}
+	m := c.model
 	c.mu.RUnlock()
+	if m != nil && m.dir == dir {
+		return m, nil
+	}
 	return c.loadModel(dir)
 }
 
@@ -211,13 +189,8 @@ func (c *colibri) prepare(symbol string, series core.Series) (*prepared, error) 
 
 	matrix := c.rev.features.compute(series)
 	atr := atrOf(series)
-	if c.rev.pooled {
-		matrix = matrix.AppendColumn(symbolColumnName, symbolCodeColumn(symbol, model.meta.SymbolCategories, len(series)))
-	}
-	p := &prepared{key: key, model: model, matrix: matrix, atr: atr}
-	if c.rev.target == sidedTarget {
-		p.cost = spreadCost(series)
-	}
+	matrix = matrix.AppendColumn(symbolColumnName, symbolCodeColumn(symbol, model.meta.SymbolCategories, len(series)))
+	p := &prepared{key: key, model: model, matrix: matrix, atr: atr, cost: spreadCost(series)}
 	usable := make([]bool, matrix.Rows)
 	for i := range usable {
 		usable[i] = c.rowUsable(matrix, i)
@@ -301,12 +274,7 @@ func (c *colibri) OnBar(ctx context.Context, symbol string, series core.Series, 
 		Action:   core.Hold,
 	}
 	var action core.SignalAction
-	switch c.rev.target {
-	case sidedTarget:
-		action, sig.Confidence = c.decideExpectedValue(p, i)
-	default:
-		action, sig.Confidence = c.decideThreshold(p, i)
-	}
+	action, sig.Confidence = c.decideExpectedValue(p, i)
 	if math.IsNaN(sig.Confidence) {
 		return strategy.NoSignal(symbol), nil
 	}
@@ -325,21 +293,6 @@ func (c *colibri) OnBar(ctx context.Context, symbol string, series core.Series, 
 		sig.StopLoss = bar.Close() + offset
 	}
 	return sig, nil
-}
-
-// decideThreshold : règle historique (v1_0, v1_1). Une probabilité, deux
-// seuils.
-func (c *colibri) decideThreshold(p *prepared, i int) (core.SignalAction, float64) {
-	prob := p.probs[0][i]
-	switch {
-	case math.IsNaN(prob):
-		return core.Hold, math.NaN()
-	case prob >= c.rev.longThreshold:
-		return core.EnterLong, prob
-	case prob <= c.rev.shortThreshold:
-		return core.EnterShort, prob
-	}
-	return core.Hold, prob
 }
 
 // decideExpectedValue : règle de colibri_v1_2.

@@ -5,17 +5,21 @@
 //
 // # Principe
 //
-// Le logarithme du prix est décrit par un modèle espace-état à tendance
-// locale linéaire (kalman.go). Le filtre de Kalman estime, bougie après
-// bougie, la PENTE de cette tendance et son incertitude ; la stratégie
-// suit la tendance quand la pente est nettement non nulle, et sort
-// quand elle ne l'est plus :
+// Le logarithme du prix, NORMALISÉ par sa volatilité, est décrit par un
+// modèle espace-état à tendance locale linéaire (kalman.go). Le filtre de
+// Kalman estime, bougie après bougie, la PENTE de cette tendance et son
+// incertitude ; la stratégie suit la tendance quand la pente est
+// nettement non nulle, et sort quand elle ne l'est plus ou que le prix
+// recule de k ATR depuis son extrême récent (stop « chandelier ») :
 //
 //	z_t = β̂_{t|t} / √P_ββ,t|t
 //	z_t ≥ +s_in        → entrée longue       stop = close − k × ATR
 //	z_t ≤ −s_in        → entrée courte       stop = close + k × ATR
-//	|z_t| < s_out      → sortie              (s_out < s_in : hystérésis)
-//	sinon              → rien
+//	z_t < s_out        → sortie d'un long    (s_out < s_in : hystérésis)
+//	z_t > −s_out       → sortie d'un court
+//
+// s_in et k sont CALIBRÉS à l'entraînement sur une petite grille
+// (calibrate.go) ; règle complète : decide (decision.go).
 //
 // Pas de limite : un suivi de tendance laisse courir ses gains ; il sort
 // sur le retour de la pente vers zéro, sur un signal opposé
@@ -40,11 +44,11 @@
 // # Révisions
 //
 // Même règle que Colibri : une définition publiée (fenêtre, seuils, stop)
-// ne se modifie jamais ; toute évolution crée une révision.
+// ne se modifie jamais ; toute évolution crée une révision, qui REMPLACE
+// la précédente (seule la dernière est livrée, depuis v0.8.0).
 //
-//	troglodyte_v1_0 : fenêtre 500 bougies, s_in 1,5, s_out 0,5, stop
-//	                  3 × ATR(14). Ces valeurs sont des CONVENTIONS de
-//	                  départ, pas des mesures.
+//	troglodyte_v1_0 : prix brut, seuils fixes 1,5 / 0,5, stop 3 × ATR.
+//	                  Retirée en v0.8.0.
 //	troglodyte_v1_1 : prix NORMALISÉ par sa volatilité avant le filtre,
 //	                  stop suiveur « chandelier », seuils CALIBRÉS à
 //	                  l'entraînement, filtre d'actualités déclaré.
@@ -80,33 +84,23 @@ func newTroglodyte(rev revision) *troglodyte {
 
 func (t *troglodyte) Describe() strategy.Description {
 	r := t.rev
-	input := "ln(close bid)"
-	if r.volHalfLife > 0 {
-		input = "ln(close bid) normalisé par sa volatilité (demi-vie " + strconv.Itoa(r.volHalfLife) + " bougies)"
-	}
 	def := map[string]any{
-		"modele":           "tendance locale linéaire (niveau + pente), filtre de Kalman, sur " + input,
-		"estimation":       "maximum de vraisemblance diffuse, concentrée en σ²_η ; grille puis Nelder-Mead",
-		"fenetre":          r.window,
-		"seuil_entree_z":   r.enterZ,
-		"seuil_sortie_z":   r.exitZ,
-		"stop_atr":         r.stopATR,
-		"periode_atr":      r.atrPeriod,
-		"limite":           "aucune",
-		"porte_week_end":   true,
-		"sortie_si_oppose": true,
-		"mutualise":        false,
-	}
-	if r.trailBars > 0 {
-		def["stop_suiveur"] = "chandelier : plus haut (plus bas) des " + strconv.Itoa(r.trailBars) + " dernières bougies ∓ k × ATR"
-	}
-	if r.calibrated() {
-		def["calibrage"] = "s_in et k choisis sur l'entraînement parmi la grille ; s_out = s_in / 3"
-		def["grille_seuil_entree"] = r.enterGrid
-		def["grille_stop_atr"] = r.stopGrid
-		def["seuil_entree_z"] = "calibré (repli 1,5)"
-		def["stop_atr"] = "calibré (repli 3)"
-		def["seuil_sortie_z"] = "s_in / 3"
+		"modele": "tendance locale linéaire (niveau + pente), filtre de Kalman, sur ln(close bid) " +
+			"normalisé par sa volatilité (demi-vie " + strconv.Itoa(r.volHalfLife) + " bougies)",
+		"estimation":          "maximum de vraisemblance diffuse, concentrée en σ²_η ; grille puis Nelder-Mead",
+		"fenetre":             r.window,
+		"seuil_entree_z":      "calibré (repli 1,5)",
+		"seuil_sortie_z":      "s_in / 3",
+		"stop_atr":            "calibré (repli 3)",
+		"periode_atr":         r.atrPeriod,
+		"limite":              "aucune",
+		"porte_week_end":      true,
+		"sortie_si_oppose":    true,
+		"mutualise":           false,
+		"stop_suiveur":        "chandelier : plus haut (plus bas) des " + strconv.Itoa(r.trailBars) + " dernières bougies ∓ k × ATR",
+		"calibrage":           "s_in et k choisis sur l'entraînement parmi la grille ; s_out = s_in / 3",
+		"grille_seuil_entree": r.enterGrid,
+		"grille_stop_atr":     r.stopGrid,
 	}
 	if r.usesNews {
 		def["actualites"] = "filtre déclaré (appliqué par les moteurs si news.enabled)"
@@ -211,7 +205,7 @@ func (t *troglodyte) state(series core.Series, i int, p params) (barState, bool)
 	r := t.rev
 	window := series[i+1-r.window : i+1]
 	y, ok := logCloses(window)
-	if ok && r.volHalfLife > 0 {
+	if ok {
 		y, ok = normalizedPath(y, r.volHalfLife)
 	}
 	if !ok {
@@ -225,9 +219,7 @@ func (t *troglodyte) state(series core.Series, i int, p params) (barState, bool)
 	if math.IsNaN(st.z) || math.IsNaN(st.atr) || st.atr <= 0 {
 		return barState{}, false
 	}
-	if r.trailBars > 0 {
-		st.hh, st.ll = extremes(window, r.trailBars)
-	}
+	st.hh, st.ll = extremes(window, r.trailBars)
 	return st, true
 }
 
@@ -250,10 +242,8 @@ func (t *troglodyte) Train(ctx context.Context, req strategy.TrainRequest) (*str
 	if !ok {
 		return nil, fmt.Errorf("%s : prix nul, négatif ou absent dans l'historique — logarithme impossible", symbol)
 	}
-	if t.rev.volHalfLife > 0 {
-		if y, ok = normalizedPath(y, t.rev.volHalfLife); !ok {
-			return nil, fmt.Errorf("%s : volatilité nulle sur une demi-vie — normalisation impossible", symbol)
-		}
+	if y, ok = normalizedPath(y, t.rev.volHalfLife); !ok {
+		return nil, fmt.Errorf("%s : volatilité nulle sur une demi-vie — normalisation impossible", symbol)
 	}
 	progress := func(r float64, step string) {
 		if req.Progress != nil {
@@ -271,13 +261,10 @@ func (t *troglodyte) Train(ctx context.Context, req strategy.TrainRequest) (*str
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	ru := rule{enterZ: t.rev.enterZ, exitZ: t.rev.exitZ, stopATR: t.rev.stopATR, trail: t.rev.trailBars > 0}
-	var cal *calibration
-	if t.rev.calibrated() {
-		progress(0.3, "calibrage du seuil d'entrée et du stop sur l'entraînement")
-		if ru, cal, err = t.calibrate(ctx, series, f.Params); err != nil {
-			return nil, err
-		}
+	progress(0.3, "calibrage du seuil d'entrée et du stop sur l'entraînement")
+	ru, cal, err := t.calibrate(ctx, series, f.Params)
+	if err != nil {
+		return nil, err
 	}
 	first, last := series.Span()
 	meta := &modelMeta{

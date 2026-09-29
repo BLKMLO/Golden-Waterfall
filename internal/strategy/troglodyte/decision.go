@@ -12,15 +12,13 @@ type rule struct {
 	enterZ, exitZ float64
 	// stopATR : distance du stop initial ET du stop suiveur, en ATR.
 	stopATR float64
-	// trail : stop suiveur chandelier actif (v1_1).
-	trail bool
 }
 
 // barState : ce que la décision voit de la bougie i.
 type barState struct {
 	z, close, atr float64
 	// hh, ll : plus haut et plus bas des trailBars dernières bougies
-	// (bougie i comprise). Ignorés sans stop suiveur.
+	// (bougie i comprise).
 	hh, ll float64
 }
 
@@ -29,20 +27,7 @@ type barState struct {
 // Renvoie l'action et, pour une entrée, le niveau du stop initial.
 func decide(b barState, r rule) (core.SignalAction, float64) {
 	offset := r.stopATR * b.atr
-	if !r.trail {
-		// troglodyte_v1_0, inchangée.
-		switch {
-		case b.z >= r.enterZ:
-			return core.EnterLong, b.close - offset
-		case b.z <= -r.enterZ:
-			return core.EnterShort, b.close + offset
-		case math.Abs(b.z) < r.exitZ:
-			return core.Exit, 0
-		}
-		return core.Hold, 0
-	}
-
-	// troglodyte_v1_1 : une position vit tant que la pente est nette ET
+	// Une position vit tant que la pente est nette ET
 	// que le prix n'a pas reculé de k ATR depuis son extrême récent.
 	longTrail := b.hh - offset
 	shortTrail := b.ll + offset

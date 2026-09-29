@@ -14,7 +14,8 @@
 // Chaque GÉNÉRATION de moteur porte un nom d'oiseau. Colibri est la
 // première ; la suivante, quand elle changera d'approche, portera un autre
 // nom d'oiseau plutôt qu'un numéro de plus. Les révisions à l'intérieur
-// d'une génération sont numérotées (`colibri_v1_0`, `colibri_v1_1`, …).
+// d'une génération sont numérotées (`colibri_v1_0`, `colibri_v1_1`, …) ;
+// seule la DERNIÈRE est livrée (règle du propriétaire, v0.8.0).
 //
 // # Principe
 //
@@ -27,12 +28,14 @@
 //
 // Toute évolution de la DÉFINITION (features, cible, barrières, règle de
 // décision) crée une nouvelle révision, jamais une modification en place —
-// sans quoi un modèle archivé ne voudrait plus rien dire. Les révisions
-// publiées restent reproductibles AU BIT PRÈS.
+// sans quoi un modèle archivé ne voudrait plus rien dire. Seule la
+// dernière révision est livrée : la suivante REMPLACE celle-ci, elle ne
+// la retouche pas.
 //
-//	colibri_v1_0 : UN modèle PAR actif, cible symétrique, seuils 0,55 / 0,45.
-//	colibri_v1_1 : UN modèle MUTUALISÉ (feature catégorielle `symbol`),
-//	               seuils 0,60 / 0,40.
+//	colibri_v1_0 : un modèle par actif, cible symétrique, seuils 0,55 / 0,45.
+//	               Retirée en v0.8.0.
+//	colibri_v1_1 : modèle mutualisé, cible symétrique, seuils 0,60 / 0,40.
+//	               Retirée en v0.8.0.
 //	colibri_v1_2 : mutualisé, DEUX têtes (long, short) apprises sur l'issue
 //	               NETTE de coûts que le moteur d'exécution produirait
 //	               (stop prioritaire dans les deux sens, gaps, clôture de
@@ -63,44 +66,28 @@ type featureSet struct {
 	optional map[string]bool
 }
 
-// targetKind : ce que le modèle apprend.
-type targetKind int
-
-const (
-	// symmetricTarget : une tête, P(barrière haute avant la basse).
-	symmetricTarget targetKind = iota
-	// sidedTarget : deux têtes, P(long gagnant net), P(short gagnant net).
-	sidedTarget
-)
-
 // revision : la DÉFINITION complète d'une révision. Aucune de ces valeurs
 // n'est un réglage runtime : elles n'ont rien à faire dans config.yaml.
 type revision struct {
 	name    string
 	version string
 	summary string
-	pooled  bool
 
 	features featureSet
-	target   targetKind
 
 	barrierATRMult float64
 	maxHoldDays    int
 
-	// Règle à seuils (symmetricTarget).
-	longThreshold  float64
-	shortThreshold float64
-
-	// Règle à l'espérance (sidedTarget) : marge minimale, en unités de
-	// barrière, NETTE de coûts.
+	// Règle à l'espérance : marge minimale, en unités de barrière, NETTE
+	// de coûts.
 	//
 	// Pour v1_2, 0,10 R : choisie par ablation (ablation_test.go) entre
 	// 0, 0,05, 0,10, 0,15 et 0,20 R, sur quatre marchés SYNTHÉTIQUES, huit
 	// graines chacun. C'est la seule marge qui fasse au moins aussi bien
-	// que colibri_v1_1 en P&L total sur les quatre ET perde moins qu'elle
-	// sur les deux marchés sans signal exploitable. Ce critère a été
-	// formulé APRÈS la mesure. À coût nul et gains/pertes de ± 1 R, elle
-	// revient à p ≥ 0,55 — le seuil de colibri_v1_0. ⚠ Mesure sur données
+	// que colibri_v1_1 (retirée depuis) en P&L total sur les quatre ET
+	// perde moins qu'elle sur les deux marchés sans signal exploitable. Ce
+	// critère a été formulé APRÈS la mesure. À coût nul et gains/pertes de
+	// ± 1 R, elle revient à p ≥ 0,55. ⚠ Mesure sur données
 	// synthétiques, pas sur le marché : à re-mesurer sur l'historique réel
 	// par une révision suivante, jamais par une retouche de celle-ci.
 	minEdgeR float64
@@ -116,41 +103,26 @@ type revision struct {
 	uniqueness bool
 }
 
-// heads : têtes du modèle, dans l'ordre. "" = tête unique historique.
-func (r revision) heads() []string {
-	if r.target == sidedTarget {
-		return []string{headLong, headShort}
-	}
-	return []string{""}
-}
+// heads : têtes du modèle, dans l'ordre : une par sens.
+func (r revision) heads() []string { return []string{headLong, headShort} }
 
 const (
 	headLong  = "long"
 	headShort = "short"
 )
 
-// headFile : fichier du modèle d'une tête. La tête unique garde le nom
-// historique, sans quoi les modèles v1 archivés ne se rechargeraient plus.
-func headFile(head string) string {
-	if head == "" {
-		return "model.json"
-	}
-	return "model_" + head + ".json"
-}
+// headFile : fichier du modèle d'une tête.
+func headFile(head string) string { return "model_" + head + ".json" }
 
 func (r revision) maxHold() time.Duration {
 	return time.Duration(r.maxHoldDays) * 24 * time.Hour
 }
 
 // columns : ordre CANONIQUE des colonnes de la révision, `symbol` compris
-// quand elle est mutualisée. Source unique : entraînement, inférence et
+// (le modèle est mutualisé). Source unique : entraînement, inférence et
 // vérification au chargement l'appellent tous.
 func (r revision) columns() []string {
-	cols := append([]string(nil), r.features.columns...)
-	if r.pooled {
-		cols = append(cols, symbolColumnName)
-	}
-	return cols
+	return append(append([]string(nil), r.features.columns...), symbolColumnName)
 }
 
 // symbolColumnName : nom de la feature catégorielle d'identité de l'actif.
@@ -158,40 +130,12 @@ func (r revision) columns() []string {
 // matrice, dans metadata.json et dans la vérification au chargement.
 const symbolColumnName = "symbol"
 
-var revV10 = revision{
-	name:           "colibri_v1_0",
-	version:        "1.0.0",
-	summary:        "Un modèle par actif — seuils 0,55 / 0,45.",
-	pooled:         false,
-	features:       featuresV1,
-	target:         symmetricTarget,
-	barrierATRMult: 1.5,
-	maxHoldDays:    5,
-	longThreshold:  0.55,
-	shortThreshold: 0.45,
-}
-
-var revV11 = revision{
-	name:           "colibri_v1_1",
-	version:        "1.1.0",
-	summary:        "Modèle unique mutualisé sur tous les actifs (feature `symbol`) — seuils 0,60 / 0,40.",
-	pooled:         true,
-	features:       featuresV1,
-	target:         symmetricTarget,
-	barrierATRMult: 1.5,
-	maxHoldDays:    5,
-	longThreshold:  0.60,
-	shortThreshold: 0.40,
-}
-
 var revV12 = revision{
 	name:    "colibri_v1_2",
 	version: "1.2.0",
 	summary: "Mutualisé, deux têtes long/short sur l'issue nette d'exécution — " +
 		"entrée à l'espérance nette ≥ 0,10 R.",
-	pooled:         true,
 	features:       featuresV2,
-	target:         sidedTarget,
 	barrierATRMult: 1.5,
 	maxHoldDays:    5,
 	minEdgeR:       0.10,
@@ -206,10 +150,9 @@ var revV12 = revision{
 	uniqueness: false,
 }
 
-// init enregistre les révisions, dans l'ordre de publication.
+// init enregistre la révision livrée, et nomme les retirées.
 func init() {
-	for _, r := range []revision{revV10, revV11, revV12} {
-		r := r
-		strategy.Register(r.name, func() strategy.Strategy { return newColibri(r) })
-	}
+	strategy.Register(revV12.name, func() strategy.Strategy { return newColibri(revV12) })
+	strategy.Retire("colibri_v1_0", revV12.name)
+	strategy.Retire("colibri_v1_1", revV12.name)
 }

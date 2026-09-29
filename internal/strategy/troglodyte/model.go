@@ -38,9 +38,8 @@ type modelMeta struct {
 	ExitZ     float64 `json:"exit_z"`
 	StopATR   float64 `json:"stop_atr"`
 	ATRPeriod int     `json:"atr_period"`
-	// À partir de troglodyte_v1_1 : normalisation, stop suiveur, et ce
-	// que le calibrage a essayé et retenu (EnterZ, ExitZ, StopATR sont
-	// alors les valeurs CALIBRÉES).
+	// Normalisation, stop suiveur, et ce que le calibrage a essayé et
+	// retenu (EnterZ, ExitZ, StopATR sont les valeurs CALIBRÉES).
 	VolHalfLife int          `json:"vol_half_life,omitempty"`
 	TrailBars   int          `json:"trail_bars,omitempty"`
 	Calibration *calibration `json:"calibration,omitempty"`
@@ -101,15 +100,12 @@ func (r revision) loadModel(dir, symbol, timeframe string) (*modelMeta, error) {
 }
 
 // sameDefinition : le modèle a-t-il été produit sous CETTE définition ?
-// Pour une révision calibrée, les seuils doivent être un point de sa
-// grille (ou ses valeurs de repli), jamais un réglage venu d'ailleurs.
+// Les seuils doivent être un point de sa grille (ou ses valeurs de
+// repli), jamais un réglage venu d'ailleurs.
 func (r revision) sameDefinition(m *modelMeta) bool {
 	if m.Window != r.window || m.ATRPeriod != r.atrPeriod ||
 		m.VolHalfLife != r.volHalfLife || m.TrailBars != r.trailBars {
 		return false
-	}
-	if !r.calibrated() {
-		return m.EnterZ == r.enterZ && m.ExitZ == r.exitZ && m.StopATR == r.stopATR
 	}
 	if m.Calibration == nil {
 		return false
@@ -123,7 +119,7 @@ func (r revision) sameDefinition(m *modelMeta) bool {
 
 // rule : règle de décision effective du modèle.
 func (m *modelMeta) rule() rule {
-	return rule{enterZ: m.EnterZ, exitZ: m.ExitZ, stopATR: m.StopATR, trail: m.TrailBars > 0}
+	return rule{enterZ: m.EnterZ, exitZ: m.ExitZ, stopATR: m.StopATR}
 }
 
 func contains(list []float64, v float64) bool {
