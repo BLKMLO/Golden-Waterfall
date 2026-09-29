@@ -1,7 +1,8 @@
 // Package martinet est la TROISIÈME génération de moteur de décision de
 // Golden Waterfall : un scalpeur de ZONES DE LIQUIDITÉ, épuré — des
-// plus hauts et des plus bas, un ATR, rien d'autre. Rien en dehors de ce
-// paquet ne l'importe, hormis le catalogue `internal/strategies`.
+// plus hauts et des plus bas, un ATR pour les distances, et le volume en
+// confirmation. Rien en dehors de ce paquet ne l'importe, hormis le
+// catalogue `internal/strategies`.
 //
 // # Principe
 //
@@ -22,14 +23,22 @@
 // de deux heures, aucun portage de week-end, filtre d'actualités déclaré.
 // Une bougie qui balaie des deux côtés ne dit rien.
 //
+// Filtre de volume (v1_1) : un balayage qui déclenche des stops fait un
+// pic de volume. Si le calibrage le retient, la bougie de balayage doit
+// avoir un volume ≥ 1,5 × la médiane des 20 bougies précédentes. Le
+// volume ne REMPLACE pas l'ATR : il ne mesure aucune distance. Et il
+// n'est jamais supposé : sans volume mesuré (FXCM, Interactive Brokers),
+// seuls les réglages sans filtre sont essayés, et un modèle qui l'a
+// retenu est refusé là où le volume manque (Warmup, ModelUsesVolume).
+//
 // Unités de temps : M1, M5 et M15 seulement (Description.Timeframes) —
 // un « scalp » en H4 n'en est pas un.
 //
 // # Entraîner = calibrer
 //
 // Il n'y a rien à estimer : entraîner, c'est choisir sur l'historique
-// d'entraînement de la paire la cible rr et la force des pivots parmi six
-// réglages, en rejouant chaque balayage comme le moteur de backtest
+// d'entraînement de la paire la cible rr, la force des pivots et le
+// filtre de volume parmi douze réglages, en rejouant chaque balayage comme le moteur de backtest
 // (calibrate.go). Sans modèle, la stratégie est muette, comme les autres.
 //
 // # Une fenêtre FIXE, pour que le live décide comme le backtest
@@ -40,7 +49,8 @@
 //
 // # Révisions
 //
-//	martinet_v1_0 : définition ci-dessus (revision.go). Détail :
+//	martinet_v1_0 : ATR seul. Retirée en v0.8.1.
+//	martinet_v1_1 : définition ci-dessus (revision.go). Détail :
 //	                docs/martinet.md.
 package martinet
 
@@ -90,14 +100,15 @@ func (m *martinet) Describe() strategy.Description {
 		"cible":             "rr × R, rr calibré",
 		"grille_rr":         r.rrGrid,
 		"grille_pivot":      r.pivotGrid,
-		"repli":             fmt.Sprintf("rr %g, pivot %d", r.fallbackRR, r.fallbackPivot),
+		"grille_volume":     r.volGrid,
+		"repli":             fmt.Sprintf("rr %g, pivot %d, sans filtre de volume", r.fallbackRR, r.fallbackPivot),
 		"unites_de_temps":   tfs,
 		"porte_week_end":    false,
 		"sortie_si_oppose":  false,
 		"mutualise":         false,
-		"indicateurs":       "ATR seul",
-		"volume":            "non utilisé",
-		"entrainement":      "calibrage in-sample de rr et p (t de Student de la moyenne des trades, n ≥ " + strconv.Itoa(r.minCalibTrades) + ")",
+		"indicateurs":       "ATR (distances) et volume relatif (confirmation, si retenu)",
+		"volume":            fmt.Sprintf("filtre calibré : sans, ou volume ≥ seuil × médiane des %d bougies précédentes ; essayé seulement si l'historique a du volume", r.volWindow),
+		"entrainement":      "calibrage in-sample de rr, p et du filtre de volume (t de Student de la moyenne des trades, n ≥ " + strconv.Itoa(r.minCalibTrades) + ")",
 		"bougies_minimales": r.minTrainBars,
 	}
 	if r.usesNews {
@@ -139,6 +150,12 @@ func (m *martinet) Warmup(_ context.Context, req strategy.WarmupRequest) error {
 		return nil
 	}
 	model, err := m.rev.loadModel(req.ModelDir, req.Symbol, string(req.Timeframe))
+	if err == nil && model.VolumeMin > 0 && len(req.Series) > 0 && !core.HasVolume(req.Series) {
+		// Un modèle calibré AVEC le filtre de volume, sur un historique qui
+		// n'en a pas : il s'abstiendrait à chaque bougie, en silence.
+		err = fmt.Errorf("modèle calibré avec le filtre de volume (%g × médiane), historique de %s sans volume mesuré "+
+			"(source FXCM, import sans colonne) — réentraîner sur cet historique", model.VolumeMin, req.Symbol)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err != nil {
@@ -167,7 +184,7 @@ func (m *martinet) OnBar(_ context.Context, symbol string, series core.Series, i
 	if model == nil || i+1 < m.rev.window {
 		return strategy.NoSignal(symbol), nil
 	}
-	s := m.rev.setupAt(series[i+1-m.rev.window:i+1], model.Pivot)
+	s := m.rev.setupAt(series[i+1-m.rev.window:i+1], model.Pivot, model.VolumeMin)
 	if s.side == 0 {
 		return strategy.NoSignal(symbol), nil
 	}
@@ -215,7 +232,7 @@ func (m *martinet) Train(ctx context.Context, req strategy.TrainRequest) (*strat
 	if req.Progress != nil {
 		req.Progress(0.05, "calibrage de la cible et des pivots sur l'entraînement")
 	}
-	rr, pivot, cal, err := r.calibrate(ctx, series, req.Timeframe.Duration())
+	rr, pivot, volMin, cal, err := r.calibrate(ctx, series, req.Timeframe.Duration())
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +240,7 @@ func (m *martinet) Train(ctx context.Context, req strategy.TrainRequest) (*strat
 	meta := r.newMeta()
 	meta.Timeframe = string(req.Timeframe)
 	meta.Symbol = symbol
-	meta.RR, meta.Pivot = rr, pivot
+	meta.RR, meta.Pivot, meta.VolumeMin = rr, pivot, volMin
 	meta.Calibration = cal
 	meta.TrainFrom, meta.TrainTo = first, last
 	meta.Seed = req.Seed
@@ -242,11 +259,12 @@ func (m *martinet) Train(ctx context.Context, req strategy.TrainRequest) (*strat
 	metrics := map[string]float64{
 		"calibrage_rr":     rr,
 		"calibrage_pivot":  float64(pivot),
+		"calibrage_volume": volMin,
 		"calibrage_repli":  flag,
 		"points_de_grille": float64(len(cal.Grid)),
 	}
 	for _, gp := range cal.Grid {
-		if gp.RR == rr && gp.Pivot == pivot {
+		if gp.RR == rr && gp.Pivot == pivot && gp.VolumeMin == volMin {
 			metrics["trades_calibrage"] = float64(gp.Trades)
 			if gp.Score != nil {
 				metrics["score_calibrage"] = *gp.Score
@@ -257,12 +275,21 @@ func (m *martinet) Train(ctx context.Context, req strategy.TrainRequest) (*strat
 	return &strategy.TrainReport{
 		ModelDir: req.OutputDir,
 		Samples:  len(series) - (r.window - 1),
-		// Entrées lues : haut, bas, clôture (et le spread, en filtre).
-		Features: 3,
+		// Entrées lues : haut, bas, clôture, volume (et le spread, en
+		// filtre).
+		Features: 4,
 		Metrics:  metrics,
 		Symbols:  []string{symbol},
 		Seed:     req.Seed,
 	}, nil
+}
+
+// ModelUsesVolume : le modèle chargé pour `symbol` a-t-il retenu le
+// filtre de volume ? Le moteur live s'en sert pour dire, paire par paire,
+// qu'une passerelle sans volume rendrait ce modèle muet.
+func (m *martinet) ModelUsesVolume(symbol string) bool {
+	model := m.modelFor(symbol)
+	return model != nil && model.VolumeMin > 0
 }
 
 // ScoreOOS : l'AUC mesure un classifieur ; Martinet n'en est pas un.

@@ -24,6 +24,9 @@ type modelMeta struct {
 	// Réglage retenu par le calibrage (ou de repli).
 	RR    float64 `json:"rr"`
 	Pivot int     `json:"pivot"`
+	// VolumeMin : seuil de volume relatif retenu (0 = sans filtre). Un
+	// modèle qui l'a retenu ne décide pas sans volume mesuré.
+	VolumeMin float64 `json:"volume_min"`
 	// Définition figée de la révision, vérifiée au chargement.
 	Window        int     `json:"window"`
 	Lookback      int     `json:"lookback"`
@@ -35,6 +38,7 @@ type modelMeta struct {
 	SessionFrom   int     `json:"session_from_utc"`
 	SessionTo     int     `json:"session_to_utc"`
 	MaxHoldMin    int     `json:"max_hold_minutes"`
+	VolWindow     int     `json:"volume_window"`
 	// Ce que le calibrage a essayé et retenu.
 	Calibration *calibration `json:"calibration"`
 	TrainFrom   time.Time    `json:"train_from"`
@@ -57,6 +61,7 @@ func (r revision) newMeta() *modelMeta {
 		SessionFrom:   r.sessionFrom,
 		SessionTo:     r.sessionTo,
 		MaxHoldMin:    int(r.maxHold / time.Minute),
+		VolWindow:     r.volWindow,
 	}
 }
 
@@ -110,13 +115,14 @@ func (r revision) sameDefinition(m *modelMeta) bool {
 		m.MaxSweepATR != want.MaxSweepATR || m.StopBufferATR != want.StopBufferATR ||
 		m.MaxRiskATR != want.MaxRiskATR || m.MaxSpreadR != want.MaxSpreadR ||
 		m.SessionFrom != want.SessionFrom || m.SessionTo != want.SessionTo ||
-		m.MaxHoldMin != want.MaxHoldMin || m.Calibration == nil {
+		m.MaxHoldMin != want.MaxHoldMin || m.VolWindow != want.VolWindow || m.Calibration == nil {
 		return false
 	}
-	if m.RR == r.fallbackRR && m.Pivot == r.fallbackPivot {
+	if m.RR == r.fallbackRR && m.Pivot == r.fallbackPivot && m.VolumeMin == 0 {
 		return true
 	}
-	return contains(r.rrGrid, m.RR) && contains(r.pivotGrid, float64(m.Pivot))
+	return contains(r.rrGrid, m.RR) && contains(r.pivotGrid, float64(m.Pivot)) &&
+		contains(r.volGrid, m.VolumeMin)
 }
 
 func contains(list []float64, v float64) bool {

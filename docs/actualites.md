@@ -15,7 +15,7 @@ Le filtre ne s'applique qu'aux stratégies qui le **déclarent**
 |---|---|
 | `colibri_v1_2` | **jamais** — règle du propriétaire du projet : Colibri n'a pas droit à internet. Un test (`TestColibriNeverUsesTheNews`) échoue si une révision Colibri le déclare. |
 | `troglodyte_v1_1` | oui, si `news.enabled` |
-| `martinet_v1_0` | oui, si `news.enabled` — un scalpeur n'a rien à faire autour d'une annonce : le spread s'écarte et un balayage n'en est plus un |
+| `martinet_v1_1` | oui, si `news.enabled` — un scalpeur n'a rien à faire autour d'une annonce : le spread s'écarte et un balayage n'en est plus un |
 
 (`troglodyte_v1_0`, publiée sans filtre, a été retirée en v0.8.0.)
 

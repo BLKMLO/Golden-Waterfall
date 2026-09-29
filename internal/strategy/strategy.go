@@ -201,6 +201,15 @@ type Trainable interface {
 	ScoreOOS(symbol string, series core.Series, from int) (float64, bool)
 }
 
+// ModelVolume : stratégie dont le besoin de volume dépend du MODÈLE
+// chargé pour une paire (Martinet : filtre de volume retenu ou non au
+// calibrage), et non d'une déclaration fixe (Description.UsesVolume). Le
+// moteur live l'interroge après la chauffe pour dire qu'une passerelle
+// sans volume rendrait ce modèle muet.
+type ModelVolume interface {
+	ModelUsesVolume(symbol string) bool
+}
+
 // Pooled : stratégie qui s'entraîne sur PLUSIEURS actifs à la fois.
 // Le walk-forward s'en sert pour savoir s'il doit lancer un entraînement
 // par actif ou un seul entraînement mutualisé.

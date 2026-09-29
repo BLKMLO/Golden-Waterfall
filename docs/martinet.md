@@ -5,7 +5,8 @@ Waterfall (après Colibri, classifieur, et Troglodyte, suivi de tendance). Il
 porte le nom du martinet noir, l'oiseau le plus rapide en vol battu : c'est un
 **scalpeur**, qui prend des allers courts sur de petites unités de temps.
 
-Code : `internal/strategy/martinet/`. Révision livrée : `martinet_v1_0`.
+Code : `internal/strategy/martinet/`. Révision livrée : `martinet_v1_1`
+(v0.8.1) ; `martinet_v1_0` (v0.8.0, ATR seul) est retirée.
 
 ## L'idée
 
@@ -16,10 +17,27 @@ sert ces ordres, puis **clôture de nouveau en deçà**, la cassure a échoué :
 la liquidité a été prise et il ne reste plus personne pour pousser le prix
 dans ce sens. Martinet prend alors le sens inverse, pour un aller court.
 
-Le moteur est volontairement **épuré** : des plus hauts, des plus bas, et un
-ATR pour mettre les distances à l'échelle. Aucun oscillateur, aucune
-moyenne mobile, aucun volume (il fonctionne donc sur FXCM et sur Interactive
-Brokers, qui n'en publient pas).
+Le moteur est volontairement **épuré** : des plus hauts, des plus bas, un
+ATR pour mettre les distances à l'échelle, et — depuis `martinet_v1_1` — le
+**volume en confirmation**. Aucun oscillateur, aucune moyenne mobile.
+
+## Pourquoi le volume s'AJOUTE à l'ATR sans le remplacer
+
+- L'ATR est une **unité de distance** : dépassement maximal de la zone,
+  tampon du stop, risque maximal. Le volume ne mesure aucune distance ; il
+  ne peut pas tenir ce rôle.
+- Le volume dit autre chose : un balayage qui **déclenche** des stops
+  produit un afflux d'ordres, donc un pic de volume sur la bougie de
+  balayage. Un dépassement sans pic est plus souvent du bruit qu'une
+  chasse aux stops.
+- En forex, le volume disponible est un **volume de ticks** (Dukascopy) :
+  un nombre de mises à jour de prix, pas des lots échangés — une
+  approximation du volume réel, dont la validité n'a pas été mesurée ici.
+- **FXCM et Interactive Brokers n'en publient pas.** Rendre le volume
+  obligatoire rendrait Martinet inutilisable chez eux, comme Colibri. Le
+  filtre est donc **calibré** : l'entraînement choisit entre « sans
+  filtre » et « avec filtre », et n'essaie le second que si l'historique a
+  du volume.
 
 ## La règle
 
@@ -40,6 +58,10 @@ seules :
    `stop = haut + 0,1 × ATR`. Risque `R = stop − close`. Cible :
    `limite = close − rr × R`.
 4. **Symétrique** sous une zone basse (achat).
+5. **Filtre de volume** (si le calibrage l'a retenu) : le volume de la
+   bougie de balayage doit atteindre **1,5 × la médiane** des 20 bougies
+   précédentes. Un volume inconnu (NaN) dans la bougie ou dans la
+   référence fait s'abstenir — jamais passer.
 
 Filtres, tous des **conventions** de métier, jamais mesurées :
 
@@ -61,13 +83,25 @@ en le disant. Il faut régler **les deux** unités de temps —
 ## Entraîner = calibrer
 
 Il n'y a rien à estimer. Entraîner Martinet sur une paire, c'est choisir,
-**sur le seul jeu d'entraînement**, deux réglages parmi une grille de six
-points :
+**sur le seul jeu d'entraînement**, trois réglages parmi une grille de
+douze points :
 
 | | Valeurs essayées | Repli |
 |---|---|---|
 | Cible `rr` (multiples de R) | 1 ; 1,5 ; 2 | 1,5 |
 | Force des pivots `p` | 3 ; 5 | 3 |
+| Filtre de volume (× médiane) | sans ; 1,5 | sans |
+
+Soit **12 points** (6 en `martinet_v1_0`). Sur un historique sans volume
+mesuré, les 6 points avec filtre ne sont pas essayés et sont archivés avec
+la raison (« volume non mesuré dans l'historique »). Le repli est toujours
+sans filtre : il vaut partout.
+
+Un modèle qui a retenu le filtre est **refusé** là où le volume manque :
+à la chauffe sur un historique sans volume, et, en live, la paire est
+marquée « ✗ volume » avec sa cause si la passerelle n'en publie pas
+(Interactive Brokers). Remède : réentraîner sur l'historique de cette
+source — le calibrage ne proposera alors que des réglages sans filtre.
 
 Pour chaque point, tous les balayages du jeu sont **rejoués comme le moteur
 de backtest les exécuterait** (entrée au close, stop d'abord quand stop et
@@ -95,8 +129,8 @@ Ce que la simulation du calibrage ignore, et que le moteur applique : le
 filtre d'actualités et les refus du gestionnaire de risque. Un test
 (`TestCalibrationSimulationMatchesTheBacktestEngine`) confronte la
 simulation au vrai moteur de backtest, trade par trade (entrée, sortie, prix,
-motif) : 165, 99 et 167 trades identiques sur trois réglages, sur une série
-M5 synthétique.
+motif) : 165, 99, 167 et, avec le filtre de volume, 44 trades identiques
+sur quatre réglages, sur une série M5 synthétique.
 
 Un modèle est rangé **par paire** et refusé au chargement hors de sa paire,
 de son unité de temps, de sa révision ou de sa définition, ou si son
@@ -137,13 +171,21 @@ Mesurée le 29 septembre 2026 dans le bac à sable de développement (Xeon
 | Mesure | Valeur |
 |---|---|
 | Une décision (fenêtre de 300 bougies M1, en séance) | 3,5 µs, aucune allocation |
-| Calibrage complet (6 points) sur 20 000 bougies M5 | 0,15 s |
+| Calibrage complet (6 points, v1_0) sur 20 000 bougies M5 | 0,15 s |
+| Calibrage complet (12 points, v1_1, historique avec volume) sur 20 000 bougies M5 | 0,39 s (mesuré le 29/09/2026) |
 
 ## Jamais mesuré
+
+Essai du binaire v0.8.1, sur un historique M1 SYNTHÉTIQUE (volume tiré au
+hasard, uniforme) : le filtre de volume ne laisse que 4 à 5 trades par
+point de grille, sous les 30 exigés — il n'est donc pas retenu, et c'est
+écrit dans la grille. Un volume uniforme sommé sur cinq minutes n'a
+presque pas de pics ; un volume de ticks réel en a bien davantage. **Rien
+ne dit encore que le filtre améliore Martinet** : il faut le mesurer.
 
 Martinet n'a **jamais été mesuré sur un historique réel** : tous les chiffres
 ci-dessus viennent de séries synthétiques. Toutes les valeurs de la
 définition (fenêtre, âge des zones, dépassement, tampon du stop, risque et
 spread maximaux, séance, barrière verticale) sont des conventions. Une
 mesure qui les démentirait donnerait une **nouvelle révision**
-(`martinet_v1_1`), qui remplacerait celle-ci — jamais une retouche en place.
+(`martinet_v1_2`), qui remplacerait celle-ci — jamais une retouche en place.

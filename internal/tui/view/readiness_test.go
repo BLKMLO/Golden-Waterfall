@@ -79,7 +79,7 @@ func TestPrerequisitesSayWhatIsMissingAndWhereToFixIt(t *testing.T) {
 func TestPrerequisitesRefuseAScalperOnH4(t *testing.T) {
 	deps := newTestDeps(t)
 	cfg := deps.App.Config
-	cfg.Strategy.Name = "martinet_v1_0"
+	cfg.Strategy.Name = "martinet_v1_1"
 	items := readiness(cfg, news.Status{})
 	unit, _ := prereqNamed(items, "unité")
 	if unit.state != checkKO || !strings.Contains(unit.detail, "M1, M5, M15") {

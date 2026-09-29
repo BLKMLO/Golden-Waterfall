@@ -2,6 +2,7 @@ package martinet
 
 import (
 	"math"
+	"sort"
 
 	"github.com/BLKMLO/Golden-Waterfall/internal/core"
 )
@@ -39,7 +40,13 @@ type setup struct {
 //
 // Tout est lu dans la fenêtre seule : la décision ne dépend d'aucune
 // bougie antérieure à la fenêtre, ni d'aucune bougie future.
-func (r revision) setupAt(w core.Series, pivot int) setup {
+//
+// Filtre de volume (volMin > 0) : le volume de la bougie de décision doit
+// atteindre volMin fois la MÉDIANE des volWindow bougies qui la précèdent.
+// Un volume inconnu (NaN : source ou passerelle qui n'en publie pas) ou
+// une référence nulle ne permettent pas de trancher : on s'abstient,
+// jamais on ne suppose.
+func (r revision) setupAt(w core.Series, pivot int, volMin float64) setup {
 	cur := len(w) - 1
 	if cur < 1 || pivot < 1 {
 		return setup{}
@@ -99,7 +106,37 @@ func (r revision) setupAt(w core.Series, pivot int) setup {
 			return setup{}
 		}
 	}
+	if volMin > 0 && !r.volumeSpike(w, volMin) {
+		return setup{}
+	}
 	return s
+}
+
+// volumeSpike : la dernière bougie de w a-t-elle un volume ≥ volMin ×
+// médiane des volWindow précédentes ? Faux si un volume manque.
+func (r revision) volumeSpike(w core.Series, volMin float64) bool {
+	cur := len(w) - 1
+	if cur < r.volWindow {
+		return false
+	}
+	v := w[cur].Volume
+	if math.IsNaN(v) {
+		return false
+	}
+	ref := make([]float64, 0, r.volWindow)
+	for _, b := range w[cur-r.volWindow : cur] {
+		if math.IsNaN(b.Volume) {
+			return false
+		}
+		ref = append(ref, b.Volume)
+	}
+	sort.Float64s(ref)
+	n := len(ref)
+	med := ref[n/2]
+	if n%2 == 0 {
+		med = (ref[n/2-1] + ref[n/2]) / 2
+	}
+	return med > 0 && v >= volMin*med
 }
 
 // target : niveau de la cible à rr × R.
