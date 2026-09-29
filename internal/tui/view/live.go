@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -47,7 +48,19 @@ type Live struct {
 	// doit être tapé. Pendant la saisie, l'écran prend toutes les touches.
 	confirming bool
 	typed      string
+
+	// Prérequis de la séance (entraînement, paramétrage), relus sur le
+	// disque de temps en temps : un entraînement peut se terminer dans
+	// `gw backtrain` pendant que cet écran est ouvert.
+	prereqs    []prereq
+	prereqAt   time.Time
+	showPrereq bool
 }
+
+// prereqRefresh : délai entre deux relectures des prérequis (modèles,
+// historique). Assez court pour voir arriver un entraînement fini ailleurs,
+// assez long pour ne pas relire le disque deux fois par seconde.
+const prereqRefresh = 20 * time.Second
 
 // chartKey identifie ce qui rendrait le graphique obsolète : la paire,
 // l'unité de temps, et l'état du tampon de bougies.
@@ -70,8 +83,20 @@ func NewLive(deps Deps) Model {
 			idx = i
 		}
 	}
-	return &Live{deps: deps, chartTF: tf, tfIndex: idx,
+	v := &Live{deps: deps, chartTF: tf, tfIndex: idx,
 		onlyTradable: deps.App.Config.Risk.RiskPerTradePct > 0}
+	v.refreshPrereqs()
+	// Un prérequis bloquant manque : le détail s'ouvre d'office — c'est la
+	// première chose à savoir en arrivant sur l'écran.
+	v.showPrereq, _ = ready(v.prereqs)
+	v.showPrereq = !v.showPrereq
+	return v
+}
+
+// refreshPrereqs relit les prérequis.
+func (v *Live) refreshPrereqs() {
+	v.prereqs = readiness(v.deps.App.Config, v.deps.App.News.Status())
+	v.prereqAt = time.Now()
 }
 
 // CapturesKeys : pendant la saisie du numéro de compte, « q » ou « 3 »
@@ -123,6 +148,7 @@ func (v *Live) Keys() [][2]string {
 		{"↑↓", "sélection"},
 		{"v", "tradables / toutes"},
 		{"u", "unité de temps"},
+		{"p", "prérequis"},
 	}
 }
 
@@ -163,8 +189,10 @@ func (v *Live) Update(msg tea.Msg) (Model, tea.Cmd) {
 			v.deps.Status("connexion impossible : " + msg.err.Error())
 		} else {
 			v.deps.Status("passerelle connectée")
+			v.showPrereq = false
 		}
 		v.snapshot = v.deps.App.Live.Snapshot()
+		v.refreshPrereqs()
 
 	case tea.KeyMsg:
 		if v.confirming {
@@ -188,6 +216,9 @@ func (v *Live) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 		case " ":
 			v.toggleSymbol()
+		case "p":
+			v.showPrereq = !v.showPrereq
+			v.refreshPrereqs()
 		case "u":
 			v.tfIndex = (v.tfIndex + 1) % len(data.Timeframes)
 			v.chartTF = data.Timeframes[v.tfIndex]
@@ -210,6 +241,9 @@ func (v *Live) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	default:
 		v.snapshot = v.deps.App.Live.Snapshot()
+		if time.Since(v.prereqAt) > prereqRefresh {
+			v.refreshPrereqs()
+		}
 	}
 	return v, nil
 }
@@ -277,7 +311,7 @@ func (v *Live) Render(width, height int) string {
 		return v.renderConfirmation(width)
 	}
 	snap := v.snapshot
-	check := v.renderChecklist(width)
+	check := v.renderPrereqLine(width) + "\n" + v.renderChecklist(width)
 
 	// --- Petits terminaux ------------------------------------------------
 	//
@@ -345,14 +379,19 @@ func (v *Live) Render(width, height int) string {
 
 // liveCompactHeight : hauteur de corps sous laquelle l'écran passe en
 // disposition compacte. Mesurée : la disposition complète demande
-// compte (7) + bande (7) + positions (4) + contrôle (1) = 19 lignes.
+// compte (7) + bande (7) + positions (4) + prérequis (1) + contrôle (1)
+// = 20 lignes.
 const (
-	liveCompactHeight = 19
+	liveCompactHeight = 20
 	minCompactBand    = 5
 )
 
-// renderBand : paires suivies à gauche, graphique à droite.
+// renderBand : paires suivies à gauche, graphique à droite — ou, sur
+// demande (p), le détail des prérequis à leur place.
 func (v *Live) renderBand(width, height int) string {
+	if v.showPrereq {
+		return v.renderPrereqPanel(width, height)
+	}
 	leftWidth := width / 2
 	return lipgloss.JoinHorizontal(lipgloss.Top,
 		v.renderWatchlist(leftWidth, height), v.renderChart(width-leftWidth, height))
@@ -612,21 +651,32 @@ func (v *Live) renderWatchlist(width, height int) string {
 		}
 		signal := component.Dash
 		if s.HasSignal {
+			// Une règle (Martinet) n'a pas de probabilité : sa confiance
+			// vaut 0 par contrat, et « LONG 0.00 » ferait lire une
+			// certitude nulle. Le chiffre n'apparaît que s'il existe.
+			conf := ""
+			if s.Confidence > 0 {
+				conf = fmt.Sprintf(" %.2f", s.Confidence)
+			}
 			switch s.LastSignal {
 			case core.EnterLong:
-				signal = th.Positive.Render(fmt.Sprintf("LONG %.2f", s.Confidence))
+				signal = th.Positive.Render("LONG" + conf)
 			case core.EnterShort:
-				signal = th.Negative.Render(fmt.Sprintf("SHORT %.2f", s.Confidence))
+				signal = th.Negative.Render("SHORT" + conf)
 			case core.Exit:
-				signal = th.Muted.Render(fmt.Sprintf("sortie %.2f", s.Confidence))
+				signal = th.Muted.Render("sortie" + conf)
 			case core.ExitLong:
-				signal = th.Muted.Render(fmt.Sprintf("sortie L %.2f", s.Confidence))
+				signal = th.Muted.Render("sortie L" + conf)
 			case core.ExitShort:
-				signal = th.Muted.Render(fmt.Sprintf("sortie S %.2f", s.Confidence))
+				signal = th.Muted.Render("sortie S" + conf)
 			default:
-				signal = th.Muted.Render(fmt.Sprintf("neutre %.2f", s.Confidence))
+				signal = th.Muted.Render("neutre" + conf)
 			}
-		} else if !s.ModelLoaded {
+		} else if !s.ModelLoaded && v.snapshot.Connected {
+			// Le modèle n'est chargé qu'à la connexion : avant elle,
+			// « pas de modèle » affirmerait ce qu'on ne sait pas — la
+			// ligne des prérequis dit, elle, s'il en existe un sur le
+			// disque.
 			signal = th.Warning.Render("pas de modèle")
 		}
 		rows = append(rows, []string{
@@ -723,4 +773,78 @@ func (v *Live) renderPositions(width, height int) string {
 	}
 	return component.PanelH(th, "Positions ouvertes (rapportées par la passerelle)",
 		component.Table(th, cols, rows, -1, height-4, component.PanelContent(width)), width, height)
+}
+
+// renderPrereqLine : les prérequis en une ligne, verdict en tête.
+func (v *Live) renderPrereqLine(width int) string {
+	th := v.deps.Theme
+	ok, missing := ready(v.prereqs)
+	verdict := th.Positive.Render("→ prêt")
+	if !ok {
+		verdict = th.Warning.Render("→ manque : " + missing)
+	}
+	for _, short := range []bool{false, true} {
+		label := "Prérequis"
+		if short {
+			label = "Préreq."
+		}
+		parts := []string{th.Accent.Render(label), verdict}
+		for _, p := range v.prereqs {
+			l := p.long
+			if short {
+				l = p.short
+			}
+			switch {
+			case p.state == checkOK:
+				parts = append(parts, th.Positive.Render("✓ "+l))
+			case p.advisory:
+				parts = append(parts, th.Warning.Render("⚠ "+l))
+			default:
+				parts = append(parts, th.Negative.Render("✗ "+l))
+			}
+		}
+		if !v.showPrereq {
+			parts = append(parts, th.Muted.Render("p détail"))
+		}
+		line := strings.Join(parts, "  ")
+		if lipgloss.Width(line) <= width || short {
+			return component.Clip(line, width)
+		}
+	}
+	return ""
+}
+
+// renderPrereqPanel : chaque prérequis, ce qui a été constaté, et où le
+// réparer. Écrit pour être lu AVANT la première connexion.
+func (v *Live) renderPrereqPanel(width, height int) string {
+	th := v.deps.Theme
+	inner := component.PanelContent(width)
+	var lines []string
+	ok, _ := ready(v.prereqs)
+	if ok {
+		lines = append(lines, th.Positive.Render(component.Truncate(
+			"Tout est prêt : c pour connecter, k pour armer le kill-switch, espace pour armer une paire.", inner)))
+	} else {
+		lines = append(lines, th.Warning.Render(component.Truncate(
+			"La séance ne tradera pas tant qu'un point ✗ reste ouvert. Entraînement et données : gw backtrain.", inner)))
+	}
+	for _, p := range v.prereqs {
+		mark := th.Positive.Render("✓ ")
+		switch {
+		case p.state == checkOK:
+		case p.advisory:
+			mark = th.Warning.Render("⚠ ")
+		default:
+			mark = th.Negative.Render("✗ ")
+		}
+		line := mark + th.Text.Render(p.long)
+		if p.detail != "" {
+			line += th.Muted.Render(" — " + p.detail)
+		}
+		lines = append(lines, component.Clip(line, inner))
+		if p.remedy != "" && p.state != checkOK {
+			lines = append(lines, component.Clip(th.Accent.Render("    → "+p.remedy), inner))
+		}
+	}
+	return component.PanelH(th, "Prérequis de la séance · p pour revenir aux paires", strings.Join(lines, "\n"), width, height)
 }

@@ -7,13 +7,16 @@
 
 ```
 Golden-Waterfall/
-├── cmd/gw/main.go              Point d'entrée UNIQUE : TUI par défaut,
-│                               sous-commandes pour l'usage non interactif.
+├── cmd/gw/main.go              Point d'entrée UNIQUE : `gw` (séance),
+│                               `gw backtrain` (atelier), sous-commandes pour
+│                               l'usage non interactif.
 │
 ├── internal/
 │   ├── app/app.go              SEUL endroit où les modules sont câblés.
 │   │                           Ordre : config (peut refuser de démarrer),
-│   │                           journal, base, métier.
+│   │                           journal, base, métier. Deux modes : Trading
+│   │                           (base + moteur live) et Workshop (ni l'un ni
+│   │                           l'autre : atelier et commandes de travail).
 │   │
 │   ├── config/
 │   │   ├── config.go           Structure unique + validation fail-fast.
@@ -33,9 +36,9 @@ Golden-Waterfall/
 │   ├── indicator/              RSI, ATR, ADX, MACD, stochastique, Bollinger,
 │   │                           OBV… tous STRICTEMENT causaux.
 │   ├── feature/                La matrice dense (générique, sans feature).
-│   ├── label/                  Bibliothèque de CIBLES par barrières :
-│   │                           symétrique (v1), par côté alignée sur
-│   │                           l'exécution, unicité des labels.
+│   ├── label/                  Bibliothèque de CIBLES par barrières : par
+│   │                           côté alignée sur l'exécution, unicité des
+│   │                           labels.
 │   ├── ml/gbdt/                Gradient boosting histogramme, Go pur :
 │   │                           poids d'échantillon, calibrage par rétrécissement.
 │   │
@@ -58,17 +61,23 @@ Golden-Waterfall/
 │   │   ├── strategy.go         CONTRAT + registre. AUCUNE implémentation.
 │   │   ├── strategytest/       Banc de CONFORMITÉ commun à toute stratégie.
 │   │   ├── colibri/            Génération Colibri (classifieur GBDT) :
-│   │   │   ├── revision.go     Définitions figées v1_0, v1_1, v1_2.
-│   │   │   ├── features_v*.go  Jeux de features (v1 : 34, v2 : 33).
-│   │   │   ├── strategy.go     Chauffe, décision (seuils ou espérance).
+│   │   │   ├── revision.go     Définition figée de colibri_v1_2 (seule livrée).
+│   │   │   ├── features*.go    Fenêtres communes, jeu de 33 features.
+│   │   │   ├── strategy.go     Chauffe, décision à l'espérance.
 │   │   │   ├── train.go        Cible, purge, poids, entraînement, AUC OOS.
 │   │   │   └── model.go        Manifeste, chargement vérifié colonne à colonne.
-│   │   └── troglodyte/         Génération Troglodyte (tendance, Kalman) :
-│   │       ├── revision.go     Définitions figées v1_0, v1_1.
-│   │       ├── kalman.go       Tendance locale linéaire, filtre, vraisemblance.
-│   │       ├── mle.go          Maximum de vraisemblance (grille + Nelder-Mead).
-│   │       ├── decision.go     LA règle (decide), normalisation, chandelier.
-│   │       ├── calibrate.go    Calibrage v1_1 : rejeu de la règle comme le moteur.
+│   │   ├── troglodyte/         Génération Troglodyte (tendance, Kalman) :
+│   │   │   ├── revision.go     Définition figée de troglodyte_v1_1.
+│   │   │   ├── kalman.go       Tendance locale linéaire, filtre, vraisemblance.
+│   │   │   ├── mle.go          Maximum de vraisemblance (grille + Nelder-Mead).
+│   │   │   ├── decision.go     LA règle (decide), normalisation, chandelier.
+│   │   │   ├── calibrate.go    Calibrage : rejeu de la règle comme le moteur.
+│   │   │   ├── strategy.go     Chauffe, décision, entraînement.
+│   │   │   └── model.go        Manifeste = le modèle entier, chargement vérifié.
+│   │   └── martinet/           Génération Martinet (scalping, zones de liquidité) :
+│   │       ├── revision.go     Définition figée de martinet_v1_0.
+│   │       ├── zones.go        LA règle (setupAt) : pivots, balayage rejeté.
+│   │       ├── calibrate.go    Calibrage rr × pivot, rejeu comme le moteur.
 │   │       ├── strategy.go     Chauffe, décision, entraînement.
 │   │       └── model.go        Manifeste = le modèle entier, chargement vérifié.
 │   │
@@ -107,10 +116,13 @@ Golden-Waterfall/
 │   ├── export/csv.go           Sortie CSV. Ne calcule RIEN : recopie.
 │   │
 │   └── tui/
-│       ├── tui.go              Routeur : onglets, entête, pied, aide.
+│       ├── tui.go              Routeur à deux modes : Trading (Live, Journal,
+│       │                       Paramètres) et Backtrain (Données,
+│       │                       Entraînement, Backtest, Paramètres).
 │       ├── theme/              TOUTES les couleurs et styles du programme.
 │       ├── component/          Formats, tableaux, panneaux, graphiques.
-│       └── view/               Les six écrans.
+│       └── view/               Les six écrans ; readiness.go : prérequis
+│                               de la séance (écran Live).
 │
 └── docs/
 ```
@@ -157,6 +169,23 @@ supposaient autrefois de Colibri est désormais DÉCLARÉ par la stratégie :
 | Signal opposé ignoré tant que la position vit | `Description.ExitOnReversal` (v0.7.0) |
 | Aucun filtre d'actualités | `Description.UsesNews` (v0.7.1) ; Colibri ne le déclare jamais |
 | Volume supposé présent | `Description.UsesVolume` (v0.7.3) ; Colibri le déclare, le moteur live écrit NaN si la passerelle n'a pas de volume (`Info.SuppliesVolume`) |
+| Toute unité de temps acceptée | `Description.Timeframes` (v0.8.0) + `strategy.CheckTimeframe`, appliqué par le walk-forward, le backtest, la connexion live et les prérequis ; Martinet : M1, M5, M15 |
+
+**Une génération ne livre que sa dernière révision** (v0.8.0). Une
+révision nouvelle remplace l'ancienne dans le code ; l'ancienne est
+déclarée par `strategy.Retire(ancienne, remplaçante)`, si bien qu'une
+configuration restée dessus est refusée au démarrage en nommant la
+remplaçante. Ses modèles archivés restent sur le disque, lisibles par
+`gw runs`, et ne sont plus chargés par personne.
+
+**Deux interfaces** (v0.8.0). `gw` ouvre l'application en mode
+`app.Trading` (base du journal, moteur live) et la TUI en `tui.Trading` :
+Live, Journal, Paramètres. `gw backtrain` l'ouvre en `app.Workshop` —
+`Store` et `Live` restent nil — et la TUI en `tui.Backtrain` : Données,
+Entraînement, Backtest, Paramètres. bbolt verrouillant son fichier, c'est
+ce qui permet d'entraîner pendant qu'une séance tourne ; les commandes de
+travail (`gw train`, `gw backtest`…) s'ouvrent de même. Un écran de
+l'atelier ne doit donc jamais toucher `App.Store` ni `App.Live`.
 
 **Sorties orientées** (v0.7.1) : `core.ExitLong` et `core.ExitShort` ne
 ferment qu'une position de leur sens (`SignalAction.Closes`), en backtest
@@ -359,13 +388,15 @@ cotation, `CurrencyExact` vaut `false`, et l'interface le dit.
 | Nouvelle source d'actualités | `news/<nom>.go` + `news.Register()` dans un `init()` | Moteurs, stratégies |
 | Nouvel instrument | une ligne dans `data.Instruments` | Le reste de `data` |
 | Nouvel indicateur | `indicator/` (causal, NaN pendant la chauffe) | Un jeu de features publié |
-| Nouvel écran | `tui/view/<nom>.go` + une ligne dans `tui.New()` | Les autres écrans |
+| Nouvel écran | `tui/view/<nom>.go` + une ligne dans `tui.New()`, dans le mode qui lui revient (Trading ou Backtrain) | Les autres écrans |
 | Nouveau format de sortie | `export/<format>.go` | Ce qui a produit les chiffres |
 | Nouveau réglage | `config.Config` + `Validate()` + `default_config.yaml` | Toute lecture directe d'env ailleurs — interdite |
 
 ⚠ **Ne jamais modifier une définition de modèle publiée** (features,
 barrières, seuils). Toute évolution crée une **nouvelle révision** de
-stratégie, sinon les modèles archivés ne veulent plus rien dire. La
-refonte modulaire de v0.4.1 l'a vérifié : colibri_v1_0 et v1_1 produisent,
-après déplacement de leur code, des modèles, signaux et AUC **identiques
-au bit près** à ceux d'avant.
+stratégie, qui remplace la précédente (seule la dernière est livrée depuis
+v0.8.0), sinon les modèles archivés ne veulent plus rien dire. La refonte
+modulaire de v0.4.1 l'a vérifié : colibri_v1_0 et v1_1 produisaient, après
+déplacement de leur code, des modèles, signaux et AUC **identiques au bit
+près** à ceux d'avant ; le retrait des anciennes révisions en v0.8.0 aussi,
+pour colibri_v1_2 et troglodyte_v1_1 (modèles et 3 200 décisions).

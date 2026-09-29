@@ -50,12 +50,32 @@ type App struct {
 	News *news.Service
 }
 
-// New construit l'application à partir des chemins résolus.
+// Mode : ce que l'application ouvre.
+type Mode int
+
+const (
+	// Trading : tout, dont la base du journal (bbolt) et le moteur live.
+	// C'est `gw`.
+	Trading Mode = iota
+	// Workshop : historique, entraînement et backtest, SANS la base ni le
+	// moteur live (Store et Live restent nil). C'est `gw backtrain` et les
+	// commandes de travail (`gw train`, `gw backtest`, `gw download`…).
+	//
+	// bbolt verrouille son fichier : une seconde instance qui l'ouvrirait
+	// échouerait. Rien de ce qui entraîne ou rejoue ne s'en sert — ne pas
+	// l'ouvrir permet d'entraîner pendant qu'une séance live tourne.
+	Workshop
+)
+
+// New construit l'application complète (mode Trading).
+func New(paths config.Paths) (*App, error) { return Open(paths, Trading) }
+
+// Open construit l'application à partir des chemins résolus.
 //
 // Ordre voulu : configuration (qui peut refuser de démarrer), puis
 // journal, puis base, puis métier. Échouer tôt et clairement vaut mieux
 // qu'un démarrage à moitié réussi.
-func New(paths config.Paths) (*App, error) {
+func Open(paths config.Paths, mode Mode) (*App, error) {
 	if err := paths.EnsureDirs(); err != nil {
 		return nil, fmt.Errorf("préparation du dossier de données : %w", err)
 	}
@@ -89,15 +109,19 @@ func New(paths config.Paths) (*App, error) {
 		return nil, fmt.Errorf("history.source : %w", err)
 	}
 
-	store, err := storage.Open(paths.DatabaseFile())
-	if err != nil {
-		logging.Close()
-		return nil, err
+	var store *storage.Store
+	if mode == Trading {
+		if store, err = storage.Open(paths.DatabaseFile()); err != nil {
+			logging.Close()
+			return nil, err
+		}
 	}
 
 	newsSvc, err := news.NewService(NewsOptions(cfg), logger)
 	if err != nil {
-		store.Close()
+		if store != nil {
+			store.Close()
+		}
 		logging.Close()
 		return nil, err
 	}
@@ -114,9 +138,11 @@ func New(paths config.Paths) (*App, error) {
 		Backtest: backtest.NewEngine(cfg, rm).WithNews(newsSvc),
 		Training: training.NewRunner(cfg, rm).WithNews(newsSvc),
 	}
-	a.Live = live.NewRuntime(cfg, bus, logger, store, rm).WithNews(newsSvc)
+	if mode == Trading {
+		a.Live = live.NewRuntime(cfg, bus, logger, store, rm).WithNews(newsSvc)
+	}
 
-	logger.Info("Golden Waterfall démarré",
+	logger.Info("Golden Waterfall démarré", "mode", map[Mode]string{Trading: "trading", Workshop: "atelier"}[mode],
 		"config", paths.ConfigFile(), "donnees", paths.DataDir,
 		"strategie", cfg.Strategy.Name, "passerelle", cfg.Broker.Name, "mode", cfg.Broker.Mode)
 	warnUnsizable(cfg, logger)
@@ -180,7 +206,9 @@ func (a *App) SetRiskPerTrade(pct float64) error {
 	a.Risk = rm
 	a.Backtest = backtest.NewEngine(a.Config, rm).WithNews(a.News)
 	a.Training = training.NewRunner(a.Config, rm).WithNews(a.News)
-	a.Live = live.NewRuntime(a.Config, a.Bus, a.Logger, a.Store, rm).WithNews(a.News)
+	if a.Live != nil {
+		a.Live = live.NewRuntime(a.Config, a.Bus, a.Logger, a.Store, rm).WithNews(a.News)
+	}
 	return nil
 }
 

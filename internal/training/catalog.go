@@ -144,23 +144,52 @@ func SelectModel(modelsDir, strategyName, symbol string) (string, string) {
 			continue
 		}
 		found = true
-		if !containsString(run.Symbols, symbol) {
-			continue
-		}
-		// Mutualisé : le dossier final porte directement le modèle.
-		if hasModel(run.FinalDir) {
-			return run.FinalDir, ""
-		}
-		// Mono-actif : un sous-dossier par symbole.
-		perSymbol := filepath.Join(run.FinalDir, symbol)
-		if hasModel(perSymbol) {
-			return perSymbol, ""
+		if dir := productionDir(run, symbol); dir != "" {
+			return dir, ""
 		}
 	}
 	if !found {
 		return "", fmt.Sprintf("aucun entraînement archivé pour la stratégie %q", strategyName)
 	}
 	return "", fmt.Sprintf("aucun modèle %q ne couvre %s", strategyName, symbol)
+}
+
+// Coverage : pour chaque symbole, l'entraînement dont le modèle de
+// production serait chargé en live (même règle que SelectModel), absent
+// si aucun ne le couvre. Les runs ne sont lus qu'une fois : l'écran Live
+// la recalcule pour toutes les paires suivies.
+func Coverage(modelsDir, strategyName string, symbols []string) (map[string]RunSummary, error) {
+	runs, err := ListRuns(modelsDir)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]RunSummary{}
+	for _, sym := range symbols {
+		for _, run := range runs {
+			if run.Strategy == strategyName && run.FinalDir != "" && productionDir(run, sym) != "" {
+				out[sym] = run
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
+// productionDir : dossier du modèle de production de `run` pour `symbol`,
+// vide s'il ne le couvre pas.
+func productionDir(run RunSummary, symbol string) string {
+	if !containsString(run.Symbols, symbol) {
+		return ""
+	}
+	// Mutualisé : le dossier final porte directement le modèle.
+	if hasModel(run.FinalDir) {
+		return run.FinalDir
+	}
+	// Mono-actif : un sous-dossier par symbole.
+	if perSymbol := filepath.Join(run.FinalDir, symbol); hasModel(perSymbol) {
+		return perSymbol
+	}
+	return ""
 }
 
 // hasModel : un dossier porte un modèle s'il contient le MANIFESTE que

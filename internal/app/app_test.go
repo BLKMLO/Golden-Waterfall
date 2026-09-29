@@ -141,3 +141,30 @@ func TestSetRiskPerTradeRefusesOutOfBounds(t *testing.T) {
 		}
 	}
 }
+
+// TestWorkshopRunsBesideATradingSession : `gw backtrain` et les commandes
+// de travail ouvrent l'application SANS la base — elles démarrent pendant
+// qu'une séance tient le verrou, et n'ont ni journal ni moteur live.
+func TestWorkshopRunsBesideATradingSession(t *testing.T) {
+	paths := tempPaths(t)
+	session, err := New(paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+
+	workshop, err := Open(paths, Workshop)
+	if err != nil {
+		t.Fatalf("l'atelier doit démarrer à côté d'une séance : %v", err)
+	}
+	defer workshop.Close()
+	if workshop.Store != nil || workshop.Live != nil {
+		t.Fatal("l'atelier ne doit ouvrir ni la base ni le moteur live")
+	}
+	if workshop.Training == nil || workshop.Backtest == nil || workshop.News == nil {
+		t.Fatal("l'atelier doit câbler entraînement, backtest et actualités")
+	}
+	if err := workshop.SetRiskPerTrade(0); err != nil || workshop.Live != nil {
+		t.Fatalf("SetRiskPerTrade ne doit pas créer de moteur live dans l'atelier : %v", err)
+	}
+}

@@ -13,9 +13,11 @@ Le filtre ne s'applique qu'aux stratégies qui le **déclarent**
 
 | Stratégie | Filtre |
 |---|---|
-| `colibri_v1_0`, `v1_1`, `v1_2` | **jamais** — règle du propriétaire du projet : Colibri n'a pas droit à internet. Un test (`TestColibriNeverUsesTheNews`) échoue si une révision Colibri le déclare. |
-| `troglodyte_v1_0` | non (publiée sans lui ; la modifier changerait ce qu'elle veut dire) |
+| `colibri_v1_2` | **jamais** — règle du propriétaire du projet : Colibri n'a pas droit à internet. Un test (`TestColibriNeverUsesTheNews`) échoue si une révision Colibri le déclare. |
 | `troglodyte_v1_1` | oui, si `news.enabled` |
+| `martinet_v1_0` | oui, si `news.enabled` — un scalpeur n'a rien à faire autour d'une annonce : le spread s'écarte et un balayage n'en est plus un |
+
+(`troglodyte_v1_0`, publiée sans filtre, a été retirée en v0.8.0.)
 
 Une stratégie ne va **jamais** elle-même sur internet. Le calendrier est
 récupéré par le programme, archivé sur le disque, et appliqué par les
@@ -92,7 +94,7 @@ dans une mesure, il faut importer un calendrier historique.
 Si une récupération échoue (réseau, 429), rien n'est déclaré couvert, le
 journal et `gw news` le disent, et l'archive existante reste utilisée.
 
-## Réglages (`news` dans config.yaml, écran 6 Paramètres)
+## Réglages (`news` dans config.yaml, écran Paramètres de `gw` ou de `gw backtrain`)
 
 | Clé | Défaut | Sens |
 |---|---|---|

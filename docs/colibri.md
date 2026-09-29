@@ -19,6 +19,14 @@ stop et limite posés aux barrières mêmes de l'étiquetage.
 
 ## Les trois révisions
 
+> **Depuis v0.8.0, seule `colibri_v1_2` est livrée** (règle du
+> propriétaire : un moteur ne garde que sa dernière révision).
+> `colibri_v1_0` et `colibri_v1_1` ont été retirées avec leur code ; une
+> configuration qui les nomme est refusée au démarrage en nommant
+> `colibri_v1_2`. Le tableau et les mesures ci-dessous restent comme
+> archive : c'est sur eux que v1_2 a été choisie. Retrait vérifié :
+> modèles et décisions de v1_2 identiques octet pour octet avant et après.
+
 Toute évolution de la DÉFINITION (features, cible, barrières, règle de
 décision) crée une **nouvelle révision**, jamais une modification en
 place : un modèle archivé doit toujours vouloir dire la même chose.

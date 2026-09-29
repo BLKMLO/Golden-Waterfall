@@ -1,6 +1,20 @@
 // Package tui est le routeur de l'interface : onglets, entête, barre
 // d'état, raccourcis globaux. Il ne contient AUCUNE logique de trading —
 // il lit des photos d'état (live.Snapshot) et délègue le reste aux écrans.
+//
+// Deux interfaces, un routeur (v0.8.0) :
+//
+//   - `gw` (Trading) : Live, Journal, Paramètres — ce qu'on regarde
+//     pendant une séance. L'écran Live dit si les prérequis sont faits.
+//   - `gw backtrain` (Backtrain) : Données, Entraînement, Backtest,
+//     Paramètres — l'atelier, dans l'ordre du travail. Il n'ouvre ni la
+//     base ni le moteur live (app.Workshop) : il tourne À CÔTÉ d'une
+//     séance, sans se disputer le verrou de la base.
+//
+// Six onglets dans une seule interface mêlaient deux activités qui ne se
+// font pas au même moment ni avec la même attention : surveiller un
+// compte, et préparer un moteur. Les séparer rend chaque interface plus
+// courte à parcourir, et l'entête dit toujours laquelle est ouverte.
 package tui
 
 import (
@@ -29,9 +43,20 @@ type statusMsg struct {
 	at   time.Time
 }
 
+// Mode : quelle interface ouvrir.
+type Mode int
+
+const (
+	// Trading : séance live ou papier (`gw`).
+	Trading Mode = iota
+	// Backtrain : historique, entraînement, backtest (`gw backtrain`).
+	Backtrain
+)
+
 // Model est le modèle racine.
 type Model struct {
 	app    *app.App
+	mode   Mode
 	th     theme.Theme
 	deps   view.Deps
 	views  []view.Model
@@ -47,14 +72,17 @@ type Model struct {
 	quitting      bool
 }
 
-// New construit le modèle racine et ses écrans.
-func New(a *app.App) *Model {
+// New construit le modèle racine et les écrans du mode demandé. Le mode
+// Trading exige une application ouverte en app.Trading (base et moteur
+// live) ; Backtrain se contente d'app.Workshop.
+func New(a *app.App, mode Mode) *Model {
 	// L'ordre compte : Apply fixe la luminosité de fond AVANT que les
 	// styles ne résolvent leurs couleurs adaptatives.
 	theme.Apply(a.Config.UI.Theme)
 	th := theme.ByName(a.Config.UI.Theme)
 	m := &Model{
 		app:     a,
+		mode:    mode,
 		th:      th,
 		events:  make(chan tea.Msg, 256),
 		refresh: time.Duration(a.Config.UI.RefreshMillis) * time.Millisecond,
@@ -77,20 +105,28 @@ func New(a *app.App) *Model {
 			}
 		},
 	}
-	m.views = []view.Model{
-		view.NewLive(m.deps),
-		view.NewData(m.deps),
-		view.NewBacktest(m.deps),
-		view.NewTraining(m.deps),
-		view.NewJournal(m.deps),
-		view.NewSettings(m.deps),
+	if mode == Backtrain {
+		// Dans l'ordre du travail : pas de modèle sans historique, pas de
+		// rejeu sans modèle.
+		m.views = []view.Model{
+			view.NewData(m.deps),
+			view.NewTraining(m.deps),
+			view.NewBacktest(m.deps),
+			view.NewSettings(m.deps),
+		}
+	} else {
+		m.views = []view.Model{
+			view.NewLive(m.deps),
+			view.NewJournal(m.deps),
+			view.NewSettings(m.deps),
+		}
 	}
 	return m
 }
 
 // Run démarre l'interface en plein écran.
-func Run(a *app.App) error {
-	m := New(a)
+func Run(a *app.App, mode Mode) error {
+	m := New(a, mode)
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err := p.Run()
 	return err
@@ -299,7 +335,10 @@ func (m *Model) View() string {
 // reconnaître d'un coup d'œil, sans avoir à se souvenir de ce qu'on a
 // lancé.
 func (m *Model) renderHeader() string {
-	snap := m.app.Live.Snapshot()
+	var snap live.Snapshot
+	if m.app.Live != nil {
+		snap = m.app.Live.Snapshot()
+	}
 
 	badges := m.badges(snap, false)
 	right := lipgloss.JoinHorizontal(lipgloss.Top, badges...)
@@ -316,17 +355,34 @@ func (m *Model) renderHeader() string {
 	// Dernier cran avant de passer les badges sur leur propre ligne : des
 	// onglets réduits à leur chiffre, sans marge. Une ligne gagnée compte
 	// quand le terminal n'en a que dix-huit.
-	for _, attempt := range []struct {
-		compactTabs, compactBadges, bareTabs bool
-	}{{false, false, false}, {true, false, false}, {true, true, false}, {true, true, true}} {
-		if attempt.compactBadges {
+	//
+	// Le NOM de l'interface (« Live », « Backtrain ») ne se négocie pas
+	// non plus : deux interfaces peuvent être ouvertes côte à côte, et
+	// c'est lui qui dit laquelle on regarde. Seule la marque cède.
+	type attempt struct {
+		left          headerLevel
+		compactBadges bool
+	}
+	attempts := []attempt{
+		{headerFull, false}, {headerNamed, false}, {headerNumbered, false},
+		{headerNumbered, true}, {headerBare, true},
+	}
+	if m.mode == Backtrain {
+		// Dans l'atelier, aucun badge ne protège de rien : ils cèdent
+		// AVANT les libellés d'onglets.
+		attempts = []attempt{
+			{headerFull, false}, {headerFull, true}, {headerNamed, true},
+			{headerNumbered, true}, {headerBare, true},
+		}
+	}
+	for _, a := range attempts {
+		if a.compactBadges {
 			badges = m.badges(snap, true)
-			right = lipgloss.JoinHorizontal(lipgloss.Top, badges...)
+		} else {
+			badges = m.badges(snap, false)
 		}
-		left := m.headerLeft(attempt.compactTabs)
-		if attempt.bareTabs {
-			left = m.headerBare()
-		}
+		right = lipgloss.JoinHorizontal(lipgloss.Top, badges...)
+		left := m.headerLeft(a.left)
 		gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
 		if gap >= 1 {
 			return left + strings.Repeat(" ", gap) + right + "\n" + m.rule()
@@ -334,17 +390,36 @@ func (m *Model) renderHeader() string {
 	}
 	// Terminal vraiment étroit : les badges passent sur leur propre ligne
 	// plutôt que de disparaître.
-	return component.Clip(m.headerLeft(true), m.width) + "\n" +
+	return component.Clip(m.headerLeft(headerNumbered), m.width) + "\n" +
 		component.Clip(right, m.width) + "\n" + m.rule()
 }
 
-// headerLeft dessine le titre et les onglets, en version longue ou
-// compacte.
-func (m *Model) headerLeft(compact bool) string {
-	parts := []string{}
-	if !compact {
-		parts = append(parts, m.th.Title.Render("◆ Golden Waterfall"), " ")
+// headerLevel : degré de compacité du titre et des onglets.
+type headerLevel int
+
+const (
+	// headerFull : « ◆ Golden Waterfall · Live » et onglets nommés.
+	headerFull headerLevel = iota
+	// headerNamed : « ◆ Live » et onglets nommés.
+	headerNamed
+	// headerNumbered : « ◆ Live » et onglets réduits à leur chiffre.
+	headerNumbered
+	// headerBare : « Live » et chiffres sans marge.
+	headerBare
+)
+
+// headerLeft dessine le titre et les onglets au degré demandé. Le nom de
+// l'interface y figure toujours.
+func (m *Model) headerLeft(level headerLevel) string {
+	if level == headerBare {
+		return m.headerBare()
 	}
+	title := "◆ " + m.modeName()
+	if level == headerFull {
+		title = "◆ Golden Waterfall · " + m.modeName()
+	}
+	parts := []string{m.th.Title.Render(title), " "}
+	compact := level == headerNumbered
 	for i, v := range m.views {
 		label := fmt.Sprintf(" %d %s ", i+1, v.Title())
 		if compact {
@@ -362,9 +437,10 @@ func (m *Model) headerLeft(compact bool) string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, parts...)
 }
 
-// headerBare : onglets réduits à leur chiffre, séparés d'une espace.
+// headerBare : le nom de l'interface, puis les onglets réduits à leur
+// chiffre, séparés d'une espace.
 func (m *Model) headerBare() string {
-	parts := make([]string, 0, len(m.views))
+	parts := []string{m.th.Title.UnsetPadding().Render(m.modeName())}
 	for i, v := range m.views {
 		label := fmt.Sprintf("%d", i+1)
 		if v.Busy() {
@@ -379,6 +455,14 @@ func (m *Model) headerBare() string {
 	return strings.Join(parts, " ")
 }
 
+// modeName : le nom de l'interface ouverte, dans le titre.
+func (m *Model) modeName() string {
+	if m.mode == Backtrain {
+		return "Backtrain"
+	}
+	return "Live"
+}
+
 // badges construit les pastilles d'état. En version courte, les libellés
 // raccourcissent mais AUCUNE pastille ne disparaît.
 func (m *Model) badges(snap live.Snapshot, compact bool) []string {
@@ -387,6 +471,9 @@ func (m *Model) badges(snap live.Snapshot, compact bool) []string {
 			return short
 		}
 		return long
+	}
+	if m.mode == Backtrain {
+		return m.backtrainBadges(pick)
 	}
 	out := []string{}
 	switch {
@@ -415,6 +502,20 @@ func (m *Model) badges(snap live.Snapshot, compact bool) []string {
 		out = append(out, m.th.BadgeOff.Render(snap.StrategyName))
 	}
 	return out
+}
+
+// backtrainBadges : l'atelier ne passe AUCUN ordre, et le dit en premier ;
+// suivent ce qui décide de ce qu'on y fabrique — moteur, unité de temps
+// d'entraînement, devise du compte, source de l'historique.
+func (m *Model) backtrainBadges(pick func(long, short string) string) []string {
+	cfg := m.app.Config
+	return []string{
+		m.th.BadgeSim.Render(pick("ATELIER — aucun ordre", "ATELIER")),
+		m.th.BadgeOff.Render(pick("compte "+cfg.Backtest.AccountCurrency, cfg.Backtest.AccountCurrency)),
+		m.th.BadgeOff.Render(pick("unité "+cfg.Training.Timeframe, cfg.Training.Timeframe)),
+		m.th.BadgeOff.Render(cfg.History.Source),
+		m.th.BadgeOff.Render(cfg.Strategy.Name),
+	}
 }
 
 // rule dessine le filet de séparation, à la largeur EXACTE des panneaux
@@ -480,9 +581,14 @@ func (m *Model) renderHelp(height int) string {
 // helpLines construit l'aide ligne à ligne : c'est ce découpage qui la
 // rend défilable.
 func (m *Model) helpLines() []string {
-	lines := []string{m.th.Title.Render("Aide"), "", m.th.Subtitle.Render("Navigation")}
+	other := "gw backtrain : données, entraînement, backtest (peut tourner à côté)"
+	if m.mode == Backtrain {
+		other = "gw : séance live ou papier, journal"
+	}
+	lines := []string{m.th.Title.Render("Aide — Golden Waterfall · " + m.modeName()), "",
+		m.th.Muted.Render("L'autre interface : " + other), "", m.th.Subtitle.Render("Navigation")}
 	for _, p := range [][2]string{
-		{"1…6 / tab / ⇧tab", "changer d'écran"},
+		{fmt.Sprintf("1…%d / tab / ⇧tab", len(m.views)), "changer d'écran"},
 		{"?", "afficher ou masquer cette aide"},
 		{"q", "quitter (refusé pendant un travail de fond)"},
 		{"ctrl+c", "quitter immédiatement"},

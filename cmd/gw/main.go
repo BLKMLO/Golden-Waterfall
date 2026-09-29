@@ -1,11 +1,15 @@
 // Commande gw : le binaire UNIQUE de Golden Waterfall.
 //
-// Sans argument, il ouvre l'interface terminal (TUI). Les sous-commandes
-// existent pour les usages non interactifs — tâche planifiée, conteneur,
-// intégration continue — et partagent exactement le même code que la TUI :
-// il n'y a pas deux chemins possibles pour un même calcul.
+// Sans argument, il ouvre l'interface de TRADING (live ou papier) ;
+// `gw backtrain` ouvre l'atelier (données, entraînement, backtest). Les
+// autres sous-commandes existent pour les usages non interactifs — tâche
+// planifiée, conteneur, intégration continue — et partagent exactement le
+// même code que les interfaces : il n'y a pas deux chemins possibles pour
+// un même calcul.
 //
-//	gw                      interface terminal
+//	gw                      interface de trading (Live, Journal, Paramètres)
+//	gw backtrain            interface d'atelier (Données, Entraînement,
+//	                        Backtest, Paramètres)
 //	gw download [PAIRE…]    historique M1 (toutes les paires si aucune)
 //	                        --year / --from / --to limitent la période,
 //	                        --source choisit le fournisseur
@@ -55,9 +59,11 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return runTUI()
+		return runTUI(tui.Trading)
 	}
 	switch args[0] {
+	case "backtrain":
+		return runTUI(tui.Backtrain)
 	case "version", "--version", "-v":
 		fmt.Printf("Golden Waterfall %s\n", Version)
 		return nil
@@ -91,25 +97,33 @@ func run(args []string) error {
 func printUsage() {
 	fmt.Print(`Golden Waterfall — expert advisor en terminal.
 
+DEUX INTERFACES
+
+  gw backtrain   l'ATELIER : Données, Entraînement, Backtest, Paramètres.
+                 Aucun ordre n'y part ; il peut rester ouvert pendant une séance.
+  gw             la SÉANCE : Live, Journal, Paramètres. L'écran Live dit si les
+                 prérequis (entraînement, paramétrage) sont faits — touche p.
+
 PREMIERS PAS — dans cet ordre, chaque étape a besoin de la précédente :
 
   1. Télécharger l'historique   gw download EURUSD --from 2018 --to 2024
-                                (ou écran 2 Données : d la paire, D tout)
+                                (ou gw backtrain, écran 1 Données : d la paire, D tout)
   2. Entraîner et valider       gw train EURUSD
-                                (ou écran 4 Entraînement : p paires, r lancer)
+                                (ou gw backtrain, écran 2 Entraînement : p paires, r lancer)
                                 Seul l'agrégat OUT-OF-SAMPLE dit si le modèle
-                                vaut quelque chose : 0,50 d'AUC = hasard.
+                                vaut quelque chose.
                                 Moteur : strategy.name — colibri_v1_2 (défaut,
-                                classifieur) ou troglodyte_v1_1 (tendance,
-                                sans AUC : juger le P&L out-of-sample ;
-                                calendrier économique : gw news fetch).
+                                classifieur, exige le volume), troglodyte_v1_1
+                                (tendance) ou martinet_v1_0 (scalping de zones de
+                                liquidité, en M1, M5 ou M15 seulement :
+                                training.timeframe ET broker.timeframe).
   3. Inspecter un rejeu         gw backtest EURUSD
-                                (ou écran 3 Backtest : r) — rejeu IN-SAMPLE,
-                                pour comprendre, pas pour juger.
-  4. Trader                     gw, écran 1 Live : c connecter, k kill-switch,
-                                espace armer la paire. Par défaut, rejeu
-                                simulé : aucun argent engagé. Un vrai courtier
-                                (Interactive Brokers) : docs/brokers.md.
+                                (ou gw backtrain, écran 3 Backtest : r) — rejeu
+                                IN-SAMPLE, pour comprendre, pas pour juger.
+  4. Trader                     gw, écran 1 Live : p prérequis, c connecter,
+                                k kill-switch, espace armer la paire. Par défaut,
+                                rejeu simulé : aucun argent engagé. Un vrai
+                                courtier (Interactive Brokers) : docs/brokers.md.
 
   Devise du compte (backtest.account_currency) : seules les paires dont elle
   est la base ou la cotation peuvent être dimensionnées au risque. gw config
@@ -117,7 +131,8 @@ PREMIERS PAS — dans cet ordre, chaque étape a besoin de la précédente :
 
 COMMANDES
 
-  gw                      interface terminal (par défaut)
+  gw                      interface de trading (par défaut)
+  gw backtrain            interface d'atelier
   gw download [PAIRE…]    télécharge l'historique M1 (source : history.source)
      --year A             une seule année        (ex. gw download EURUSD --year 2019)
      --from A --to B      une période            (bornes comprises)
@@ -139,6 +154,9 @@ COMMANDES
   gw config [--default]   affiche la configuration effective
   gw version
 
+  Seul gw ouvre la base du journal : gw backtrain et les commandes de travail
+  tournent pendant une séance.
+
 VARIABLES D'ENVIRONNEMENT
 
   GW_CONFIG_DIR, GW_DATA_DIR   forcent les emplacements (installation portable)
@@ -148,9 +166,10 @@ VARIABLES D'ENVIRONNEMENT
 `)
 }
 
-// open construit l'application et installe l'arrêt propre sur signal.
+// open construit l'application de TRAVAIL (sans base ni moteur live :
+// elle tourne à côté d'une séance) et installe l'arrêt propre sur signal.
 func open() (*app.App, context.Context, context.CancelFunc, error) {
-	a, err := app.New(config.DefaultPaths())
+	a, err := app.Open(config.DefaultPaths(), app.Workshop)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -158,13 +177,17 @@ func open() (*app.App, context.Context, context.CancelFunc, error) {
 	return a, ctx, cancel, nil
 }
 
-func runTUI() error {
-	a, err := app.New(config.DefaultPaths())
+func runTUI(mode tui.Mode) error {
+	appMode := app.Trading
+	if mode == tui.Backtrain {
+		appMode = app.Workshop
+	}
+	a, err := app.Open(config.DefaultPaths(), appMode)
 	if err != nil {
 		return err
 	}
 	defer a.Close()
-	return tui.Run(a)
+	return tui.Run(a, mode)
 }
 
 func runPaths() error {
@@ -196,7 +219,25 @@ func runConfig(args []string) error {
 	fmt.Printf("fichier            : %s\n", cfg.Paths.ConfigFile())
 	fmt.Printf("passerelle         : %s (%s)\n", cfg.Broker.Name, cfg.Broker.Mode)
 	fmt.Printf("stratégie          : %s (kill-switch %v)\n", cfg.Strategy.Name, cfg.Strategy.Enabled)
+	if _, err := strategy.New(cfg.Strategy.Name); err != nil {
+		fmt.Printf("  ✗ %v\n", err)
+	}
 	fmt.Printf("unité de temps     : %s (live %s)\n", cfg.Training.Timeframe, cfg.Broker.Timeframe)
+	if s, err := strategy.New(cfg.Strategy.Name); err == nil {
+		desc := s.Describe()
+		s.Shutdown()
+		for _, name := range []string{cfg.Training.Timeframe, cfg.Broker.Timeframe} {
+			if tf, err := data.ParseTimeframe(name); err == nil {
+				if err := strategy.CheckTimeframe(desc, tf); err != nil {
+					fmt.Printf("  ⚠ %v\n", err)
+					break
+				}
+			}
+		}
+		if cfg.Training.Timeframe != cfg.Broker.Timeframe {
+			fmt.Println("  ⚠ entraînement et live diffèrent : un modèle n'est chargé en live que dans l'unité où il a été entraîné")
+		}
+	}
 	fmt.Printf("risque             : %s · %d/symbole · %d/compte · perte max %.1f %%\n",
 		sizingLabel(cfg.Risk), cfg.Risk.MaxPositionsPerSymbol,
 		cfg.Risk.MaxOpenPositions, cfg.Risk.MaxDailyLossPct)
@@ -849,6 +890,16 @@ func runNews(args []string) error {
 	st.Enabled = cfg.News.Enabled
 	fmt.Println("Calendrier économique :", st.Describe())
 	fmt.Printf("Archive : %s\n", cfg.Paths.NewsDir())
-	fmt.Println("S'applique aux stratégies qui le déclarent (troglodyte_v1_1) ; Colibri n'y a jamais accès.")
+	var users []string
+	for _, name := range strategy.List() {
+		if s, err := strategy.New(name); err == nil {
+			if s.Describe().UsesNews {
+				users = append(users, name)
+			}
+			s.Shutdown()
+		}
+	}
+	fmt.Printf("S'applique aux stratégies qui le déclarent (%s) ; Colibri n'y a jamais accès.\n",
+		strings.Join(users, ", "))
 	return nil
 }

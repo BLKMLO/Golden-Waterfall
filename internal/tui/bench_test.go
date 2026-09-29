@@ -33,7 +33,7 @@ func newBenchApp(b *testing.B) *app.App {
 // millième de la cadence de rafraîchissement. C'est le prix, et il est
 // dérisoire devant un affichage faux.
 func BenchmarkViewAllScreens(b *testing.B) {
-	m := New(newBenchApp(b))
+	m := New(newBenchApp(b), Trading)
 	model, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	m = model.(*Model)
 	b.ReportAllocs()
