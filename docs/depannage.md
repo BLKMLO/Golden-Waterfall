@@ -65,7 +65,10 @@ cessait d'être vraie — ce ne sont pas des intentions.
 | Une seule classe dans les labels | refuse d'entraîner, plutôt qu'un modèle constant déguisé |
 | Le courtier ne répond pas sur les positions | s'abstient de décider, plutôt que de trader sur une image périmée |
 | La perte journalière maximale est atteinte | bloque toute nouvelle entrée ; les sorties restent toujours possibles |
-| Une deuxième instance est lancée | échoue proprement : la base est déjà ouverte |
+| Une deuxième instance de `gw` est lancée | échoue proprement : la base est déjà ouverte. `gw backtrain` et les commandes de travail (`train`, `backtest`, `download`…) ne l'ouvrent pas : elles tournent pendant une séance |
+| `strategy.name` nomme une révision retirée (`colibri_v1_0`, `colibri_v1_1`, `troglodyte_v1_0`) | refus au démarrage, qui nomme la remplaçante ; changer le nom et réentraîner |
+| Martinet refuse de s'entraîner ou de se connecter | il ne travaille qu'en M1, M5 ou M15 : régler `training.timeframe` ET `broker.timeframe` (`gw config` le signale) |
+| Écran Live : « → manque : … » | la ligne Prérequis dit ce qui empêche la séance de trader ; `p` en donne le détail et le remède |
 | TWS injoignable, API désactivée, mauvais port | refuse la connexion en disant quoi vérifier |
 | « client id is already in use » (IB, code 326) | refuse la connexion : changer `broker.client_id` |
 | TWS perd sa liaison avec IB (code 1100) | passe « déconnecté » jusqu'au rétablissement ; aucun ordre ne part |

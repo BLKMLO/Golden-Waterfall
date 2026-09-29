@@ -50,7 +50,7 @@ func TestNormalizedPathIsScaleFree(t *testing.T) {
 }
 
 func TestChandelierRule(t *testing.T) {
-	ru := rule{enterZ: 1.5, exitZ: 0.5, stopATR: 3, trail: true}
+	ru := rule{enterZ: 1.5, exitZ: 0.5, stopATR: 3}
 	// hh 110, ATR 1 : le stop suiveur long est à 107.
 	base := barState{z: 2, close: 109, atr: 1, hh: 110, ll: 100}
 	if a, stop := decide(base, ru); a != core.EnterLong || stop != 106 {
@@ -193,8 +193,5 @@ func TestV11DeclaresNewsAndDirectionalExits(t *testing.T) {
 	d := newTroglodyte(v11()).Describe()
 	if !d.UsesNews || !d.HoldsOverWeekend || !d.ExitOnReversal {
 		t.Fatalf("déclarations attendues : %+v", d)
-	}
-	if newTroglodyte(revisions[0]).Describe().UsesNews {
-		t.Fatal("troglodyte_v1_0 est publiée sans filtre d'actualités : elle ne doit pas le déclarer")
 	}
 }

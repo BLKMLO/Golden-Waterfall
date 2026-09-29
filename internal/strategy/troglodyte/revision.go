@@ -8,30 +8,27 @@ type revision struct {
 	name, version, summary string
 	// window : bougies refiltrées à chaque décision.
 	window int
-	// enterZ, exitZ : seuils s_in et s_out sur z. Pour une révision
-	// CALIBRÉE, ce sont les valeurs de repli quand le calibrage n'a pas
-	// assez de trades pour trancher.
+	// enterZ, exitZ : seuils s_in et s_out sur z de REPLI, gardés quand
+	// le calibrage n'a pas assez de trades pour trancher.
 	enterZ, exitZ float64
-	// stopATR, atrPeriod : stop initial à k × ATR de Wilder.
+	// stopATR, atrPeriod : stop initial à k × ATR de Wilder (k de repli).
 	stopATR   float64
 	atrPeriod int
 	// minTrainBars : en deçà, l'estimation des variances n'a pas assez
 	// d'innovations pour être autre chose que du bruit. On REFUSE.
 	minTrainBars int
 
-	// --- À partir de troglodyte_v1_1 ---------------------------------------
-
-	// volHalfLife : > 0 = le filtre travaille sur le prix NORMALISÉ par sa
+	// volHalfLife : le filtre travaille sur le prix NORMALISÉ par sa
 	// volatilité (demi-vie, en bougies, de la moyenne exponentielle des
-	// rendements au carré). 0 = logarithme brut (v1_0).
+	// rendements au carré).
 	volHalfLife int
-	// trailBars : > 0 = stop suiveur « chandelier » : une position longue
+	// trailBars : stop suiveur « chandelier » : une position longue
 	// sort quand le close passe sous (plus haut des trailBars dernières
 	// bougies − k × ATR), et symétriquement. k = stopATR (ou sa valeur
 	// calibrée).
 	trailBars int
-	// enterGrid, stopGrid : grilles du CALIBRAGE (vides = pas de
-	// calibrage). exitRatio : s_out = s_in × exitRatio.
+	// enterGrid, stopGrid : grilles du CALIBRAGE. exitRatio :
+	// s_out = s_in × exitRatio.
 	enterGrid, stopGrid []float64
 	exitRatio           float64
 	// minCalibTrades : en deçà, un point de grille n'est pas jugé.
@@ -40,21 +37,9 @@ type revision struct {
 	usesNews bool
 }
 
-func (r revision) calibrated() bool { return len(r.enterGrid) > 0 && len(r.stopGrid) > 0 }
-
+// revisions : la révision LIVRÉE (règle du propriétaire, v0.8.0 : une
+// génération ne garde que sa dernière révision).
 var revisions = []revision{
-	{
-		name:    "troglodyte_v1_0",
-		version: "1.0",
-		summary: "Suivi de tendance structurel : pente d'une tendance locale linéaire " +
-			"filtrée par Kalman, variances estimées par maximum de vraisemblance, paire par paire.",
-		window:       500,
-		enterZ:       1.5,
-		exitZ:        0.5,
-		stopATR:      3,
-		atrPeriod:    14,
-		minTrainBars: 1000,
-	},
 	{
 		name:    "troglodyte_v1_1",
 		version: "1.1",
@@ -88,4 +73,5 @@ func init() {
 	for _, r := range revisions {
 		strategy.Register(r.name, func() strategy.Strategy { return newTroglodyte(r) })
 	}
+	strategy.Retire("troglodyte_v1_0", "troglodyte_v1_1")
 }

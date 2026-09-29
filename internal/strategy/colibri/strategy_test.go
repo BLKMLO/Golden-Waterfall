@@ -53,18 +53,17 @@ func makeSeries(n int, seed int64, base float64) core.Series {
 	return out
 }
 
-func TestRegistryHasEveryRevision(t *testing.T) {
-	names := strategy.List()
-	want := map[string]bool{"colibri_v1_0": false, "colibri_v1_1": false, "colibri_v1_2": false}
-	for _, n := range names {
-		if _, ok := want[n]; ok {
-			want[n] = true
+// TestOnlyTheLatestRevisionIsShipped : règle du propriétaire (v0.8.0) —
+// une génération ne livre que sa dernière révision.
+func TestOnlyTheLatestRevisionIsShipped(t *testing.T) {
+	var found []string
+	for _, n := range strategy.List() {
+		if strings.HasPrefix(n, "colibri_") {
+			found = append(found, n)
 		}
 	}
-	for n, found := range want {
-		if !found {
-			t.Fatalf("stratégie %q absente du registre : %v", n, names)
-		}
+	if len(found) != 1 || found[0] != "colibri_v1_2" {
+		t.Fatalf("révisions Colibri enregistrées : %v, seule colibri_v1_2 attendue", found)
 	}
 	if _, err := strategy.New("inexistante"); err == nil {
 		t.Fatal("une stratégie inconnue doit être refusée")
@@ -72,7 +71,7 @@ func TestRegistryHasEveryRevision(t *testing.T) {
 }
 
 func TestStrategyWithoutModelStaysMute(t *testing.T) {
-	s, err := strategy.New("colibri_v1_1")
+	s, err := strategy.New("colibri_v1_2")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,13 +98,13 @@ func TestStrategyWithoutModelStaysMute(t *testing.T) {
 }
 
 func TestPooledStrategyTrainsAndPredicts(t *testing.T) {
-	s, err := strategy.New("colibri_v1_1")
+	s, err := strategy.New("colibri_v1_2")
 	if err != nil {
 		t.Fatal(err)
 	}
 	trainable, ok := s.(strategy.Trainable)
 	if !ok {
-		t.Fatal("colibri_v1_1 doit être entraînable")
+		t.Fatal("colibri_v1_2 doit être entraînable")
 	}
 	dir := t.TempDir()
 	datasets := map[string]core.Series{
@@ -121,11 +120,11 @@ func TestPooledStrategyTrainsAndPredicts(t *testing.T) {
 	if report.Samples < minTrainSamples {
 		t.Fatalf("%d exemples seulement", report.Samples)
 	}
-	if report.Features != len(columnsV1)+1 {
-		t.Fatalf("%d features, %d attendues (34 causales + symbol)",
-			report.Features, len(columnsV1)+1)
+	if report.Features != len(columnsV2)+1 {
+		t.Fatalf("%d features, %d attendues (33 causales + symbol)",
+			report.Features, len(columnsV2)+1)
 	}
-	for _, f := range []string{"model.json", "metadata.json"} {
+	for _, f := range []string{"model_long.json", "model_short.json", "metadata.json"} {
 		if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
 			t.Fatalf("artefact manquant : %s", f)
 		}
@@ -138,7 +137,7 @@ func TestPooledStrategyTrainsAndPredicts(t *testing.T) {
 	}
 
 	// Rechargement dans une instance NEUVE : c'est le chemin réel du live.
-	fresh, _ := strategy.New("colibri_v1_1")
+	fresh, _ := strategy.New("colibri_v1_2")
 	series := datasets["EURUSD"]
 	if err := fresh.Warmup(context.Background(), strategy.WarmupRequest{
 		Symbol: "EURUSD", Series: series, Timeframe: data.H4, ModelDir: dir,
@@ -155,13 +154,13 @@ func TestPooledStrategyTrainsAndPredicts(t *testing.T) {
 	if sig.Confidence < 0 || sig.Confidence > 1 {
 		t.Fatalf("la confiance doit être une probabilité : %v", sig.Confidence)
 	}
-	if sig.Strategy != "colibri_v1_1" {
+	if sig.Strategy != "colibri_v1_2" {
 		t.Fatalf("signal non attribué : %q", sig.Strategy)
 	}
 }
 
 func TestBarriersMatchLabelingMultiple(t *testing.T) {
-	s, _ := strategy.New("colibri_v1_1")
+	s, _ := strategy.New("colibri_v1_2")
 	trainable := s.(strategy.Trainable)
 	dir := t.TempDir()
 	series := makeSeries(2200, 31, 1.10)
@@ -188,7 +187,7 @@ func TestBarriersMatchLabelingMultiple(t *testing.T) {
 			continue
 		}
 		found = true
-		want := revV11.barrierATRMult * atr[i]
+		want := revV12.barrierATRMult * atr[i]
 		gotTP := math.Abs(sig.TakeProfit - series[i].Close())
 		gotSL := math.Abs(sig.StopLoss - series[i].Close())
 		if math.Abs(gotTP-want) > 1e-9 || math.Abs(gotSL-want) > 1e-9 {
@@ -209,23 +208,8 @@ func TestBarriersMatchLabelingMultiple(t *testing.T) {
 	}
 }
 
-func TestPerSymbolStrategyRefusesPooledTraining(t *testing.T) {
-	s, _ := strategy.New("colibri_v1_0")
-	trainable := s.(strategy.Trainable)
-	_, err := trainable.Train(context.Background(), strategy.TrainRequest{
-		Datasets: map[string]core.Series{
-			"EURUSD": makeSeries(1500, 41, 1.10),
-			"GBPUSD": makeSeries(1500, 42, 1.27),
-		},
-		Timeframe: data.H4, OutputDir: t.TempDir(), Seed: 1,
-	})
-	if err == nil {
-		t.Fatal("colibri_v1_0 entraîne UN modèle par actif : plusieurs symboles doivent être refusés")
-	}
-}
-
 func TestTinyDatasetIsRefused(t *testing.T) {
-	s, _ := strategy.New("colibri_v1_1")
+	s, _ := strategy.New("colibri_v1_2")
 	trainable := s.(strategy.Trainable)
 	_, err := trainable.Train(context.Background(), strategy.TrainRequest{
 		Datasets:  map[string]core.Series{"EURUSD": makeSeries(200, 51, 1.10)},
@@ -237,19 +221,26 @@ func TestTinyDatasetIsRefused(t *testing.T) {
 }
 
 func TestModelOfAnotherStrategyIsRefused(t *testing.T) {
-	// Un modèle v1.1 ne doit pas pouvoir être chargé par v1.0 : les
-	// colonnes et les seuils diffèrent, les probabilités seraient
-	// crédibles et fausses.
-	s2, _ := strategy.New("colibri_v1_1")
+	// Un modèle d'une autre révision (ici un manifeste qui se déclare
+	// colibri_v1_1, retirée) ne doit pas être chargé : colonnes et règle
+	// diffèrent, les probabilités seraient crédibles et fausses.
+	s, _ := strategy.New("colibri_v1_2")
 	dir := t.TempDir()
-	if _, err := s2.(strategy.Trainable).Train(context.Background(), strategy.TrainRequest{
+	if _, err := s.(strategy.Trainable).Train(context.Background(), strategy.TrainRequest{
 		Datasets:  map[string]core.Series{"EURUSD": makeSeries(2200, 61, 1.10)},
 		Timeframe: data.H4, OutputDir: dir, Seed: 3,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	s1, _ := strategy.New("colibri_v1_0")
-	err := s1.Warmup(context.Background(), strategy.WarmupRequest{
+	path := filepath.Join(dir, strategy.ModelManifest)
+	raw, _ := os.ReadFile(path)
+	var doc map[string]any
+	json.Unmarshal(raw, &doc)
+	doc["strategy"] = "colibri_v1_1"
+	out, _ := json.Marshal(doc)
+	os.WriteFile(path, out, 0o644)
+	fresh, _ := strategy.New("colibri_v1_2")
+	err := fresh.Warmup(context.Background(), strategy.WarmupRequest{
 		Symbol: "EURUSD", Series: makeSeries(500, 62, 1.10), Timeframe: data.H4, ModelDir: dir,
 	})
 	if err == nil {
@@ -258,24 +249,24 @@ func TestModelOfAnotherStrategyIsRefused(t *testing.T) {
 }
 
 func TestDescribeExposesFrozenDefinition(t *testing.T) {
-	s, _ := strategy.New("colibri_v1_1")
+	s, _ := strategy.New("colibri_v1_2")
 	d := s.Describe()
 	if d.Definition == nil {
 		t.Fatal("la définition du modèle doit être exposée (source unique de vérité)")
 	}
-	if d.Definition["barriere_atr"] != revV11.barrierATRMult {
+	if d.Definition["barriere_atr"] != revV12.barrierATRMult {
 		t.Fatal("la définition doit citer la VRAIE constante, pas une copie")
 	}
-	if d.Definition["nb_features"] != len(columnsV1)+1 {
+	if d.Definition["nb_features"] != len(columnsV2)+1 {
 		t.Fatalf("nombre de features annoncé incohérent : %v", d.Definition["nb_features"])
 	}
-	if d.Definition["seuil_long"] != 0.60 {
-		t.Fatalf("seuil long v1.1 = 0,60, annoncé %v", d.Definition["seuil_long"])
+	if d.Definition["marge_min_r"] != 0.10 {
+		t.Fatalf("marge v1_2 = 0,10 R, annoncée %v", d.Definition["marge_min_r"])
 	}
 }
 
 func TestScoreOOSReportsUnavailableHonestly(t *testing.T) {
-	s, _ := strategy.New("colibri_v1_1")
+	s, _ := strategy.New("colibri_v1_2")
 	trainable := s.(strategy.Trainable)
 	if _, ok := trainable.ScoreOOS("EURUSD", makeSeries(500, 71, 1.10), 0); ok {
 		t.Fatal("sans modèle, l'AUC out-of-sample n'est PAS calculable : il faut le dire")
@@ -285,7 +276,7 @@ func TestScoreOOSReportsUnavailableHonestly(t *testing.T) {
 func TestTrainingIsReproducible(t *testing.T) {
 	series := makeSeries(2200, 81, 1.10)
 	run := func() float64 {
-		s, _ := strategy.New("colibri_v1_1")
+		s, _ := strategy.New("colibri_v1_2")
 		dir := t.TempDir()
 		if _, err := s.(strategy.Trainable).Train(context.Background(), strategy.TrainRequest{
 			Datasets:  map[string]core.Series{"EURUSD": series},
@@ -312,7 +303,7 @@ func TestTrainingIsReproducible(t *testing.T) {
 // suffit pas : il faut les noms, et dans l'ordre.
 func TestModelWithReorderedColumnsIsRefused(t *testing.T) {
 	dir := t.TempDir()
-	s, _ := strategy.New("colibri_v1_1")
+	s, _ := strategy.New("colibri_v1_2")
 	if _, err := s.(strategy.Trainable).Train(context.Background(), strategy.TrainRequest{
 		Datasets:  map[string]core.Series{"EURUSD": makeSeries(2200, 91, 1.10)},
 		Timeframe: data.H4, OutputDir: dir, Seed: 3,
@@ -341,8 +332,8 @@ func TestModelWithReorderedColumnsIsRefused(t *testing.T) {
 		}
 	}
 
-	swapColumns(filepath.Join(dir, "model.json"), "feature_names")
-	fresh, _ := strategy.New("colibri_v1_1")
+	swapColumns(filepath.Join(dir, "model_long.json"), "feature_names")
+	fresh, _ := strategy.New("colibri_v1_2")
 	err := fresh.Warmup(context.Background(), strategy.WarmupRequest{
 		Symbol: "EURUSD", Series: makeSeries(500, 92, 1.10), Timeframe: data.H4, ModelDir: dir,
 	})
@@ -356,7 +347,7 @@ func TestModelWithReorderedColumnsIsRefused(t *testing.T) {
 
 func TestMetadataColumnsMustMatchToo(t *testing.T) {
 	dir := t.TempDir()
-	s, _ := strategy.New("colibri_v1_1")
+	s, _ := strategy.New("colibri_v1_2")
 	if _, err := s.(strategy.Trainable).Train(context.Background(), strategy.TrainRequest{
 		Datasets:  map[string]core.Series{"EURUSD": makeSeries(2200, 93, 1.10)},
 		Timeframe: data.H4, OutputDir: dir, Seed: 3,
@@ -371,7 +362,7 @@ func TestMetadataColumnsMustMatchToo(t *testing.T) {
 	out, _ := json.Marshal(doc)
 	os.WriteFile(path, out, 0o644)
 
-	fresh, _ := strategy.New("colibri_v1_1")
+	fresh, _ := strategy.New("colibri_v1_2")
 	if err := fresh.Warmup(context.Background(), strategy.WarmupRequest{
 		Symbol: "EURUSD", Series: makeSeries(500, 94, 1.10), Timeframe: data.H4, ModelDir: dir,
 	}); err == nil {
@@ -464,35 +455,6 @@ func TestSidedTargetIsWhatTheEngineDelivers(t *testing.T) {
 	}
 }
 
-// TestPerSymbolModelsDoNotOverwriteEachOther : une instance mono-actif
-// chauffée sur deux paires garde LEUR modèle à chacune. Avant, la seconde
-// chauffe remplaçait le modèle de la première.
-func TestPerSymbolModelsDoNotOverwriteEachOther(t *testing.T) {
-	ctx := context.Background()
-	eur, gbp := makeSeries(2200, 1, 1.10), makeSeries(2200, 2, 1.27)
-	dirs := map[string]string{"EURUSD": t.TempDir(), "GBPUSD": t.TempDir()}
-	for sym, s := range map[string]core.Series{"EURUSD": eur, "GBPUSD": gbp} {
-		tr, _ := strategy.New("colibri_v1_0")
-		if _, err := tr.(strategy.Trainable).Train(ctx, strategy.TrainRequest{
-			Datasets: map[string]core.Series{sym: s}, Timeframe: data.H4, OutputDir: dirs[sym], Seed: 1, Threads: 1,
-		}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	alone, _ := strategy.New("colibri_v1_0")
-	both, _ := strategy.New("colibri_v1_0")
-	alone.Warmup(ctx, strategy.WarmupRequest{Symbol: "EURUSD", Series: eur, Timeframe: data.H4, ModelDir: dirs["EURUSD"]})
-	both.Warmup(ctx, strategy.WarmupRequest{Symbol: "EURUSD", Series: eur, Timeframe: data.H4, ModelDir: dirs["EURUSD"]})
-	both.Warmup(ctx, strategy.WarmupRequest{Symbol: "GBPUSD", Series: gbp, Timeframe: data.H4, ModelDir: dirs["GBPUSD"]})
-	for i := contextBars; i < len(eur); i += 97 {
-		a, _ := alone.OnBar(ctx, "EURUSD", eur, i)
-		b, _ := both.OnBar(ctx, "EURUSD", eur, i)
-		if a != b {
-			t.Fatalf("bougie %d : la chauffe de GBPUSD a changé les décisions d'EURUSD", i)
-		}
-	}
-}
-
 func TestV12WritesBothHeadsAndTheirMeasurements(t *testing.T) {
 	dir := t.TempDir()
 	s, _ := strategy.New("colibri_v1_2")
@@ -571,7 +533,7 @@ func TestHistoryWithoutVolumeIsRefusedByName(t *testing.T) {
 	for i := range series {
 		series[i].Volume = math.NaN()
 	}
-	for _, name := range []string{"colibri_v1_0", "colibri_v1_1", "colibri_v1_2"} {
+	for _, name := range []string{"colibri_v1_2"} {
 		s, _ := strategy.New(name)
 		if !s.Describe().UsesVolume {
 			t.Fatalf("%s dépend du volume et doit le déclarer", name)

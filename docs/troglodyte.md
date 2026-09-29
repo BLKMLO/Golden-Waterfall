@@ -262,10 +262,17 @@ exigent un.
 
 ## troglodyte_v1_1 (v0.7.1) : ce qui change, et pourquoi
 
-v1_0 reste disponible et **inchangée** : avant et après la refonte du
-paquet, son modèle et ses 3 000 décisions sur une série de test sont
-identiques octet pour octet, et son walk-forward synthétique redonne
-exactement les mêmes 38 trades. v1_1 répond aux trois premières limites
+> **Depuis v0.8.0, seule `troglodyte_v1_1` est livrée** (un moteur ne
+> garde que sa dernière révision). `troglodyte_v1_0` a été retirée avec son
+> code (prix brut, seuils fixes, branche sans stop suiveur) ; une
+> configuration qui la nomme est refusée en nommant `troglodyte_v1_1`.
+> Retrait vérifié : modèle et décisions de v1_1 identiques octet pour
+> octet avant et après. Les sections sur v1_0 restent comme archive.
+
+En v0.7.1, v1_0 était restée disponible et **inchangée** : avant et après
+la refonte du paquet, son modèle et ses 3 000 décisions sur une série de
+test étaient identiques octet pour octet, et son walk-forward synthétique
+redonnait exactement les mêmes 38 trades. v1_1 répond aux trois premières limites
 ci-dessus. Aucune de ses améliorations n'a été mesurée sur un historique
 réel : ce sont des corrections de défauts connus, pas des gains prouvés.
 
@@ -370,7 +377,7 @@ le poste dominant).
 | `TestCalibrationSimulationMatchesTheBacktestEngine` | Simulation du calibrage = moteur de backtest, trade par trade |
 | `TestCalibrationPicksAGridPointAndRecordsTheGrid` | Point retenu dans la grille, grille archivée, seuil hors grille refusé au chargement |
 | `TestCalibrationFallsBackWithoutEnoughTrades` | Repli gardé ET signalé |
-| `TestV11DeclaresNewsAndDirectionalExits` | Déclarations ; v1_0 ne déclare pas le filtre |
+| `TestV11DeclaresNewsAndDirectionalExits` | Déclarations (actualités, week-end, retournement) |
 
 ### Limites de v1_1
 

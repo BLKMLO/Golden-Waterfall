@@ -27,13 +27,19 @@ import (
 // SANS bougie de week-end comme un vrai historique forex, et avec un côté
 // ask. Elle ne sert qu'aux tests : jamais écrite chez l'utilisateur.
 func Series(n int, seed int64, base float64) core.Series {
+	return SeriesAt(data.H4, n, seed, base)
+}
+
+// SeriesAt : la même série, bougies de l'unité de temps `tf`.
+func SeriesAt(tf data.Timeframe, n int, seed int64, base float64) core.Series {
+	step := tf.Duration()
 	rng := rand.New(rand.NewSource(seed))
 	t := time.Date(2020, 1, 6, 0, 0, 0, 0, time.UTC) // un lundi
 	out := make(core.Series, 0, n)
 	price := base
 	for i := 0; len(out) < n; i++ {
 		if wd := t.Weekday(); wd == time.Saturday || wd == time.Sunday {
-			t = t.Add(4 * time.Hour)
+			t = t.Add(step)
 			continue
 		}
 		anchor := base + 0.02*base*math.Sin(float64(i)/90.0)
@@ -49,7 +55,7 @@ func Series(n int, seed int64, base float64) core.Series {
 			AskLow: low + spread, AskClose: price + spread,
 			Volume: 80 + rng.Float64()*60,
 		})
-		t = t.Add(4 * time.Hour)
+		t = t.Add(step)
 	}
 	return out
 }
@@ -70,7 +76,13 @@ func Run(t *testing.T, name string) {
 		t.Fatalf("contexte (%d) et horizon (%s) ne peuvent pas être négatifs", desc.ContextBars, desc.MaxHold)
 	}
 
-	series := Series(2400, 11, 1.10)
+	// L'unité de temps du banc : H4, ou la première que la stratégie
+	// déclare accepter.
+	tf := data.H4
+	if strategy.CheckTimeframe(desc, tf) != nil {
+		tf = desc.Timeframes[0]
+	}
+	series := SeriesAt(tf, 2400, 11, 1.10)
 	if _, err := s.OnBar(ctx, "EURUSD", series, len(series)); err == nil {
 		t.Fatal("un indice hors de la série doit être une erreur, pas un signal")
 	}
@@ -82,7 +94,7 @@ func Run(t *testing.T, name string) {
 	}
 
 	// --- Sans modèle : muette, et elle dit pourquoi -------------------------
-	if err := s.Warmup(ctx, strategy.WarmupRequest{Symbol: "EURUSD", Series: series, Timeframe: data.H4}); err != nil {
+	if err := s.Warmup(ctx, strategy.WarmupRequest{Symbol: "EURUSD", Series: series, Timeframe: tf}); err != nil {
 		t.Fatalf("une chauffe sans modèle n'est pas une erreur : %v", err)
 	}
 	if ready, why := s.Ready(); ready || why == "" {
@@ -100,11 +112,11 @@ func Run(t *testing.T, name string) {
 	pooled := false
 	if p, ok := s.(strategy.Pooled); ok && p.PoolsSymbols() {
 		pooled = true
-		datasets["GBPUSD"] = Series(2400, 12, 1.27)
+		datasets["GBPUSD"] = SeriesAt(tf, 2400, 12, 1.27)
 	}
 	dir := t.TempDir()
 	report, err := trainable.Train(ctx, strategy.TrainRequest{
-		Datasets: datasets, Timeframe: data.H4, OutputDir: dir, Seed: 42, Threads: 2,
+		Datasets: datasets, Timeframe: tf, OutputDir: dir, Seed: 42, Threads: 2,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -119,17 +131,17 @@ func Run(t *testing.T, name string) {
 	if !pooled {
 		// Mono-actif : plusieurs symboles doivent être refusés.
 		if _, err := trainable.Train(ctx, strategy.TrainRequest{
-			Datasets:  map[string]core.Series{"EURUSD": series, "GBPUSD": Series(2400, 12, 1.27)},
-			Timeframe: data.H4, OutputDir: t.TempDir(), Seed: 1,
+			Datasets:  map[string]core.Series{"EURUSD": series, "GBPUSD": SeriesAt(tf, 2400, 12, 1.27)},
+			Timeframe: tf, OutputDir: t.TempDir(), Seed: 1,
 		}); err == nil {
 			t.Fatal("une stratégie mono-actif doit refuser un entraînement mutualisé")
 		}
 	}
 
 	fresh, _ := strategy.New(name)
-	test := Series(1500, 99, 1.10)
+	test := SeriesAt(tf, 1500, 99, 1.10)
 	if err := fresh.Warmup(ctx, strategy.WarmupRequest{
-		Symbol: "EURUSD", Series: test, Timeframe: data.H4, ModelDir: dir,
+		Symbol: "EURUSD", Series: test, Timeframe: tf, ModelDir: dir,
 	}); err != nil {
 		t.Fatal(err)
 	}

@@ -305,8 +305,8 @@ Trois endroits produisent des CSV dans `exports/` :
 
 | Où | Touche | Ce qui sort |
 |---|---|---|
-| Écran **5 Journal**, onglet trades | `e` | Le journal des trades, **filtre compris** |
-| Écran **3 Backtest** | `e` | Trades, courbe de valeur, métriques (trois fichiers) |
+| `gw`, écran **2 Journal**, onglet trades | `e` | Le journal des trades, **filtre compris** |
+| `gw backtrain`, écran **3 Backtest** | `e` | Trades, courbe de valeur, métriques (trois fichiers) |
 | `gw backtest PAIRE --csv` | — | Les mêmes trois fichiers |
 
 **Convention de fichier, assumée** : séparateur `;`, décimale `,`, UTF-8

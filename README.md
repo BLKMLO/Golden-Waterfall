@@ -5,8 +5,8 @@
 **Un expert advisor de trading algorithmique qui tient entièrement dans votre terminal.**
 
 Télécharger l'historique, entraîner un modèle, le valider honnêtement, puis le
-laisser trader — six écrans, un seul binaire, aucun navigateur, aucun serveur,
-aucune dépendance à installer.
+laisser trader — deux interfaces, un seul binaire, aucun navigateur, aucun
+serveur, aucune dépendance à installer.
 
 [Télécharger](https://github.com/BLKMLO/Golden-Waterfall/releases/latest) ·
 [Démarrer](#démarrer) ·
@@ -17,29 +17,28 @@ aucune dépendance à installer.
 ---
 
 ```
-   1      2      3      4      5      6                        REJEU — COMPTE SIMULÉ  compte USD  replay  kill-switch  colibri_v1_2
+◆ Live    1 Live      2 Journal      3 Paramètres             REJEU — COMPTE SIMULÉ  compte USD  replay  kill-switch  martinet_v1_0
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Compte                                                                                                                           │
 │ Équité        Marge         Perte du jour Ticks         Bougies       Ordres                                                     │
-│ 10000.00      0.00          0.00 %        23 725        99            0                                                          │
-│                             plafond 2.0 % dernier 20:2…               0 exécutés                                                 │
+│ 10091.18      0.00          -0.91 %       7 215         1 442         3                                                          │
+│                             plafond 2.0 % dernier 00:1…               6 exécutés                                                 │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭────────────────────────────────────────────────────────────────╮╭────────────────────────────────────────────────────────────────╮
-│ Paires suivies                                                 ││ AUDUSD · H1                                                    │
-│  Paire           Bid     Var. État      Signal                 ││  ██  │││     ██                                                │
-│ ▸AUDUSD      0.67473  +0.70 % armée     pas de modèle          ││ ██████████████████                                             │
-│  EURUSD      1.11239  +0.03 % arrêtée   pas de modèle          ││ ██  │ │██ ││  ██│█                                             │
-│  GBPUSD      1.28395  +0.47 % arrêtée   pas de modèle          ││                  ███████│ ││                                   │
-│  USDJPY      153.045  -0.19 % arrêtée   pas de modèle          ││                   │││ │████████ │██                        █   │
-│                                                                ││                            ██│█████                │    ████   │
-│                                                                ││                               ││                 ███│████│     │
-│                                                                ││                                                │██ ███│        │
-│                                                                ││                                           │ █████              │
-│                                                                ││                                        ││████ ██               │
-│                                                                ││                                    █│█████ ││                  │
-│                                                                ││ ⚠ aucun entraînement archivé pour la stratégie "colibri_v1_…   │
-│                                                                ││ O 0.67304  H 0.67539  B 0.67304  C 0.67532  ·  110 bougies     │
+│ Paires suivies                                                 ││ EURUSD · H1                                                    │
+│  Paire           Bid     Var. État      Signal                 ││           █│  │                  │                             │
+│ ▸EURUSD      1.10840  +0.04 % armée     neutre                 ││ █││       ██││││              │ │││                            │
+│  GBPUSD            —        — arrêtée   pas de modèle          ││ ██│      │███████  ██         ██████                           │
+│                                                                ││ │███     ████  │█││██         █│██││                           │
+│                                                                ││   │█│ ████ │    ██│██     ██ ██                                │
+│                                                                ││    ██████│ │    │██ █     ████                                 │
+│                                                                ││    ████││        █│ █  │  █ ██                                 │
+│                                                                ││         │           █│ │ │█ █                                  │
+│                                                                ││                      ███│██                                    │
+│                                                                ││                      █████                                     │
+│                                                                ││                       │ │                                      │
+│                                                                ││ O 1.10792  H 1.10792  B 1.10747  C 1.10769  ·  36 bougies      │
 ╰────────────────────────────────────────────────────────────────╯╰────────────────────────────────────────────────────────────────╯
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Positions ouvertes (rapportées par la passerelle)                                                                                │
@@ -47,13 +46,14 @@ aucune dépendance à installer.
 │   (aucune donnée)                                                                                                                │
 │                                                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-AUDUSD  → bloquée : modèle  ✓ passerelle  ✓ barrières  ✓ kill-switch  ✓ paire armée  ✗ modèle  ✓ historique  ✓ devise USD
+Préreq.  → prêt  ✓ moteur  ✓ M5  ⚠ entr. 1/2  ⚠ hist. 1/2  ✓ dim.  ✓ news  p détail
+EURUSD  → peut trader  ✓ pass.  ✓ SL  ✓ k-s  ✓ armée  ✓ modèle  ✓ hist.  ✓ USD  ✗ news
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- AUDUSD ARMÉE
+
 tab écran  ·  ? aide  ·  q quitter  ·  c connecter / déconnecter  ·  k kill-switch global  ·  espace armer la paire  ·  ↑↓ sélection
 ```
 
-<sub>Capture réelle du binaire : rejeu sur un historique synthétique, sans modèle entraîné — d'où « bloquée : modèle » sur la ligne de contrôle.</sub>
+<sub>Capture réelle du binaire (`gw`, v0.8.0) : Martinet en M5 sur un rejeu d'historique SYNTHÉTIQUE, EURUSD armée — trois ordres à barrières, six exécutions, aucune position restée ouverte. GBPUSD, sans modèle ni historique, reste muette : la ligne Prérequis le dit (« ⚠ entraînement 1/2 »).</sub>
 
 ## Pourquoi
 
@@ -95,11 +95,18 @@ go build -o gw ./cmd/gw
 
 `gw --help` commence par les **premiers pas** : les quatre étapes, dans l'ordre, avec la commande et l'écran de chacune.
 
-**1. Lancez `./gw`.** Un `config.yaml` commenté est écrit au premier
-démarrage ; `./gw paths` dit où. Tout se règle ensuite depuis l'écran
-**6 Paramètres**.
+Deux interfaces, pour deux activités qui ne se font pas au même moment :
 
-**2. Téléchargez l'historique** — écran **2 Données**, `D` pour tout, `d` pour
+| | Écrans | Pour |
+|---|---|---|
+| **`gw backtrain`** | 1 Données · 2 Entraînement · 3 Backtest · 4 Paramètres | Préparer un moteur. Aucun ordre n'y part ; il n'ouvre pas la base du journal et peut donc rester ouvert **pendant** une séance. |
+| **`gw`** | 1 Live · 2 Journal · 3 Paramètres | Trader, en papier ou en réel. L'écran Live dit si les **prérequis** sont faits (moteur, unité de temps, entraînement, historique, dimensionnement, calendrier) et où réparer ce qui manque — touche `p`. |
+
+**1. Lancez `./gw backtrain`.** Un `config.yaml` commenté est écrit au
+premier démarrage ; `./gw paths` dit où. Tout se règle ensuite depuis
+l'écran **Paramètres**, présent dans les deux interfaces.
+
+**2. Téléchargez l'historique** — écran **1 Données**, `D` pour tout, `d` pour
 la paire sélectionnée. Des bougies M1 en **bid et en ask** : c'est le côté ask
 qui permet de *mesurer* le spread au lieu de l'inventer. Deux sources, au
 choix dans **Paramètres** (`history.source`) : **Dukascopy** (défaut, depuis
@@ -109,30 +116,34 @@ mais sans volume : Colibri ne peut pas s'en servir, Troglodyte oui). Un
 historique venu d'ailleurs s'importe en Parquet ou en CSV (`gw import`).
 Détail : [docs/donnees.md](docs/donnees.md).
 
-**3. Entraînez et validez** — écran **4 Entraînement**, `r`. C'est le seul
+**3. Entraînez et validez** — écran **2 Entraînement**, `r`. C'est le seul
 écran qui dise si la stratégie vaut quelque chose. Un modèle de **production**
 est ensuite entraîné sur tout l'historique : c'est lui qui partira en live, et
-les plis disent s'il le mérite.
+les plis disent s'il le mérite. L'écran **3 Backtest** rejoue une paire avec
+ce modèle, pour comprendre ce qu'il fait.
 
-**4. Tradez** — écran **1 Live** : `c` connecte, `k` arme le kill-switch
-global, `espace` arme la paire. Par défaut la passerelle est un **rejeu
+**4. Tradez** — lancez `./gw`, écran **1 Live** : la ligne **Prérequis** doit
+dire « → prêt » (`p` en détaille chaque point) ; `c` connecte, `k` arme le
+kill-switch global, `espace` arme la paire. Par défaut la passerelle est un **rejeu
 simulé** : toute la chaîne fonctionne, aucun argent n'est engagé. Pour un
 vrai courtier, **Interactive Brokers** (TWS ou IB Gateway, forex) :
 mise en place dans [docs/brokers.md](docs/brokers.md).
 
-## Les six écrans
+## Les écrans
 
-| | Ce qu'on y fait |
-|---|---|
-| **1 Live** | Compte, paires suivies, positions, graphique en chandeliers ; ligne de contrôle « pourquoi cette paire ne trade pas » |
-| **2 Données** | Inventaire de l'historique local, téléchargement complet ou par période, conversion des anciens fichiers (`m`) |
-| **3 Backtest** | Rejeu d'une paire, courbe d'équité, liste des trades défilable (`t`, `pgup`/`pgdn`), détail d'un trade (`entrée`), export CSV (`e`) |
-| **4 Entraînement** | Walk-forward, choix des paires (`p`), plis, agrégat out-of-sample, runs archivés |
-| **5 Journal** | Journal applicatif et journal des trades exécutés (défilable, détail par `entrée`), filtre texte (`/`), export CSV (`e`) |
-| **6 Paramètres** | Compte et courtier, risque, stratégie, historique, interface |
+| Interface | Écran | Ce qu'on y fait |
+|---|---|---|
+| `gw backtrain` | **1 Données** | Inventaire de l'historique local, téléchargement complet ou par période, conversion des anciens fichiers (`m`) |
+| | **2 Entraînement** | Walk-forward, choix des paires (`p`), plis, agrégat out-of-sample, runs archivés |
+| | **3 Backtest** | Rejeu d'une paire, courbe d'équité, liste des trades défilable (`t`, `pgup`/`pgdn`), détail d'un trade (`entrée`), export CSV (`e`) |
+| `gw` | **1 Live** | Prérequis de la séance (`p`), compte, paires suivies, positions, graphique en chandeliers ; ligne de contrôle « pourquoi cette paire ne trade pas » |
+| | **2 Journal** | Journal applicatif et journal des trades exécutés (défilable, détail par `entrée`), filtre texte (`/`), export CSV (`e`) |
+| les deux | **Paramètres** | Compte et courtier, risque, stratégie, historique, interface |
 
 `tab` change d'écran, `?` affiche l'aide complète, `q` quitte — et refuse tant
-qu'un entraînement tourne.
+qu'un entraînement tourne. L'entête dit toujours quelle interface est ouverte
+(« · Live » ou « · Backtrain ») ; celle de l'atelier porte le badge
+**ATELIER — aucun ordre**.
 
 La **devise du compte** reste affichée dans l'entête : avec le dimensionnement
 au risque, seules les paires dont elle est la base ou la cotation peuvent
@@ -146,8 +157,11 @@ Le logiciel s'appelle **Golden Waterfall** ; ses moteurs de décision portent
 des noms d'oiseaux, un par génération. Un moteur est un **module
 remplaçable** : backtest, live, walk-forward et interface ne connaissent que
 le contrat `strategy.Strategy` ([`docs/architecture.md`](docs/architecture.md)).
-On choisit le moteur dans l'écran **6 Paramètres** (`strategy.name`) ; chaque
-moteur a ses propres modèles et demande son propre entraînement.
+On choisit le moteur dans l'écran **Paramètres** (`strategy.name`) ; chaque
+moteur a ses propres modèles et demande son propre entraînement. Seule la
+**dernière révision** de chaque moteur est livrée (depuis v0.8.0) : une
+configuration restée sur une révision retirée est refusée au démarrage, en
+nommant celle qui la remplace.
 
 **Colibri** (`colibri_v1_2`, par défaut) est un **classifieur** : un gradient
 boosting écrit en Go apprend, sur des barrières à ± 1,5 ATR, l'issue nette de
@@ -155,25 +169,38 @@ coûts d'un trade, et n'entre que si l'espérance le justifie. Positions
 fermées avant chaque week-end. Détail et mesures :
 [`docs/colibri.md`](docs/colibri.md), [`docs/gbdt.md`](docs/gbdt.md).
 
-**Troglodyte** est un **suivi de tendance structurel** : un **filtre de
-Kalman** estime, à chaque bougie, la pente de la tendance et son
-incertitude ; leur rapport `z` décide. Il porte ses positions pendant le
-week-end, n'a pas d'AUC (« — » à l'écran) et se juge au P&L out-of-sample.
-
-| | `troglodyte_v1_0` | `troglodyte_v1_1` (v0.7.1) |
-|---|---|---|
-| Entrée du filtre | log du prix | log du prix **normalisé par sa volatilité** |
-| Entrée / sortie | z ≥ 1,5 / \|z\| < 0,5 | seuil **calibré** à l'entraînement, sortie à un tiers |
-| Stop | 3 ATR fixe | **suiveur « chandelier »**, 2 à 4 ATR calibré |
-| Actualités | non | **filtre déclaré** |
-
-Seuils, grilles et demi-vie sont des **conventions** ; le calibrage choisit
-in-sample, le walk-forward juge hors échantillon. Détail :
+**Troglodyte** (`troglodyte_v1_1`) est un **suivi de tendance structurel** :
+un **filtre de Kalman** estime, à chaque bougie, la pente de la tendance du
+prix normalisé par sa volatilité, et son incertitude ; leur rapport `z`
+décide, avec un stop suiveur « chandelier ». Seuil et stop sont calibrés à
+l'entraînement. Il porte ses positions pendant le week-end, n'a pas d'AUC
+(« — » à l'écran) et se juge au P&L out-of-sample. Détail :
 [`docs/troglodyte.md`](docs/troglodyte.md).
+
+**Martinet** (`martinet_v1_0`, v0.8.0) est un **scalpeur de zones de
+liquidité**, épuré — des plus hauts, des plus bas et un ATR, rien d'autre.
+Quand une bougie perce un plus haut (plus bas) de swing intact, sert les
+stops qui y dormaient, puis clôture de nouveau en deçà, la cassure a échoué :
+Martinet prend le sens inverse, stop au-delà de la mèche, cible à 1, 1,5 ou
+2 R choisie à l'entraînement. Séance 7 h – 20 h UTC, spread ≤ 0,25 R,
+barrière de deux heures, filtre d'actualités. **M1, M5 ou M15 seulement.**
+Détail : [`docs/martinet.md`](docs/martinet.md).
+
+| | Colibri | Troglodyte | Martinet |
+|---|---|---|---|
+| Nature | classifieur GBDT | tendance (Kalman) | règle de balayage |
+| Unités de temps | toutes | toutes | M1, M5, M15 |
+| Volume exigé | oui | non | non |
+| Week-end | fermé | porté | fermé |
+| Actualités | jamais | filtre | filtre |
+| Juge | AUC et P&L OOS | P&L OOS | P&L OOS |
+
+Seuils, grilles et fenêtres sont des **conventions** ; le calibrage choisit
+in-sample, le walk-forward juge hors échantillon.
 
 ### Le filtre d'actualités
 
-Pour les stratégies qui le **déclarent** (Troglodyte v1_1), aucune entrée
+Pour les stratégies qui le **déclarent** (Troglodyte, Martinet), aucune entrée
 dans les 30 minutes autour d'une annonce à fort impact sur l'une des deux
 devises de la paire. **Colibri n'y a jamais accès.** Le calendrier (flux
 public de la semaine en cours) est récupéré pendant une séance live ou par
@@ -184,9 +211,13 @@ sources sont des modules remplaçables. Détail :
 
 ## Ligne de commande
 
-Les mêmes calculs sans interface, pour une tâche planifiée ou un conteneur :
+Les mêmes calculs sans interface, pour une tâche planifiée ou un conteneur.
+Comme `gw backtrain`, ces commandes n'ouvrent pas la base du journal : elles
+tournent pendant une séance `gw`.
 
 ```bash
+gw                                 # interface de trading (Live, Journal, Paramètres)
+gw backtrain                       # interface d'atelier (Données, Entraînement, Backtest, Paramètres)
 gw download                        # historique M1 complet (long)
 gw download EURUSD --year 2019     # une paire, une année
 gw download EURUSD --from 2019 --to 2021
@@ -219,6 +250,7 @@ Paramètres le signale) : `GW_CONFIG_DIR`, `GW_DATA_DIR`, `GW_BROKER`,
 | [docs/architecture.md](docs/architecture.md) | Arborescence, règles, où ajouter du code |
 | [docs/colibri.md](docs/colibri.md) | Colibri : features, cible, décision, révisions, mesures |
 | [docs/troglodyte.md](docs/troglodyte.md) | Troglodyte : modèle espace-état, filtre de Kalman, estimation, calibrage, décision |
+| [docs/martinet.md](docs/martinet.md) | Martinet : zones de liquidité, balayage rejeté, filtres, calibrage |
 | [docs/actualites.md](docs/actualites.md) | Filtre d'actualités : sources, archive, règle, honnêteté |
 | [docs/gbdt.md](docs/gbdt.md) | Le gradient boosting maison : algorithme et choix |
 | [docs/donnees.md](docs/donnees.md) | Sources (Dukascopy, FXCM, en brancher une), stockage Parquet, import Parquet/CSV, unités de temps |
@@ -243,7 +275,7 @@ stratégie inscrite au catalogue passe d'office le banc de conformité
 (`internal/strategy/strategytest`).
 
 Pour publier : onglet **Actions** → **Release** → **Run workflow** avec le
-numéro (`v0.7.3`), ou pousser un tag `v*`.
+numéro (`v0.8.0`), ou pousser un tag `v*`.
 
 ## Avertissement
 

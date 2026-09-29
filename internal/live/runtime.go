@@ -183,6 +183,16 @@ func (r *Runtime) connect(ctx context.Context, account string) error {
 	if err != nil {
 		return err
 	}
+	strat, err := strategy.New(r.cfg.Strategy.Name)
+	if err != nil {
+		return err
+	}
+	// Un scalpeur en H4 n'a rien à trader : refusé ici, avec les unités
+	// qu'il accepte, plutôt qu'une séance muette.
+	if err := strategy.CheckTimeframe(strat.Describe(), tf); err != nil {
+		r.setMessage(err.Error())
+		return err
+	}
 	gw, err := broker.New(r.cfg.Broker.Name, broker.Options{
 		Host:            r.cfg.Broker.Host,
 		Port:            r.cfg.Broker.Port,
@@ -197,10 +207,6 @@ func (r *Runtime) connect(ctx context.Context, account string) error {
 		StateDir:        r.cfg.Paths.DataDir,
 		Logger:          slogAdapter{r.logger},
 	})
-	if err != nil {
-		return err
-	}
-	strat, err := strategy.New(r.cfg.Strategy.Name)
 	if err != nil {
 		return err
 	}
@@ -241,6 +247,11 @@ func (r *Runtime) connect(ctx context.Context, account string) error {
 		notices[sym] += " · " + msg
 	}
 
+	// Unité de temps de chaque modèle : un modèle entraîné en H4 appliqué
+	// à des bougies M5 donnerait des décisions sans rapport avec celles
+	// que le walk-forward a jugées. Refusé et dit, quel que soit le moteur.
+	coverage, _ := training.Coverage(r.cfg.Paths.ModelsDir(), r.cfg.Strategy.Name, symbols)
+
 	for _, sym := range symbols {
 		series, histErr := r.warmupSeries(sym, tf, BufferBars(strat))
 		switch {
@@ -280,6 +291,11 @@ func (r *Runtime) connect(ctx context.Context, account string) error {
 		dir, why := training.SelectModel(r.cfg.Paths.ModelsDir(), r.cfg.Strategy.Name, sym)
 		if dir == "" {
 			addNotice(sym, why)
+			continue
+		}
+		if run, ok := coverage[sym]; ok && run.Timeframe != "" && run.Timeframe != string(tf) {
+			addNotice(sym, fmt.Sprintf("modèle entraîné en %s, live en %s — réentraîner en %s",
+				run.Timeframe, tf, tf))
 			continue
 		}
 		if err := strat.Warmup(runCtx, strategy.WarmupRequest{

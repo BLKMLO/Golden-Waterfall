@@ -7,7 +7,7 @@ import (
 	"github.com/BLKMLO/Golden-Waterfall/internal/core"
 )
 
-// Calibrage de troglodyte_v1_1 : choisir, SUR LE SEUL JEU
+// Calibrage : choisir, SUR LE SEUL JEU
 // D'ENTRAÎNEMENT, le seuil d'entrée s_in et la distance du stop k parmi
 // une petite grille, en rejouant la règle de décision (decide) comme le
 // moteur l'exécuterait.
@@ -137,7 +137,7 @@ func logReturns(trades []simTrade, cost func(i int) float64) []float64 {
 // calibrate choisit la règle sur le jeu d'entraînement.
 func (t *troglodyte) calibrate(ctx context.Context, series core.Series, p params) (rule, *calibration, error) {
 	r := t.rev
-	fallback := rule{enterZ: r.enterZ, exitZ: r.exitZ, stopATR: r.stopATR, trail: r.trailBars > 0}
+	fallback := rule{enterZ: r.enterZ, exitZ: r.exitZ, stopATR: r.stopATR}
 	states, usable, err := t.decisionInputs(ctx, series, p)
 	if err != nil {
 		return fallback, nil, err
@@ -159,7 +159,7 @@ func (t *troglodyte) calibrate(ctx context.Context, series core.Series, p params
 	best, bestScore := fallback, math.Inf(-1)
 	for _, enter := range r.enterGrid {
 		for _, stopATR := range r.stopGrid {
-			ru := rule{enterZ: enter, exitZ: enter * r.exitRatio, stopATR: stopATR, trail: r.trailBars > 0}
+			ru := rule{enterZ: enter, exitZ: enter * r.exitRatio, stopATR: stopATR}
 			var trades []float64
 			if usable {
 				trades = logReturns(simulateTrades(series, states, ru), cost)

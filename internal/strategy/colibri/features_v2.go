@@ -13,7 +13,8 @@ import (
 
 // featuresV2 : le jeu de colibri_v1_2. FIGÉ dès publication.
 //
-// Ce qui change par rapport à v1, et pourquoi :
+// Ce qui change par rapport au jeu v1 (colibri_v1_0 et v1_1, retirées), et
+// pourquoi :
 //
 //   - Les écarts de prix sont exprimés en unités d'ATR ou de volatilité,
 //     plus en fraction du prix. « 0,5 % sous la moyenne » ne dit pas la

@@ -142,8 +142,12 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	contextBars := probe.Describe().ContextBars
+	desc := probe.Describe()
 	probe.Shutdown()
+	contextBars := desc.ContextBars
+	if err := strategy.CheckTimeframe(desc, req.Timeframe); err != nil {
+		return nil, err
+	}
 
 	// --- 1. Chargement et ré-échantillonnage -------------------------------
 	report(Progress{Phase: "chargement", Message: "lecture de l'historique"})

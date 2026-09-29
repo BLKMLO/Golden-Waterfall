@@ -27,7 +27,10 @@ import (
 //	GW_ABLATION=1 go test ./internal/strategy/colibri -run Ablation -v
 //
 // Chaque variante retire UN ingrédient de v1_2, ou change sa marge. Les
-// variantes ne sont enregistrées que dans ce binaire de test.
+// variantes ne sont enregistrées que dans ce binaire de test. La mesure
+// d'origine comparait aussi colibri_v1_1 et le jeu de features v1 : ils
+// ont disparu avec le retrait des anciennes révisions (v0.8.0) ; le
+// tableau publié dans docs/colibri.md reste celui d'origine.
 //
 // ⚠ Ce n'est PAS une mesure de performance sur le marché réel. Un marché
 // synthétique a un signal connu, un spread constant et une volatilité
@@ -48,13 +51,11 @@ func TestAblation(t *testing.T) {
 		return name
 	}
 	names := []string{
-		revV11.name,
 		revV12.name,
 		variant("v12_marge_0", func(r *revision) { r.minEdgeR = 0 }),
 		variant("v12_marge_005", func(r *revision) { r.minEdgeR = 0.05 }),
 		variant("v12_marge_015", func(r *revision) { r.minEdgeR = 0.15 }),
 		variant("v12_marge_020", func(r *revision) { r.minEdgeR = 0.20 }),
-		variant("v12_features_v1", func(r *revision) { r.features = featuresV1 }),
 		variant("v12_avec_unicite", func(r *revision) { r.uniqueness = true }),
 		variant("v12_sans_purge", func(r *revision) { r.purge = false }),
 		variant("v12_sans_calibrage", func(r *revision) { r.calibrate = false }),

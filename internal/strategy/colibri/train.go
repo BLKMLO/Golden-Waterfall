@@ -17,8 +17,8 @@ import (
 // target : la cible d'une série, tête par tête.
 type target struct {
 	value [][]float64 // [tête][bougie] : 1, 0 ou NaN
-	exit  [][]int     // [tête][bougie] : bougie de fin du trade (v1_2), nil sinon
-	gross [][]float64 // [tête][bougie] : issue brute en R (v1_2), nil sinon
+	exit  [][]int     // [tête][bougie] : bougie de fin du trade
+	gross [][]float64 // [tête][bougie] : issue brute en R
 	// costsModelled : la série avait un côté ask, le coût est dans la cible.
 	costsModelled bool
 }
@@ -34,14 +34,10 @@ func (t target) defined(i int) bool {
 
 // targetOf calcule la cible de la révision sur une série.
 //
-// `barDuration` ne sert qu'à la cible alignée sur l'exécution (v1_2) : la
-// barrière verticale s'y juge sur la cadence du flux, comme au moteur.
+// `barDuration` : la barrière verticale se juge sur la cadence du flux,
+// comme au moteur.
 func (c *colibri) targetOf(series core.Series, barDuration time.Duration) target {
 	atr := atrOf(series)
-	if c.rev.target == symmetricTarget {
-		lab := label.TripleBarrier(series, atr, c.rev.barrierATRMult, c.rev.maxHold())
-		return target{value: [][]float64{lab.Value}}
-	}
 	ends := label.ExecutionWindow(series, barDuration, c.rev.maxHold())
 	cost := spreadCost(series)
 	_, costsModelled := series.MedianSpread()
@@ -62,9 +58,9 @@ type symbolSet struct {
 	n      int
 	bar    []int       // indice de bougie de chaque ligne
 	labels [][]float64 // [tête][ligne]
-	exit   [][]int     // [tête][ligne] (v1_2)
-	gross  [][]float64 // [tête][ligne] (v1_2)
-	weight [][]float64 // [tête][ligne] (v1_2, si pondération)
+	exit   [][]int     // [tête][ligne]
+	gross  [][]float64 // [tête][ligne]
+	weight [][]float64 // [tête][ligne] (si pondération)
 	costs  bool
 }
 
@@ -81,9 +77,7 @@ type symbolSet struct {
 func (c *colibri) buildSet(symbol string, series core.Series, categories []string, barDuration time.Duration) symbolSet {
 	m := c.rev.features.compute(series)
 	tg := c.targetOf(series, barDuration)
-	if c.rev.pooled {
-		m = m.AppendColumn(symbolColumnName, symbolCodeColumn(symbol, categories, m.Rows))
-	}
+	m = m.AppendColumn(symbolColumnName, symbolCodeColumn(symbol, categories, m.Rows))
 	heads := len(tg.value)
 	set := symbolSet{symbol: symbol, cols: m.Cols, costs: tg.costsModelled}
 	set.rows = make([]float64, 0, m.Rows*m.Cols/2)
@@ -92,18 +86,16 @@ func (c *colibri) buildSet(symbol string, series core.Series, categories []strin
 		set.labels[h] = make([]float64, 0, m.Rows/2)
 	}
 	var uniq [][]float64
-	if tg.exit != nil {
-		set.exit = make([][]int, heads)
-		set.gross = make([][]float64, heads)
-		if c.rev.uniqueness {
-			set.weight = make([][]float64, heads)
-			uniq = make([][]float64, heads)
-			for h := range uniq {
-				// Unicité calculée sur TOUTES les bougies étiquetées de la
-				// série, avant filtrage : le chevauchement est une propriété
-				// du marché, pas de ce qu'on garde.
-				uniq[h] = label.AverageUniqueness(tg.exit[h])
-			}
+	set.exit = make([][]int, heads)
+	set.gross = make([][]float64, heads)
+	if c.rev.uniqueness {
+		set.weight = make([][]float64, heads)
+		uniq = make([][]float64, heads)
+		for h := range uniq {
+			// Unicité calculée sur TOUTES les bougies étiquetées de la
+			// série, avant filtrage : le chevauchement est une propriété
+			// du marché, pas de ce qu'on garde.
+			uniq[h] = label.AverageUniqueness(tg.exit[h])
 		}
 	}
 	for i := 0; i < m.Rows; i++ {
@@ -114,10 +106,8 @@ func (c *colibri) buildSet(symbol string, series core.Series, categories []strin
 		set.bar = append(set.bar, i)
 		for h := 0; h < heads; h++ {
 			set.labels[h] = append(set.labels[h], tg.value[h][i])
-			if tg.exit != nil {
-				set.exit[h] = append(set.exit[h], tg.exit[h][i])
-				set.gross[h] = append(set.gross[h], tg.gross[h][i])
-			}
+			set.exit[h] = append(set.exit[h], tg.exit[h][i])
+			set.gross[h] = append(set.gross[h], tg.gross[h][i])
 			if uniq != nil {
 				set.weight[h] = append(set.weight[h], uniq[h][i])
 			}
@@ -144,7 +134,7 @@ func (c *colibri) split(set symbolSet) (train, valid []int, purged int) {
 		}
 	}
 	for r := 0; r < cut; r++ {
-		if c.rev.purge && cut < set.n && set.exit != nil {
+		if c.rev.purge && cut < set.n {
 			first := set.bar[cut]
 			overlap := false
 			for h := range set.exit {
@@ -165,7 +155,7 @@ func (c *colibri) split(set symbolSet) (train, valid []int, purged int) {
 	return train, valid, purged
 }
 
-// Train entraîne un modèle sur un ou plusieurs symboles.
+// Train entraîne un modèle MUTUALISÉ sur un ou plusieurs symboles.
 //
 // Règles de construction du jeu (anti-fuite ENTRE ACTIFS) :
 //   - features et labels sont calculés SYMBOLE PAR SYMBOLE — jamais sur
@@ -184,11 +174,6 @@ func (c *colibri) Train(ctx context.Context, req strategy.TrainRequest) (*strate
 		symbols = append(symbols, s)
 	}
 	sort.Strings(symbols)
-
-	if !c.rev.pooled && len(symbols) > 1 {
-		return nil, fmt.Errorf("%s entraîne UN modèle par actif : %d symboles fournis",
-			c.rev.name, len(symbols))
-	}
 
 	// Liste ORDONNÉE et figée des catégories : elle est persistée et
 	// rechargée avec le modèle. Sans elle, les codes changeraient d'un
@@ -238,9 +223,7 @@ func (c *colibri) Train(ctx context.Context, req strategy.TrainRequest) (*strate
 		for h := range heads {
 			for _, r := range tr {
 				trainLabels[h] = append(trainLabels[h], set.labels[h][r])
-				if set.gross != nil {
-					trainGross[h] = append(trainGross[h], set.gross[h][r])
-				}
+				trainGross[h] = append(trainGross[h], set.gross[h][r])
 				if set.weight != nil {
 					trainWeights[h] = append(trainWeights[h], set.weight[h][r])
 				}
@@ -263,28 +246,22 @@ func (c *colibri) Train(ctx context.Context, req strategy.TrainRequest) (*strate
 	}
 
 	meta := &modelMeta{
-		Strategy:       c.rev.name,
-		Version:        c.rev.version,
-		Timeframe:      string(req.Timeframe),
-		Symbols:        symbols,
-		FeatureColumns: names,
-		LongThreshold:  c.rev.longThreshold,
-		ShortThreshold: c.rev.shortThreshold,
-		BarrierATRMult: c.rev.barrierATRMult,
-		MaxHoldDays:    c.rev.maxHoldDays,
-		Seed:           req.Seed,
-		TrainedAt:      time.Now().UTC(),
-		Samples:        total,
-	}
-	if c.rev.pooled {
-		meta.SymbolCategories = categories
-	}
-	if c.rev.target == sidedTarget {
-		meta.Heads = heads
-		meta.HeadStats = map[string]headStats{}
-		meta.MinEdgeR = c.rev.minEdgeR
-		meta.CostsModelled = costs
-		meta.Purged = purged
+		Strategy:         c.rev.name,
+		Version:          c.rev.version,
+		Timeframe:        string(req.Timeframe),
+		Symbols:          symbols,
+		FeatureColumns:   names,
+		BarrierATRMult:   c.rev.barrierATRMult,
+		MaxHoldDays:      c.rev.maxHoldDays,
+		Seed:             req.Seed,
+		TrainedAt:        time.Now().UTC(),
+		Samples:          total,
+		SymbolCategories: categories,
+		Heads:            heads,
+		HeadStats:        map[string]headStats{},
+		MinEdgeR:         c.rev.minEdgeR,
+		CostsModelled:    costs,
+		Purged:           purged,
 	}
 
 	model := &loaded{dir: req.OutputDir, meta: meta}
@@ -322,18 +299,13 @@ func (c *colibri) Train(ctx context.Context, req strategy.TrainRequest) (*strate
 		params := gbdt.DefaultParams()
 		params.Seed = req.Seed
 		params.Threads = req.Threads
-		if c.rev.pooled {
-			params.CategoricalFeatures = []int{len(names) - 1}
-		}
+		params.CategoricalFeatures = []int{len(names) - 1}
 		base := 0.6 + 0.35*float64(h)/float64(len(heads))
 		span := 0.35 / float64(len(heads))
 		gm, err := gbdt.Train(ctx, trainDS, validDS, params, func(round int, tl, vl float64) {
 			if req.Progress != nil && round%10 == 0 {
-				step := fmt.Sprintf("arbre %d/%d", round, params.NumRounds)
-				if head != "" {
-					step = fmt.Sprintf("tête %s, arbre %d/%d", head, round, params.NumRounds)
-				}
-				req.Progress(base+span*float64(round)/float64(params.NumRounds), step)
+				req.Progress(base+span*float64(round)/float64(params.NumRounds),
+					fmt.Sprintf("tête %s, arbre %d/%d", head, round, params.NumRounds))
 			}
 		})
 		if err != nil {
@@ -341,24 +313,14 @@ func (c *colibri) Train(ctx context.Context, req strategy.TrainRequest) (*strate
 		}
 		model.heads = append(model.heads, gm)
 
-		// Le rapport garde les clés historiques pour la tête unique ; en
-		// deux têtes, chaque métrique est préfixée et la moyenne des deux
-		// garde le nom historique, pour que les écrans et `gw runs`
-		// continuent de lire quelque chose de comparable.
+		// Chaque métrique est préfixée par sa tête, et la moyenne des deux
+		// garde le nom sans préfixe, pour que les écrans et `gw runs`
+		// lisent un chiffre comparable d'un run à l'autre.
 		for k, v := range gm.Metrics {
-			if head == "" {
-				report.Metrics[k] = v
-				continue
-			}
 			report.Metrics[head+"_"+k] = v
 			report.Metrics[k] += v / float64(len(heads))
 		}
 		report.Rounds += gm.BestIteration
-		if head == "" {
-			meta.PositiveRate = trainDS.PositiveRate()
-			report.Importance = gm.FeatureImportance()
-			continue
-		}
 		st := measureHead(trainLabels[h], trainGross[h])
 		st.PositiveRate = trainDS.PositiveRate()
 		st.Calibration = gbdt.NoShrinkage(gm.BaseScore)
@@ -391,9 +353,7 @@ func (c *colibri) Train(ctx context.Context, req strategy.TrainRequest) (*strate
 	// suivant du walk-forward doit être évalué avec LUI, pas avec celui
 	// du pli précédent.
 	c.mu.Lock()
-	for _, sym := range symbols {
-		c.models[c.slot(sym)] = model
-	}
+	c.model = model
 	c.prepCache = map[string]*prepared{}
 	c.reason = ""
 	c.mu.Unlock()

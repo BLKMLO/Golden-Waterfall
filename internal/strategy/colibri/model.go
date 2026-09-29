@@ -27,16 +27,12 @@ type modelMeta struct {
 	// fausses.
 	SymbolCategories []string  `json:"symbol_categories,omitempty"`
 	FeatureColumns   []string  `json:"feature_columns"`
-	LongThreshold    float64   `json:"long_threshold"`
-	ShortThreshold   float64   `json:"short_threshold"`
 	BarrierATRMult   float64   `json:"barrier_atr_mult"`
 	MaxHoldDays      int       `json:"max_hold_days"`
 	Seed             int64     `json:"seed"`
 	TrainedAt        time.Time `json:"trained_at"`
 	Samples          int       `json:"samples"`
 	PositiveRate     float64   `json:"positive_rate"`
-
-	// --- À partir de colibri_v1_2 ------------------------------------------
 
 	// Heads : têtes du modèle, un fichier model_<tête>.json chacune.
 	Heads []string `json:"heads,omitempty"`
@@ -71,7 +67,7 @@ type headStats struct {
 	Calibrated  bool           `json:"calibrated"`
 }
 
-// loaded : un modèle chargé (une ou deux têtes) et son manifeste.
+// loaded : un modèle chargé (ses deux têtes) et son manifeste.
 type loaded struct {
 	dir   string
 	heads []*gbdt.Model // dans l'ordre de revision.heads()
@@ -137,12 +133,10 @@ func (c *colibri) loadModel(dir string) (*loaded, error) {
 				strategy.ModelManifest, dir, err)
 		}
 	}
-	if c.rev.target == sidedTarget {
-		for _, head := range c.rev.heads() {
-			if _, ok := meta.HeadStats[head]; !ok {
-				return nil, fmt.Errorf("%s de %s sans statistiques pour la tête %q — le réentraîner",
-					strategy.ModelManifest, dir, head)
-			}
+	for _, head := range c.rev.heads() {
+		if _, ok := meta.HeadStats[head]; !ok {
+			return nil, fmt.Errorf("%s de %s sans statistiques pour la tête %q — le réentraîner",
+				strategy.ModelManifest, dir, head)
 		}
 	}
 	return out, nil
