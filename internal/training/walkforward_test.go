@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -275,5 +276,17 @@ func TestDeleteRunRefusesPathOutsideModelsDir(t *testing.T) {
 	}
 	if err := DeleteRun(cfg.Paths.ModelsDir(), cfg.Paths.ModelsDir()); err == nil {
 		t.Fatal("supprimer le dossier des modèles lui-même doit être refusé")
+	}
+}
+
+// TestRefusesATimeframeTheStrategyDoesNotTrade : un scalpeur en H4 est
+// refusé AVANT de lire l'historique, en nommant les unités acceptées.
+func TestRefusesATimeframeTheStrategyDoesNotTrade(t *testing.T) {
+	_, runner := testSetup(t)
+	_, err := runner.Run(context.Background(), Request{
+		Strategy: "martinet_v1_0", Symbols: []string{"EURUSD"}, Timeframe: data.H4, Folds: 2,
+	})
+	if err == nil || !strings.Contains(err.Error(), "M1, M5, M15") {
+		t.Fatalf("refus nommant les unités acceptées attendu, reçu %v", err)
 	}
 }

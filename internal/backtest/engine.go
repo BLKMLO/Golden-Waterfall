@@ -218,6 +218,12 @@ func (e *Engine) Run(ctx context.Context, req Request) (*Result, error) {
 			req.Symbol, from, len(series))
 	}
 
+	// Une stratégie qui n'a de sens qu'à certaines unités de temps (un
+	// scalpeur) ne se rejoue pas ailleurs : ses chiffres n'y voudraient
+	// rien dire.
+	if err := strategy.CheckTimeframe(req.Strategy.Describe(), req.Timeframe); err != nil {
+		return nil, err
+	}
 	if err := req.Strategy.Warmup(ctx, strategy.WarmupRequest{
 		Symbol:    req.Symbol,
 		Series:    series,

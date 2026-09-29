@@ -35,6 +35,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -86,6 +87,27 @@ type Description struct {
 	// telle stratégie ne décide pas : l'entraînement le refuse en le
 	// disant, et l'écran Live le montre dans sa ligne de contrôle.
 	UsesVolume bool
+	// Timeframes : unités de temps sur lesquelles la stratégie a un sens.
+	// Vide = toutes. Un scalpeur n'a rien à faire en H4 : l'entraînement,
+	// le backtest et l'écran Live le lisent ici (CheckTimeframe) et le
+	// disent, plutôt que de produire des chiffres qui ne veulent rien dire.
+	Timeframes []data.Timeframe
+}
+
+// CheckTimeframe dit si la stratégie accepte l'unité de temps `tf`.
+func CheckTimeframe(desc Description, tf data.Timeframe) error {
+	if len(desc.Timeframes) == 0 {
+		return nil
+	}
+	names := make([]string, len(desc.Timeframes))
+	for i, t := range desc.Timeframes {
+		if t == tf {
+			return nil
+		}
+		names[i] = string(t)
+	}
+	return fmt.Errorf("%s ne travaille qu'en %s, pas en %s (training.timeframe, broker.timeframe)",
+		desc.Name, strings.Join(names, ", "), tf)
 }
 
 // ModelManifest : fichier que toute stratégie entraînable DOIT écrire dans
