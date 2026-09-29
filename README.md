@@ -53,7 +53,7 @@ EURUSD  → peut trader  ✓ pass.  ✓ SL  ✓ k-s  ✓ armée  ✓ modèle  �
 tab écran  ·  ? aide  ·  q quitter  ·  c connecter / déconnecter  ·  k kill-switch global  ·  espace armer la paire  ·  ↑↓ sélection
 ```
 
-<sub>Capture réelle du binaire (`gw`, v0.8.0) : Martinet en M5 sur un rejeu d'historique SYNTHÉTIQUE, EURUSD armée — trois ordres à barrières, six exécutions, aucune position restée ouverte. GBPUSD, sans modèle ni historique, reste muette : la ligne Prérequis le dit (« ⚠ entraînement 1/2 »).</sub>
+<sub>Capture réelle du binaire (`gw`, v0.8.0, donc `martinet_v1_0`, remplacée depuis par `v1_1`) : Martinet en M5 sur un rejeu d'historique SYNTHÉTIQUE, EURUSD armée — trois ordres à barrières, six exécutions, aucune position restée ouverte. GBPUSD, sans modèle ni historique, reste muette : la ligne Prérequis le dit (« ⚠ entraînement 1/2 »).</sub>
 
 ## Pourquoi
 
@@ -177,12 +177,16 @@ l'entraînement. Il porte ses positions pendant le week-end, n'a pas d'AUC
 (« — » à l'écran) et se juge au P&L out-of-sample. Détail :
 [`docs/troglodyte.md`](docs/troglodyte.md).
 
-**Martinet** (`martinet_v1_0`, v0.8.0) est un **scalpeur de zones de
-liquidité**, épuré — des plus hauts, des plus bas et un ATR, rien d'autre.
+**Martinet** (`martinet_v1_1`, v0.8.1) est un **scalpeur de zones de
+liquidité**, épuré — des plus hauts, des plus bas, un ATR pour les
+distances et le volume en confirmation.
 Quand une bougie perce un plus haut (plus bas) de swing intact, sert les
 stops qui y dormaient, puis clôture de nouveau en deçà, la cassure a échoué :
 Martinet prend le sens inverse, stop au-delà de la mèche, cible à 1, 1,5 ou
-2 R choisie à l'entraînement. Séance 7 h – 20 h UTC, spread ≤ 0,25 R,
+2 R choisie à l'entraînement ; l'entraînement décide aussi s'il exige un
+pic de volume (≥ 1,5 × la médiane) sur la bougie de balayage — seulement
+si l'historique a du volume, si bien que FXCM et Interactive Brokers
+restent utilisables. Séance 7 h – 20 h UTC, spread ≤ 0,25 R,
 barrière de deux heures, filtre d'actualités. **M1, M5 ou M15 seulement.**
 Détail : [`docs/martinet.md`](docs/martinet.md).
 
@@ -190,7 +194,7 @@ Détail : [`docs/martinet.md`](docs/martinet.md).
 |---|---|---|---|
 | Nature | classifieur GBDT | tendance (Kalman) | règle de balayage |
 | Unités de temps | toutes | toutes | M1, M5, M15 |
-| Volume exigé | oui | non | non |
+| Volume exigé | oui | non | si le calibrage retient le filtre |
 | Week-end | fermé | porté | fermé |
 | Actualités | jamais | filtre | filtre |
 | Juge | AUC et P&L OOS | P&L OOS | P&L OOS |

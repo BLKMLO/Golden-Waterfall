@@ -24,6 +24,6 @@ import (
 	_ "github.com/BLKMLO/Golden-Waterfall/internal/strategy/colibri"
 	// Troglodyte — deuxième génération, tendance structurelle (troglodyte_v1_1).
 	_ "github.com/BLKMLO/Golden-Waterfall/internal/strategy/troglodyte"
-	// Martinet — troisième génération, scalping de zones de liquidité (martinet_v1_0).
+	// Martinet — troisième génération, scalping de zones de liquidité (martinet_v1_1).
 	_ "github.com/BLKMLO/Golden-Waterfall/internal/strategy/martinet"
 )

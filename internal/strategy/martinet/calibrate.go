@@ -18,9 +18,14 @@ import (
 
 // gridPoint : un réglage essayé et ce qu'il a donné sur l'entraînement.
 type gridPoint struct {
-	RR     float64 `json:"rr"`
-	Pivot  int     `json:"pivot"`
-	Trades int     `json:"trades"`
+	RR    float64 `json:"rr"`
+	Pivot int     `json:"pivot"`
+	// VolumeMin : seuil de volume relatif (0 = sans filtre).
+	VolumeMin float64 `json:"volume_min"`
+	Trades    int     `json:"trades"`
+	// Skipped : pourquoi le point n'a pas été essayé (« volume non
+	// mesuré » : l'historique n'en a pas). Vide s'il l'a été.
+	Skipped string `json:"skipped,omitempty"`
 	// Score : t de Student de la moyenne des trades (moyenne / écart-type
 	// × √n), en R nets du spread médian. Absent (null) quand le point n'a
 	// pas assez de trades pour être jugé.
@@ -42,9 +47,9 @@ type calibration struct {
 }
 
 // setups précalcule, pour chaque bougie décidable à partir de `from`, ce
-// que verrait OnBar avec des pivots de force `pivot`. C'est le poste
-// coûteux ; il ne dépend pas de la cible.
-func (r revision) setups(ctx context.Context, series core.Series, from, pivot int) ([]setup, error) {
+// que verrait OnBar avec des pivots de force `pivot` et le filtre de
+// volume `volMin`. C'est le poste coûteux ; il ne dépend pas de la cible.
+func (r revision) setups(ctx context.Context, series core.Series, from, pivot int, volMin float64) ([]setup, error) {
 	out := make([]setup, len(series))
 	if from < r.window-1 {
 		from = r.window - 1
@@ -55,7 +60,7 @@ func (r revision) setups(ctx context.Context, series core.Series, from, pivot in
 				return nil, err
 			}
 		}
-		out[i] = r.setupAt(series[i+1-r.window:i+1], pivot)
+		out[i] = r.setupAt(series[i+1-r.window:i+1], pivot, volMin)
 	}
 	return out, nil
 }
@@ -138,9 +143,11 @@ func returnsR(trades []simTrade, spread float64) []float64 {
 	return out
 }
 
-// calibrate choisit la cible et la force des pivots sur le jeu
-// d'entraînement.
-func (r revision) calibrate(ctx context.Context, series core.Series, bar time.Duration) (rr float64, pivot int, cal *calibration, err error) {
+// calibrate choisit la cible, la force des pivots et le filtre de volume
+// sur le jeu d'entraînement. Un historique sans volume mesuré (FXCM,
+// import sans colonne) ne permet d'essayer que les points sans filtre :
+// les autres sont archivés « non essayés », avec la raison.
+func (r revision) calibrate(ctx context.Context, series core.Series, bar time.Duration) (rr float64, pivot int, volMin float64, cal *calibration, err error) {
 	spread, costs := series.MedianSpread()
 	if !costs {
 		spread = 0
@@ -151,43 +158,53 @@ func (r revision) calibrate(ctx context.Context, series core.Series, bar time.Du
 		Fallback:      true,
 	}
 	rr, pivot = r.fallbackRR, r.fallbackPivot
+	hasVolume := core.HasVolume(series)
 	best := math.Inf(-1)
-	for _, pv := range r.pivotGrid {
-		p := int(pv)
-		setups, err := r.setups(ctx, series, r.window-1, p)
-		if err != nil {
-			return 0, 0, nil, err
-		}
-		for _, target := range r.rrGrid {
-			res := returnsR(r.simulateTrades(series, setups, target, bar), spread)
-			gp := gridPoint{RR: target, Pivot: p, Trades: len(res)}
-			if len(res) > 0 {
-				wins := 0
-				for _, x := range res {
-					if x > 0 {
-						wins++
+	for _, vm := range r.volGrid {
+		for _, pv := range r.pivotGrid {
+			p := int(pv)
+			if vm > 0 && !hasVolume {
+				for _, target := range r.rrGrid {
+					cal.Grid = append(cal.Grid, gridPoint{RR: target, Pivot: p, VolumeMin: vm,
+						Skipped: "volume non mesuré dans l'historique"})
+				}
+				continue
+			}
+			setups, err := r.setups(ctx, series, r.window-1, p, vm)
+			if err != nil {
+				return 0, 0, 0, nil, err
+			}
+			for _, target := range r.rrGrid {
+				res := returnsR(r.simulateTrades(series, setups, target, bar), spread)
+				gp := gridPoint{RR: target, Pivot: p, VolumeMin: vm, Trades: len(res)}
+				if len(res) > 0 {
+					wins := 0
+					for _, x := range res {
+						if x > 0 {
+							wins++
+						}
+					}
+					gp.WinRate = float64(wins) / float64(len(res)) * 100
+				}
+				if len(res) >= r.minCalibTrades {
+					mean, sd := meanStd(res)
+					gp.MeanR = mean
+					if sd > 0 {
+						score := mean / sd * math.Sqrt(float64(len(res)))
+						gp.Score = &score
+						// Égalité : le premier point de la grille l'emporte —
+						// ordre fixe, résultat reproductible.
+						if score > best {
+							best, rr, pivot, volMin = score, target, p, vm
+							cal.Fallback = false
+						}
 					}
 				}
-				gp.WinRate = float64(wins) / float64(len(res)) * 100
+				cal.Grid = append(cal.Grid, gp)
 			}
-			if len(res) >= r.minCalibTrades {
-				mean, sd := meanStd(res)
-				gp.MeanR = mean
-				if sd > 0 {
-					score := mean / sd * math.Sqrt(float64(len(res)))
-					gp.Score = &score
-					// Égalité : le premier point de la grille l'emporte —
-					// ordre fixe, résultat reproductible.
-					if score > best {
-						best, rr, pivot = score, target, p
-						cal.Fallback = false
-					}
-				}
-			}
-			cal.Grid = append(cal.Grid, gp)
 		}
 	}
-	return rr, pivot, cal, nil
+	return rr, pivot, volMin, cal, nil
 }
 
 func meanStd(x []float64) (mean, sd float64) {

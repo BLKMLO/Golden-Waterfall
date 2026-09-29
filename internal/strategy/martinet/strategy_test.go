@@ -17,7 +17,19 @@ import (
 	"github.com/BLKMLO/Golden-Waterfall/internal/strategy/strategytest"
 )
 
-func v10() revision { return revisions[0] }
+func v11() revision { return revisions[0] }
+
+// spiky : la série synthétique, avec un pic de volume (× 2,5) sur une
+// bougie sur cinq, pour que le filtre de volume ait de quoi trancher.
+func spiky(s core.Series) core.Series {
+	out := append(core.Series(nil), s...)
+	for i := range out {
+		if i%5 == 0 {
+			out[i].Volume *= 2.5
+		}
+	}
+	return out
+}
 
 // flatWindow : une fenêtre M5 calme autour de 1,1000, bougies de 6 pips,
 // qui se termine un mardi à 10 h UTC (en séance).
@@ -37,14 +49,14 @@ func withSwingHigh(w core.Series, j int, level float64) {
 }
 
 func TestSweepAboveASwingHighThatClosesBackBelowIsASell(t *testing.T) {
-	r := v10()
+	r := v11()
 	w := flatWindow(r.window)
 	cur := len(w) - 1
 	withSwingHigh(w, cur-20, 1.1006)
 	// Bougie de décision : pointe à 1,1008 (au-dessus de la zone), close
 	// 1,1002 (revenu dessous).
 	w[cur] = core.Bar{Time: w[cur].Time, BidOpen: 1.1001, BidHigh: 1.1008, BidLow: 1.1000, BidClose: 1.1002}
-	s := r.setupAt(w, 3)
+	s := r.setupAt(w, 3, 0)
 	if s.side != -1 || s.level != 1.1006 || s.entry != 1.1002 {
 		t.Fatalf("vente attendue sur la zone 1,1006 : %+v", s)
 	}
@@ -58,7 +70,7 @@ func TestSweepAboveASwingHighThatClosesBackBelowIsASell(t *testing.T) {
 }
 
 func TestNoSetupWithoutRejectionOrOnATakenZone(t *testing.T) {
-	r := v10()
+	r := v11()
 	cases := map[string]func(w core.Series, cur int){
 		// Close AU-DESSUS de la zone : c'est une cassure, pas un rejet.
 		"cassure": func(w core.Series, cur int) {
@@ -96,19 +108,19 @@ func TestNoSetupWithoutRejectionOrOnATakenZone(t *testing.T) {
 		cur := len(w) - 1
 		withSwingHigh(w, cur-20, 1.1006)
 		mutate(w, cur)
-		if s := r.setupAt(w, 3); s.side != 0 {
+		if s := r.setupAt(w, 3, 0); s.side != 0 {
 			t.Errorf("%s : aucune entrée attendue, reçu %+v", name, s)
 		}
 	}
 }
 
 func TestSweepBelowASwingLowIsABuy(t *testing.T) {
-	r := v10()
+	r := v11()
 	w := flatWindow(r.window)
 	cur := len(w) - 1
 	w[cur-40].BidLow = 1.0994
 	w[cur] = core.Bar{Time: w[cur].Time, BidOpen: 1.0999, BidHigh: 1.1000, BidLow: 1.0992, BidClose: 1.0998}
-	s := r.setupAt(w, 5)
+	s := r.setupAt(w, 5, 0)
 	if s.side != +1 || s.level != 1.0994 || s.stop >= 1.0992 || s.target(2) <= s.entry {
 		t.Fatalf("achat attendu sous la zone 1,0994 : %+v", s)
 	}
@@ -116,7 +128,7 @@ func TestSweepBelowASwingLowIsABuy(t *testing.T) {
 	w2 := flatWindow(r.window)
 	w2[cur-r.lookback-1].BidLow = 1.0994
 	w2[cur] = w[cur]
-	if s := r.setupAt(w2, 5); s.side != 0 {
+	if s := r.setupAt(w2, 5, 0); s.side != 0 {
 		t.Fatalf("zone plus ancienne que %d bougies : aucune entrée attendue, %+v", r.lookback, s)
 	}
 }
@@ -125,15 +137,16 @@ func TestSweepBelowASwingLowIsABuy(t *testing.T) {
 // calibrage rejoue sont, un pour un, ceux que le moteur de backtest
 // produit avec la stratégie réelle — entrée, sortie, prix et motif.
 func TestCalibrationSimulationMatchesTheBacktestEngine(t *testing.T) {
-	r := v10()
-	series := strategytest.SeriesAt(data.M5, 9000, 17, 1.10)
+	r := v11()
+	series := spiky(strategytest.SeriesAt(data.M5, 9000, 17, 1.10))
 	for _, c := range []struct {
-		rr    float64
-		pivot int
-	}{{1.5, 3}, {2, 5}, {1, 3}} {
+		rr     float64
+		pivot  int
+		volMin float64
+	}{{1.5, 3, 0}, {2, 5, 0}, {1, 3, 0}, {1.5, 3, 1.5}} {
 		dir := t.TempDir()
 		meta := r.newMeta()
-		meta.Symbol, meta.Timeframe, meta.RR, meta.Pivot = "EURUSD", "M5", c.rr, c.pivot
+		meta.Symbol, meta.Timeframe, meta.RR, meta.Pivot, meta.VolumeMin = "EURUSD", "M5", c.rr, c.pivot, c.volMin
 		meta.Calibration = &calibration{}
 		if err := meta.save(dir); err != nil {
 			t.Fatal(err)
@@ -154,11 +167,11 @@ func TestCalibrationSimulationMatchesTheBacktestEngine(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		setups, _ := r.setups(context.Background(), series, r.window, c.pivot)
+		setups, _ := r.setups(context.Background(), series, r.window, c.pivot, c.volMin)
 		sim := r.simulateTrades(series, setups, c.rr, data.M5.Duration())
 		if len(sim) != len(res.Trades) || len(sim) < 20 {
-			t.Fatalf("rr %v pivot %d : %d trades simulés, %d au moteur (20 au moins attendus)",
-				c.rr, c.pivot, len(sim), len(res.Trades))
+			t.Fatalf("rr %v pivot %d volume %v : %d trades simulés, %d au moteur (20 au moins attendus)",
+				c.rr, c.pivot, c.volMin, len(sim), len(res.Trades))
 		}
 		for k, tr := range res.Trades {
 			st := sim[k]
@@ -169,13 +182,13 @@ func TestCalibrationSimulationMatchesTheBacktestEngine(t *testing.T) {
 					series[st.entryIdx].Time, series[st.exitIdx].Time, st.entry, st.exit, st.reason)
 			}
 		}
-		t.Logf("rr %v pivot %d : %d trades identiques", c.rr, c.pivot, len(sim))
+		t.Logf("rr %v pivot %d volume %v : %d trades identiques", c.rr, c.pivot, c.volMin, len(sim))
 	}
 }
 
 func TestTrainCalibratesAndRecordsTheGrid(t *testing.T) {
-	r := v10()
-	series := strategytest.SeriesAt(data.M5, 12000, 21, 1.10)
+	r := v11()
+	series := spiky(strategytest.SeriesAt(data.M5, 12000, 21, 1.10))
 	s := newMartinet(r)
 	dir := t.TempDir()
 	rep, err := s.Train(context.Background(), strategy.TrainRequest{
@@ -187,7 +200,7 @@ func TestTrainCalibratesAndRecordsTheGrid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(m.Calibration.Grid) != len(r.rrGrid)*len(r.pivotGrid) || !m.Calibration.CostsModelled {
+	if len(m.Calibration.Grid) != len(r.rrGrid)*len(r.pivotGrid)*len(r.volGrid) || !m.Calibration.CostsModelled {
 		t.Fatalf("grille archivée incomplète : %+v", m.Calibration)
 	}
 	if rep.Metrics["calibrage_rr"] != m.RR || rep.Metrics["calibrage_pivot"] != float64(m.Pivot) {
@@ -210,20 +223,20 @@ func TestTrainCalibratesAndRecordsTheGrid(t *testing.T) {
 }
 
 func TestCalibrationFallsBackWithoutEnoughTrades(t *testing.T) {
-	r := v10()
+	r := v11()
 	r.minCalibTrades = 1_000_000
-	rr, pivot, cal, err := r.calibrate(context.Background(),
+	rr, pivot, volMin, cal, err := r.calibrate(context.Background(),
 		strategytest.SeriesAt(data.M5, 3000, 5, 1.10), data.M5.Duration())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cal.Fallback || rr != r.fallbackRR || pivot != r.fallbackPivot {
+	if !cal.Fallback || rr != r.fallbackRR || pivot != r.fallbackPivot || volMin != 0 {
 		t.Fatalf("sans point jugeable, le repli doit être gardé ET signalé : rr %v pivot %d %+v", rr, pivot, cal)
 	}
 }
 
 func TestRefusesWhatItCannotDo(t *testing.T) {
-	r := v10()
+	r := v11()
 	ctx := context.Background()
 	s := newMartinet(r)
 	one := map[string]core.Series{"EURUSD": strategytest.SeriesAt(data.M5, 3000, 1, 1.10)}
@@ -264,12 +277,116 @@ func TestRefusesWhatItCannotDo(t *testing.T) {
 }
 
 func TestDeclaresItsExecutionRules(t *testing.T) {
-	d := newMartinet(v10()).Describe()
+	d := newMartinet(v11()).Describe()
 	if d.HoldsOverWeekend || d.ExitOnReversal || d.UsesVolume || !d.UsesNews ||
-		d.MaxHold != 2*time.Hour || d.ContextBars != v10().window {
+		d.MaxHold != 2*time.Hour || d.ContextBars != v11().window {
 		t.Fatalf("règles d'exécution déclarées inattendues : %+v", d)
 	}
 	if strategy.CheckTimeframe(d, data.M5) != nil || strategy.CheckTimeframe(d, data.H1) == nil {
 		t.Fatal("M5 accepté, H1 refusé attendus")
+	}
+}
+
+// TestVolumeFilterConfirmsTheSweep : le même balayage passe avec un pic
+// de volume, pas sans ; un volume inconnu fait s'abstenir, jamais passer.
+func TestVolumeFilterConfirmsTheSweep(t *testing.T) {
+	r := v11()
+	w := flatWindow(r.window)
+	cur := len(w) - 1
+	withSwingHigh(w, cur-20, 1.1006)
+	w[cur] = core.Bar{Time: w[cur].Time, BidOpen: 1.1001, BidHigh: 1.1008, BidLow: 1.1000, BidClose: 1.1002}
+	for i := range w {
+		w[i].Volume = 100
+	}
+	if s := r.setupAt(w, 3, 0); s.side != -1 {
+		t.Fatalf("sans filtre : vente attendue, %+v", s)
+	}
+	w[cur].Volume = 140 // 1,4 × la médiane
+	if s := r.setupAt(w, 3, 1.5); s.side != 0 {
+		t.Fatalf("volume 1,4 × médiane < 1,5 : abstention attendue, %+v", s)
+	}
+	w[cur].Volume = 150 // exactement 1,5 × la médiane
+	if s := r.setupAt(w, 3, 1.5); s.side != -1 {
+		t.Fatalf("volume 1,5 × médiane : vente attendue, %+v", s)
+	}
+	w[cur-3].Volume = math.NaN()
+	if s := r.setupAt(w, 3, 1.5); s.side != 0 {
+		t.Fatalf("un volume inconnu dans la référence : abstention attendue, %+v", s)
+	}
+	w[cur-3].Volume, w[cur].Volume = 100, math.NaN()
+	if s := r.setupAt(w, 3, 1.5); s.side != 0 {
+		t.Fatalf("volume de la bougie inconnu : abstention attendue, %+v", s)
+	}
+	if s := r.setupAt(w, 3, 0); s.side != -1 {
+		t.Fatalf("sans filtre, le volume inconnu ne compte pas : vente attendue, %+v", s)
+	}
+}
+
+// TestWithoutVolumeOnlyUnfilteredPointsAreTried : un historique FXCM (pas
+// de volume) calibre Martinet quand même, sur les seuls réglages sans
+// filtre ; les autres sont archivés « non essayés », avec la raison.
+func TestWithoutVolumeOnlyUnfilteredPointsAreTried(t *testing.T) {
+	r := v11()
+	series := strategytest.SeriesAt(data.M5, 12000, 21, 1.10)
+	for i := range series {
+		series[i].Volume = math.NaN()
+	}
+	_, _, volMin, cal, err := r.calibrate(context.Background(), series, data.M5.Duration())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if volMin != 0 {
+		t.Fatalf("sans volume, le filtre ne peut pas être retenu : %v", volMin)
+	}
+	skipped := 0
+	for _, gp := range cal.Grid {
+		if gp.VolumeMin > 0 {
+			if gp.Skipped == "" || gp.Trades != 0 || gp.Score != nil {
+				t.Fatalf("point avec filtre sur historique sans volume : %+v", gp)
+			}
+			skipped++
+		}
+	}
+	if skipped != len(r.rrGrid)*len(r.pivotGrid) {
+		t.Fatalf("%d points non essayés, %d attendus", skipped, len(r.rrGrid)*len(r.pivotGrid))
+	}
+}
+
+// TestVolumeModelIsRefusedWhereVolumeIsMissing : un modèle qui a retenu
+// le filtre ne se charge pas sur un historique sans volume (il serait
+// muet en silence), et le dit au moteur live (ModelUsesVolume).
+func TestVolumeModelIsRefusedWhereVolumeIsMissing(t *testing.T) {
+	r := v11()
+	dir := t.TempDir()
+	meta := r.newMeta()
+	meta.Symbol, meta.Timeframe, meta.RR, meta.Pivot, meta.VolumeMin = "EURUSD", "M5", 1.5, 3, 1.5
+	meta.Calibration = &calibration{}
+	if err := meta.save(dir); err != nil {
+		t.Fatal(err)
+	}
+	noVol := strategytest.SeriesAt(data.M5, 500, 3, 1.10)
+	for i := range noVol {
+		noVol[i].Volume = math.NaN()
+	}
+	s := newMartinet(r)
+	err := s.Warmup(context.Background(), strategy.WarmupRequest{
+		Symbol: "EURUSD", Series: noVol, Timeframe: data.M5, ModelDir: dir})
+	if err == nil || !strings.Contains(err.Error(), "volume") {
+		t.Fatalf("refus nommant le volume attendu, reçu %v", err)
+	}
+	ok := newMartinet(r)
+	if err := ok.Warmup(context.Background(), strategy.WarmupRequest{
+		Symbol: "EURUSD", Series: strategytest.SeriesAt(data.M5, 500, 3, 1.10), Timeframe: data.M5, ModelDir: dir}); err != nil {
+		t.Fatal(err)
+	}
+	var mv strategy.ModelVolume = ok
+	if !mv.ModelUsesVolume("EURUSD") || mv.ModelUsesVolume("GBPUSD") {
+		t.Fatal("ModelUsesVolume doit dire vrai pour EURUSD (filtre retenu), faux pour une paire sans modèle")
+	}
+	// Un seuil hors grille est refusé au chargement.
+	meta.VolumeMin = 1.2
+	meta.save(dir)
+	if _, err := r.loadModel(dir, "EURUSD", "M5"); err == nil {
+		t.Fatal("un seuil de volume hors grille doit être refusé")
 	}
 }

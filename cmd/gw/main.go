@@ -114,7 +114,7 @@ PREMIERS PAS — dans cet ordre, chaque étape a besoin de la précédente :
                                 vaut quelque chose.
                                 Moteur : strategy.name — colibri_v1_2 (défaut,
                                 classifieur, exige le volume), troglodyte_v1_1
-                                (tendance) ou martinet_v1_0 (scalping de zones de
+                                (tendance) ou martinet_v1_1 (scalping de zones de
                                 liquidité, en M1, M5 ou M15 seulement :
                                 training.timeframe ET broker.timeframe).
   3. Inspecter un rejeu         gw backtest EURUSD

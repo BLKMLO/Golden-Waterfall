@@ -50,7 +50,7 @@ strategy:
   # Moteur de décision actif (clé du registre de stratégies) :
   #   colibri_v1_2    — classifieur GBDT (exige le volume : Dukascopy) ;
   #   troglodyte_v1_1 — suivi de tendance, filtre de Kalman ;
-  #   martinet_v1_0   — scalping de zones de liquidité, en M1, M5 ou M15
+  #   martinet_v1_1   — scalping de zones de liquidité, en M1, M5 ou M15
   #                     SEULEMENT (training.timeframe ET broker.timeframe).
   # Seule la dernière révision de chaque moteur est livrée. Un modèle n'est
   # chargé que par la révision qui l'a entraîné : changer ce nom demande un
@@ -211,7 +211,7 @@ training:
 news:
   # Filtre d'actualités économiques : aucune ENTRÉE dans la fenêtre d'une
   # annonce importante sur l'une des devises de la paire. Il ne s'applique
-  # qu'aux stratégies qui le DÉCLARENT (troglodyte_v1_1, martinet_v1_0) ; Colibri n'y a
+  # qu'aux stratégies qui le DÉCLARENT (troglodyte_v1_1, martinet_v1_1) ; Colibri n'y a
   # jamais accès, quel que soit ce réglage.
   enabled: true
   # Source du calendrier : "forexfactory" (flux public de la semaine en

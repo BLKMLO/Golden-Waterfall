@@ -284,7 +284,7 @@ func TestDeleteRunRefusesPathOutsideModelsDir(t *testing.T) {
 func TestRefusesATimeframeTheStrategyDoesNotTrade(t *testing.T) {
 	_, runner := testSetup(t)
 	_, err := runner.Run(context.Background(), Request{
-		Strategy: "martinet_v1_0", Symbols: []string{"EURUSD"}, Timeframe: data.H4, Folds: 2,
+		Strategy: "martinet_v1_1", Symbols: []string{"EURUSD"}, Timeframe: data.H4, Folds: 2,
 	})
 	if err == nil || !strings.Contains(err.Error(), "M1, M5, M15") {
 		t.Fatalf("refus nommant les unités acceptées attendu, reçu %v", err)

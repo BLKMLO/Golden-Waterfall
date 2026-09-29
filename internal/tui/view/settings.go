@@ -268,7 +268,7 @@ func settingsFields() []settingField {
 		// --- Stratégie ---
 		{
 			Section: "Stratégie", Path: "strategy.name", Label: "Moteur de décision", Kind: kindEnum,
-			Help:    "colibri_v1_2 classifieur (exige le volume) · troglodyte_v1_1 tendance · martinet_v1_0 scalping, M1/M5/M15 seulement : régler aussi les deux unités de temps.",
+			Help:    "colibri_v1_2 classifieur (exige le volume) · troglodyte_v1_1 tendance · martinet_v1_1 scalping, M1/M5/M15 seulement : régler aussi les deux unités de temps.",
 			Choices: func() []string { return strategy.List() },
 			Get:     func(c *config.Config) string { return c.Strategy.Name },
 			Set:     func(c *config.Config, s string) error { c.Strategy.Name = s; return nil },

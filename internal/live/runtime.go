@@ -48,6 +48,10 @@ type SymbolState struct {
 	// en publie ET historique qui en porte), ou n'en dépend pas. Faux
 	// tant que la passerelle n'a pas été connectée.
 	VolumeOK bool
+	// NeedsVolume : le MODÈLE chargé pour cette paire dépend du volume
+	// (Martinet avec filtre de volume retenu), même si la stratégie ne le
+	// déclare pas pour toutes (Description.UsesVolume).
+	NeedsVolume bool
 	// Notice porte l'anomalie éventuelle (modèle absent, historique
 	// périmé…). Les deux sont distincts : une paire peut avoir son modèle
 	// et un historique local incomplet, ou l'inverse, et confondre les
@@ -116,9 +120,11 @@ type Runtime struct {
 	modelOK  map[string]bool
 	histOK   map[string]bool
 	volumeOK map[string]bool
-	notices  map[string]string
-	message  string
-	cancel   context.CancelFunc
+	// modelVolume : paires dont le modèle chargé dépend du volume.
+	modelVolume map[string]bool
+	notices     map[string]string
+	message     string
+	cancel      context.CancelFunc
 
 	// cache des données de compte, rafraîchi par une boucle dédiée : la
 	// TUI redessine plusieurs fois par seconde et ne doit pas interroger
@@ -139,8 +145,10 @@ func NewRuntime(cfg config.Config, bus *core.Bus, logger *slog.Logger,
 		modelOK:  map[string]bool{},
 		histOK:   map[string]bool{},
 		volumeOK: map[string]bool{},
-		notices:  map[string]string{},
-		message:  "non connecté",
+
+		modelVolume: map[string]bool{},
+		notices:     map[string]string{},
+		message:     "non connecté",
 	}
 }
 
@@ -236,6 +244,7 @@ func (r *Runtime) connect(ctx context.Context, account string) error {
 	modelOK := map[string]bool{}
 	histOK := map[string]bool{}
 	volumeOK := map[string]bool{}
+	modelVolume := map[string]bool{}
 	notices := map[string]string{}
 	needsVolume := strat.Describe().UsesVolume
 	gwVolume := gw.Info().SuppliesVolume
@@ -305,6 +314,18 @@ func (r *Runtime) connect(ctx context.Context, account string) error {
 			continue
 		}
 		modelOK[sym] = true
+		// Besoin de volume propre au MODÈLE (Martinet : filtre retenu au
+		// calibrage). L'historique sans volume est déjà refusé par la
+		// chauffe ; reste la passerelle.
+		if mv, ok := strat.(strategy.ModelVolume); ok && mv.ModelUsesVolume(sym) {
+			modelVolume[sym] = true
+			if !gwVolume {
+				volumeOK[sym] = false
+				addNotice(sym, fmt.Sprintf("modèle calibré avec le filtre de volume et %s ne publie pas de volume : "+
+					"aucune décision — réentraîner sur un historique sans volume (FXCM) pour un modèle sans filtre",
+					gw.Info().Label))
+			}
+		}
 	}
 
 	if err := gw.Connect(runCtx); err != nil {
@@ -323,6 +344,7 @@ func (r *Runtime) connect(ctx context.Context, account string) error {
 	r.gateway, r.engine, r.strategy = gw, engine, strat
 	r.symbols = symbols
 	r.modelOK, r.histOK, r.volumeOK, r.notices = modelOK, histOK, volumeOK, notices
+	r.modelVolume = modelVolume
 	r.cancel = cancel
 	r.message = "connecté"
 	r.mu.Unlock()
@@ -521,6 +543,10 @@ func (r *Runtime) Snapshot() Snapshot {
 	for k, v := range r.volumeOK {
 		volumeOK[k] = v
 	}
+	modelVolume := make(map[string]bool, len(r.modelVolume))
+	for k, v := range r.modelVolume {
+		modelVolume[k] = v
+	}
 	notices := make(map[string]string, len(r.notices))
 	for k, v := range r.notices {
 		notices[k] = v
@@ -591,6 +617,7 @@ func (r *Runtime) Snapshot() Snapshot {
 			ModelLoaded: modelOK[sym],
 			HistoryOK:   histOK[sym],
 			VolumeOK:    volumeOK[sym],
+			NeedsVolume: modelVolume[sym],
 		}
 		st.Symbol = sym
 		if engine != nil {

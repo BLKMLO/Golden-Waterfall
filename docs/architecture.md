@@ -75,9 +75,9 @@ Golden-Waterfall/
 │   │   │   ├── strategy.go     Chauffe, décision, entraînement.
 │   │   │   └── model.go        Manifeste = le modèle entier, chargement vérifié.
 │   │   └── martinet/           Génération Martinet (scalping, zones de liquidité) :
-│   │       ├── revision.go     Définition figée de martinet_v1_0.
+│   │       ├── revision.go     Définition figée de martinet_v1_1.
 │   │       ├── zones.go        LA règle (setupAt) : pivots, balayage rejeté.
-│   │       ├── calibrate.go    Calibrage rr × pivot, rejeu comme le moteur.
+│   │       ├── calibrate.go    Calibrage rr × pivot × volume, rejeu comme le moteur.
 │   │       ├── strategy.go     Chauffe, décision, entraînement.
 │   │       └── model.go        Manifeste = le modèle entier, chargement vérifié.
 │   │

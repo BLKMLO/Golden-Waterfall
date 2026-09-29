@@ -21,10 +21,11 @@
   v0.8.0) la troisième. Les révisions d'une génération sont numérotées.
 - **Seule la DERNIÈRE révision d'un moteur est livrée** (règle du
   propriétaire, v0.8.0) : `colibri_v1_2` (défaut), `troglodyte_v1_1`,
-  `martinet_v1_0`. Une nouvelle révision REMPLACE la précédente : code de
+  `martinet_v1_1`. Une nouvelle révision REMPLACE la précédente : code de
   l'ancienne supprimé, `strategy.Retire(ancienne, nouvelle)` dans l'`init()`
   pour qu'une config restée dessus soit refusée en nommant la remplaçante.
-  Retirées en v0.8.0 : `colibri_v1_0`, `colibri_v1_1`, `troglodyte_v1_0`.
+  Retirées en v0.8.0 : `colibri_v1_0`, `colibri_v1_1`, `troglodyte_v1_0` ;
+  en v0.8.1 : `martinet_v1_0`.
   Avant de retirer : capturer modèles + décisions de la révision gardée,
   et vérifier l'identité octet pour octet après (fait en v0.8.0).
 - **Colibri n'a PAS droit à internet** (règle du propriétaire) : aucune
@@ -187,7 +188,8 @@ d'être vraie.
 | Modèle refusé en live hors de l'unité où il a été entraîné (`training.Coverage`) | live, prérequis | Un modèle H4 appliqué à des bougies M5, en silence (Colibri ne le vérifiait pas) |
 | Ligne Prérequis + détail `p` ; « pas de modèle » seulement une fois connecté | TUI Live | Connecter sans savoir qu'aucun modèle n'existe ; affirmer « pas de modèle » avant de l'avoir cherché |
 | Confiance affichée seulement si > 0 | TUI Live | « LONG 0.00 » pour une règle qui n'a pas de probabilité (Martinet) |
-| Simulation du calibrage confrontée au moteur, trade par trade | martinet | Calibrer une règle que l'exécution ne suit pas |
+| Simulation du calibrage confrontée au moteur, trade par trade (filtre de volume compris) | martinet |
+| Points de grille filtrés « non essayés » sans volume ; modèle filtré refusé sans volume (chauffe, `ModelVolume` en live) | martinet, live | Un filtre de volume qui rend un modèle muet sur FXCM ou IB, en silence | Calibrer une règle que l'exécution ne suit pas |
 
 ## Conventions
 
@@ -349,6 +351,16 @@ d'être vraie.
   `simulateTrades` = moteur de backtest (test trade par trade) ; ignore
   news et refus du risque. Le point retenu peut avoir un score NÉGATIF
   (le moins mauvais) : c'est archivé (`score_calibrage`), pas caché.
+- **v1_1 (v0.8.1) : filtre de VOLUME RELATIF calibré** (grille ×2 :
+  sans, ou volume ≥ 1,5 × médiane des 20 précédentes → 12 points ; repli
+  SANS filtre). Le volume S'AJOUTE à l'ATR (unité de distance), il ne le
+  remplace pas (décision discutée avec le propriétaire). Sans volume dans
+  l'historique, les points filtrés sont archivés `skipped`, jamais
+  simulés. Un modèle filtré : refusé à la chauffe sur historique sans
+  volume ; en live, `strategy.ModelVolume` → `SymbolState.NeedsVolume` et
+  « ✗ vol. » + notice si la passerelle n'en publie pas (IB). NaN = on
+  s'abstient. Sur le synthétique de l'essai, filtre jamais retenu (4-5
+  trades par point < 30).
 - Confiance 0 (règle). Stops de quelques pips → à 0,5 % de risque, le
   plafond `max_position_size` rabote souvent (104 entrées sur 149 à
   l'essai synthétique) : c'est compté (`SizeCapped`) et affiché.
@@ -473,10 +485,11 @@ Dependabot hebdomadaire, `charmbracelet/x/*` GROUPÉS.
 
 Licence **MIT**, choisie par le propriétaire du projet.
 
-## État du projet (29 septembre 2026, v0.8.0)
+## État du projet (29 septembre 2026, v0.8.1)
 
 27 paquets, suite verte avec `-race`. `cat` des fichiers `.go` :
-26 767 lignes hors tests, 12 882 de tests.
+26910 lignes hors tests, 13000 de tests (v0.8.1 ; couverture ci-dessous
+mesurée en v0.8.0).
 
 Couverture mesurée le 29 septembre 2026 (`go test -cover`) :
 `cmd/gw` 47 %, `tui/view` 62 %, `core` 65 %, `training` 72 %,
@@ -496,6 +509,9 @@ et `gw backtrain` OUVERTS EN MÊME TEMPS sur les mêmes données, séance
 rejouée avec Martinet (3 ordres à barrières, 6 exécutions), backtest de
 l'atelier identique à la CLI, les deux interfaces à 60×18 et 132×34 ;
 `gw news fetch` implicite à la connexion contre le vrai flux.
+En **v0.8.1**, même historique : `gw train` `martinet_v1_1` (12 points
+par pli, filtre de volume essayé puis écarté faute de trades : 4 à 5 par
+point), refus de `martinet_v1_0` nommant v1_1.
 
 Validé réellement : walk-forward et backtest de bout en bout sur un
 historique importé depuis pyarrow ; Parquet écrit relu par pyarrow ; rendu
@@ -532,8 +548,11 @@ période archivée.
    réseau que Dukascopy ne limite pas). Troglodyte est mesuré sur FXCM
    (v0.7.3) ; élargir à plus de paires. Un démenti donne une nouvelle
    révision, qui remplace l'ancienne, jamais une retouche.
-2 bis. **Mesurer Martinet sur historique réel** (FXCM suffit : ni volume
-   ni ask manquant), en M1, M5 et M15, plusieurs paires : walk-forward,
+2 bis. **Mesurer Martinet sur historique réel**, en M1, M5 et M15,
+   plusieurs paires : FXCM pour la règle sans filtre, Dukascopy (volume
+   de ticks) pour savoir si le filtre de volume de v1_1 AMÉLIORE quelque
+   chose — comparer les points avec et sans filtre de la grille, et le
+   walk-forward : walk-forward,
    puis regarder SÉPARÉMENT l'effet du plafond `max_position_size` (stops
    de quelques pips) et des coûts. Pistes d'une `martinet_v1_1`, à
    mesurer une par une : filtre de tendance de fond (ne vendre un
@@ -550,6 +569,14 @@ période archivée.
    Change des résultats publiés : à traiter comme un changement de moteur.
 5. **Mesurer `risk_per_trade_pct`** (`gw train --risk-per-trade 0` puis
    `0.5`, `gw runs`).
+5 bis. **Backtester avec les actualités** (proposé en v0.8.1, en attente
+   du choix du propriétaire) : (a) `gw news import` d'un calendrier
+   HISTORIQUE en CSV (date, heure, devise, impact, titre ; `--tz`, comme
+   `gw import`), les semaines couvertes = celles du fichier ; (b)
+   `gw news fetch` planifié chaque semaine pour ne plus perdre de
+   semaine ; (c) mesure A/B : `gw train --news off|on` et un écart par
+   pli, sur la seule période couverte (le reste compté à part). Tant que
+   rien de cela n'existe, le filtre ne compte dans aucune mesure.
 6. **Troglodyte, suite** : archiver un calendrier historique (`gw news
    import`) pour que le filtre compte dans une mesure ; variances
    variables dans le modèle lui-même ; avec un contrat multi-jambes, une
