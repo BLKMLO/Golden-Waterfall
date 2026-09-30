@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -190,6 +191,33 @@ func TestConnectTwiceIsClean(t *testing.T) {
 	waitFor(t, "arrivée de prix après reconnexion", func() bool { return rt.Snapshot().Stats.Ticks > 0 })
 	rt.Disconnect()
 	rt.Disconnect() // appelable deux fois
+}
+
+// TestConcurrentConnectsLeaveNoOrphan : deux connexions lancées en même
+// temps (touche « c » répétée pendant l'attente de TWS) ne doivent pas
+// laisser tourner une passerelle que plus rien ne référence. Après
+// Disconnect, plus aucun prix ne doit circuler sur le bus.
+func TestConcurrentConnectsLeaveNoOrphan(t *testing.T) {
+	rt, _, _ := setupRuntime(t)
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = rt.Connect(context.Background())
+		}()
+	}
+	wg.Wait()
+	waitFor(t, "arrivée de prix", func() bool { return rt.Snapshot().Stats.Ticks > 0 })
+	rt.Disconnect()
+
+	sub := rt.bus.Subscribe(core.TopicTick, 64)
+	defer sub.Close()
+	select {
+	case evt := <-sub.C():
+		t.Fatalf("un flux orphelin publie encore après la déconnexion : %+v", evt.Payload)
+	case <-time.After(300 * time.Millisecond):
+	}
 }
 
 func TestUnknownGatewayIsReported(t *testing.T) {

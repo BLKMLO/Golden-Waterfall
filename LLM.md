@@ -204,6 +204,15 @@ d'être vraie.
 | Simulation du calibrage confrontée au moteur, trade par trade (filtre de volume compris) | martinet |
 | Comparaison avec / sans filtre news par pli, même modèle ; écart sur la seule période couverte ; « ne mesure rien » sans semaine couverte | training, CLI, TUI Entraînement | Prendre un écart nul faute de calendrier pour « le filtre ne sert à rien » ; attribuer au filtre un écart hors couverture |
 | Points de grille filtrés « non essayés » sans volume ; modèle filtré refusé sans volume (chauffe, `ModelVolume` en live) | martinet, live | Un filtre de volume qui rend un modèle muet sur FXCM ou IB, en silence | Calibrer une règle que l'exécution ne suit pas |
+| Équité du backtest = capital + Σ P&L nets (`liquidate`, test d'identité) | backtest | Un coût d'entrée retiré deux fois de la trésorerie : équité, rendement, drawdown, Sharpe et budget de risque faux (v0.8.2) |
+| `checkLevels` : `ReasonNonFinite`, `ReasonBarrierSide` ; `ReasonUnknownAction` (comptés avec les refus de dimensionnement) ; IB refuse une barrière illisible | risk, broker IB | Un ordre à quantité NaN ; une entrée IB partie sans son stop NaN ; un stop déclenché dès sa pose ; une action inconnue exécutée comme un ACHAT |
+| Rejeu converti vers `backtest.account_currency` ; stop servi à l'ouverture sur gap | broker replay | Toutes les entrées USDJPY refusées « marge insuffisante » ; un P&L en yens ajouté à des dollars ; un rejeu plus flatteur que le backtest |
+| `Aggregator.Late` → `Stats.LateTicks`, note de la carte Bougies | live, TUI Live | Un tick en retard qui rouvre une bougie passée et désordonne le tampon |
+| `Runtime.connMu` + « connexion déjà en cours » | live, TUI Live | Deux connexions simultanées, dont un moteur orphelin qui trade hors de vue |
+| `Config.Save` garde la valeur du FICHIER pour une clé forcée par `GW_*` ; fichiers créés en 0600 | config, TUI Paramètres | Un `GW_MODE=live` d'un soir gravé dans config.yaml au premier enregistrement |
+| Nombres FINIS exigés (`positive`, `!(x >= 0 && x <= 100)`), bornes de `logging.buffer_size`, `ui.refresh_millis` ; saisie « 0,5 » acceptée, « nan » refusée | config, TUI Paramètres, CLI | Un plafond NaN qui ne plafonne rien, une perte journalière NaN qui bloque tout |
+| « P&L avant coûts » (net + coûts) | CLI `gw train`, TUI Entraînement | Confondre « aucun avantage » et « avantage dévoré par le spread » |
+| `checkBar` à l'import (CSV et Parquet) ; pages Parquet corrompues = erreur ; charges HTTP et décompressions ≤ 64 Mo, `Retry-After` ≤ 5 min | data | Des colonnes décalées importées ; une année amputée relue comme entière ; une réponse démesurée qui fait tomber le programme |
 
 ## Conventions
 
@@ -234,6 +243,10 @@ d'être vraie.
   `?`, `q`, `1`–`9` sont globaux. Un écran qui saisit du texte l'annonce
   par `view.KeyCapturer`.
 - **Aucun `panic` sur une donnée** ; seulement sur une incohérence de code.
+- **NaN traverse les comparaisons** : `x <= 0` et `x > max` sont FAUX pour
+  NaN. Tout flottant venu de l'extérieur (config, saisie, fichier, signal,
+  courtier) se contrôle par la forme positive (`!(x > 0)`,
+  `!(x >= 0 && x <= 100)`) et `math.IsInf` (v0.8.2).
 - Nouvelle passerelle : `Register()` dans un `init()`. Nouvelle stratégie :
   `strategy/<oiseau>/` + `Register()` + UNE ligne dans
   `internal/strategies/strategies.go`.
@@ -411,7 +424,10 @@ d'être vraie.
 - **Live multi-paires dans UNE instance** : moteur à état par symbole,
   risque et équité partagés, aucune corrélation modélisée
   (`docs/architecture.md` § 5 ter).
-- **Rejeu** : horodate au temps du marché rejoué, jamais l'heure réelle.
+- **Rejeu** : horodate au temps du marché rejoué, jamais l'heure réelle ;
+  compte tenu dans `backtest.account_currency` (marge et P&L convertis
+  par `data.ConversionFor`, comme au backtest) ; stop servi au pire de la
+  barrière et de l'ouverture (v0.8.2).
 - **bbolt** verrouille le fichier : une seconde instance `gw` échoue, c'est
   voulu. `gw backtrain` et les commandes de travail ne l'ouvrent pas
   (`app.Workshop`).
@@ -503,8 +519,8 @@ Licence **MIT**, choisie par le propriétaire du projet.
 ## État du projet (30 septembre 2026, v0.8.2)
 
 27 paquets, suite verte avec `-race`. `cat` des fichiers `.go` :
-27722 lignes hors tests, 13466 de tests (v0.8.2 ; couverture ci-dessous
-mesurée en v0.8.0).
+28155 lignes hors tests, 13972 de tests (v0.8.2 après l'audit ; couverture
+ci-dessous mesurée en v0.8.0).
 
 Couverture mesurée le 29 septembre 2026 (`go test -cover`) :
 `cmd/gw` 47 %, `tui/view` 62 %, `core` 65 %, `training` 72 %,
@@ -530,7 +546,16 @@ point), refus de `martinet_v1_0` nommant v1_1.
 En **v0.8.2**, sur le binaire : une `config.yaml` restée sur
 `martinet_v1_0` est réparée en `martinet_v1_1` (sauvegarde `.bak`,
 entête « Réparé automatiquement », annonce dans `gw config` et dans la
-barre d'état de `gw backtrain`).
+barre d'état de `gw backtrain`) ; une `config.yaml` à `.nan`/`.inf` est
+réparée et annoncée. **Audit v0.8.2** : téléchargement RÉEL FXCM
+(EURUSD, GBPUSD, USDJPY, 2022 → 2025, 4 176 619 bougies, aucune refusée
+par `checkBar`) ; **première mesure de Martinet sur historique réel** et
+seconde de Troglodyte (tableaux dans `docs/martinet.md` et
+`docs/troglodyte.md`) ; walk-forward des deux moteurs rejoués avec le
+binaire d'avant et d'après l'audit : décisions identiques pli par pli,
+modèles identiques à `trained_at` près, seul le P&L change (dimensionnement
+sur l'équité corrigée) ; sous tmux, `gw backtrain` à 60×18 et 132×34,
+`gw` connecté au rejeu, touches `k` hors connexion et `c` répétée.
 
 Validé réellement : walk-forward et backtest de bout en bout sur un
 historique importé depuis pyarrow ; Parquet écrit relu par pyarrow ; rendu
@@ -550,12 +575,18 @@ import CSV réel (fichier FXCM brut : date ambiguë refusée,
 `--time-format` accepté, `--replace` exigé) ; TUI sous tmux (écran
 Données avec source et « non publié », Live avec `✗ vol.`).
 
-**Jamais validé** : un téléchargement Dukascopy réel (429 encore le
-27/09/2026, 3 requêtes sur 3), Colibri sur données réelles (FXCM n'a pas
-de volume), **Martinet sur données réelles** (aucune mesure : toutes ses
-valeurs sont des conventions), une séance contre un vrai TWS, la règle de
-fin de semaine live sur un vrai flux, le filtre d'actualités sur une
-période archivée.
+**Jamais validé** : un téléchargement Dukascopy réel (429 le 27/09/2026 ;
+délai dépassé le 30/09/2026), Colibri sur données réelles (FXCM n'a pas
+de volume), le **filtre de volume de Martinet** (idem), une séance contre
+un vrai TWS, la règle de fin de semaine live sur un vrai flux, le filtre
+d'actualités sur une période archivée.
+
+**Mesuré sur historique réel (FXCM, tests 02/01/2024 → 31/12/2025,
+v0.8.2)** : AUCUN moteur mesurable n'est rentable net de coûts.
+`martinet_v1_1` M15 PF 0,88 (2 814 trades, SQN −2,98), M5 PF 0,87
+(6 815, SQN −4,94), à peu près NEUTRE avant coûts (−1 355 et +1 570 USD
+pour 7 341 et 20 217 de coûts) ; `troglodyte_v1_1` H4 PF 0,58 (71),
+H1 PF 0,65 (410, SQN −3,07), perdant AVANT coûts.
 
 ## Reste à faire, par ordre de valeur
 
@@ -567,16 +598,20 @@ période archivée.
    réseau que Dukascopy ne limite pas). Troglodyte est mesuré sur FXCM
    (v0.7.3) ; élargir à plus de paires. Un démenti donne une nouvelle
    révision, qui remplace l'ancienne, jamais une retouche.
-2 bis. **Mesurer Martinet sur historique réel**, en M1, M5 et M15,
-   plusieurs paires : FXCM pour la règle sans filtre, Dukascopy (volume
-   de ticks) pour savoir si le filtre de volume de v1_1 AMÉLIORE quelque
-   chose — comparer les points avec et sans filtre de la grille, et le
-   walk-forward : walk-forward,
-   puis regarder SÉPARÉMENT l'effet du plafond `max_position_size` (stops
-   de quelques pips) et des coûts. Pistes d'une `martinet_v1_1`, à
-   mesurer une par une : filtre de tendance de fond (ne vendre un
-   balayage haut que sous une moyenne longue), cible à la zone opposée
-   plutôt qu'en R, âge minimal de la zone, séance par paire.
+2 bis. **Martinet : trouver un avantage AVANT coûts.** Mesuré en v0.8.2
+   sur FXCM (M15, M5 ; `docs/martinet.md`) : neutre avant coûts, perdant
+   après (SQN −2,98 et −4,94). Une `martinet_v1_2` doit d'abord montrer
+   un P&L avant coûts nettement positif (ligne « P&L avant coûts » de
+   `gw train`), puis qu'il survit au spread. Pistes, à mesurer UNE par
+   une : filtre de tendance de fond (ne vendre un balayage haut que sous
+   une moyenne longue), cible à la zone opposée plutôt qu'en R, âge
+   minimal de la zone, séance par paire, risque minimal en multiples du
+   spread (stops de quelques pips : coûts énormes en R). Le filtre de
+   volume de v1_1 reste à mesurer sur Dukascopy. Regarder SÉPARÉMENT le
+   plafond `max_position_size` (1 425 entrées sur 2 814 rabotées en M15).
+2 ter. **Troglodyte** perd AVANT coûts sur 2024-2025 (H1 : 410 trades,
+   SQN −3,07) : le PF 1,13 de v0.7.3 (tests 2019-2026) ne tient pas sur
+   la période récente. Mesurer sur plus de paires avant toute révision.
 3. **Colibri sans volume** : une révision (`colibri_v1_3` ?) sans les
    trois features de volume rendrait FXCM et IB utilisables par Colibri.
    Nouvelle révision OBLIGATOIRE (définition publiée) ; à mesurer contre
@@ -722,6 +757,26 @@ de défaire.
   `gw migrate` remplaçait un Parquet plus récent par un vieux `.gwb`.
 - **Proxy ignoré** : le `http.Transport` du téléchargeur n'avait pas
   `Proxy: http.ProxyFromEnvironment`.
+- **Une comptabilité qui se contredit** : le backtest retirait deux fois
+  le coût d'entrée de sa trésorerie (le P&L NET du trade le portait déjà).
+  Trouvé en posant l'identité « équité finale = capital + Σ P&L nets »,
+  que rien ne vérifiait. Toute règle comptable a son test d'identité.
+- **NaN traverse tout** : un stop NaN donnait une quantité NaN que
+  « <= 0 » et « > plafond » laissaient passer, et IB perdait le stop du
+  bracket ; `.nan` dans config.yaml ou « nan » tapé dans Paramètres
+  neutralisait un garde-fou. Voir la convention « NaN » ci-dessus.
+- **Un test qui passe par sous-chaîne** : « contient 10000 » acceptait
+  « 100000 » — le libellé « taille fixe » de la CLI affichait le PLAFOND
+  depuis v0.4. Comparer la valeur exacte.
+- **L'environnement écrit dans le fichier** : l'écran Paramètres partait
+  de la configuration EFFECTIVE et enregistrait les valeurs `GW_*`
+  (`broker.mode: live` compris). `Config.Save` garde celles du fichier.
+- **Deux connexions pour une touche** : « c » pendant l'attente de TWS
+  lançait une seconde connexion ; la première devenait orpheline, recevait
+  des prix et pouvait trader. Connexion sérialisée (`connMu`).
+- **Le rejeu n'avait pas reçu le correctif de devise du backtest** : même
+  défaut (marge USDJPY en yens), même remède. Un correctif d'exécution
+  s'applique aux DEUX exécuteurs simulés.
 - **Symbole en minuscules** (`gw download eurusd`) écrivait dans
   `history/eurusd/`, un autre dossier que `EURUSD` : symboles mis en
   majuscules à l'entrée.

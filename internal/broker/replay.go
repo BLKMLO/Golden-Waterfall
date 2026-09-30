@@ -3,6 +3,8 @@ package broker
 import (
 	"context"
 	"fmt"
+	"math"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -37,6 +39,9 @@ type replayGateway struct {
 	// d'aujourd'hui et ses sorties de 2020 produirait un journal
 	// incohérent, et des durées de trade absurdes.
 	lastTime map[string]time.Time
+	// inexact : symboles dont le P&L ne se convertit pas exactement vers
+	// la devise du compte (croisée sans taux tiers) — averti une fois.
+	inexact map[string]bool
 
 	onTick      atomic.Pointer[func(core.Tick)]
 	onExecution atomic.Pointer[func(core.ExecutionReport)]
@@ -53,6 +58,13 @@ type simPosition struct {
 	stopLoss   float64
 	takeProfit float64
 	orderID    string
+	// conv ramène marge et P&L dans la devise du compte simulé. Sans elle,
+	// une position USDJPY de 10 000 unités demandait une marge de
+	// 10 000 × 150 / levier YENS comparée à des dollars : toutes les
+	// entrées de la paire étaient refusées « marge insuffisante », et un
+	// P&L en yens s'ajoutait à une trésorerie en dollars. Le backtest avait
+	// déjà ce correctif (data.ConversionFor) ; le rejeu ne l'avait pas.
+	conv data.Conversion
 }
 
 const defaultReplaySpeed = 120.0 // bougies M1 par seconde
@@ -84,11 +96,15 @@ func init() {
 		if opts.Leverage < 1 {
 			opts.Leverage = 1
 		}
+		if strings.TrimSpace(opts.AccountCurrency) == "" {
+			opts.AccountCurrency = "USD"
+		}
 		return &replayGateway{
 			opts:      opts,
 			positions: map[string]*simPosition{},
 			lastPrice: map[string]float64{},
 			lastTime:  map[string]time.Time{},
+			inexact:   map[string]bool{},
 			cash:      opts.InitialCapital,
 			equity:    opts.InitialCapital,
 		}, nil
@@ -146,11 +162,16 @@ func (g *replayGateway) Account(ctx context.Context) (core.AccountState, error) 
 	for sym, p := range g.positions {
 		price := g.lastPrice[sym]
 		if price > 0 {
-			equity += unrealized(p, price)
-			margin += p.quantity * p.entryPrice / g.opts.Leverage
+			equity += p.conv.ToAccount(unrealized(p, price), price)
+			margin += p.quantity * p.conv.NotionalPerUnit(p.entryPrice) / g.opts.Leverage
 		}
 	}
-	return core.AccountState{Equity: equity, Margin: margin, Currency: "SIM"}, nil
+	// La devise est celle du compte SIMULÉ (backtest.account_currency) :
+	// c'est dans elle que le capital initial est exprimé et que marge et
+	// P&L sont convertis. Le bandeau REJEU dit, lui, que le compte est
+	// fictif ; une devise « SIM » faisait en plus avertir le risque d'une
+	// « devise divergente » à chaque séance.
+	return core.AccountState{Equity: equity, Margin: margin, Currency: g.currency()}, nil
 }
 
 func (g *replayGateway) Positions(ctx context.Context) ([]core.Position, error) {
@@ -170,7 +191,7 @@ func (g *replayGateway) Positions(ctx context.Context) ([]core.Position, error) 
 			Symbol:        sym,
 			Quantity:      qty,
 			AveragePrice:  p.entryPrice,
-			UnrealizedPnL: unrealized(p, price),
+			UnrealizedPnL: p.conv.ToAccount(unrealized(p, price), price),
 			// Le rejeu EST le courtier de ce compte fictif : son P&L
 			// latent est la valeur qu'il applique.
 			UnrealizedKnown: price > 0,
@@ -179,6 +200,12 @@ func (g *replayGateway) Positions(ctx context.Context) ([]core.Position, error) 
 	return out, nil
 }
 
+// currency : devise du compte simulé.
+func (g *replayGateway) currency() string {
+	return strings.ToUpper(strings.TrimSpace(g.opts.AccountCurrency))
+}
+
+// unrealized : P&L latent en devise de COTATION (à convertir par p.conv).
 func unrealized(p *simPosition, price float64) float64 {
 	if price <= 0 {
 		return 0
@@ -270,18 +297,21 @@ func (g *replayGateway) checkBarriers(symbol string, bar core.Bar) {
 		g.mu.Unlock()
 		return
 	}
+	// Mêmes règles que le moteur de backtest : le stop est un ordre AU
+	// MARCHÉ une fois déclenché, servi à l'ouverture quand la bougie ouvre
+	// déjà au-delà (gap) ; la limite est servie à son prix exact.
 	price, reason := 0.0, ""
 	if p.side == core.Buy {
 		switch {
 		case p.stopLoss > 0 && bar.Low() <= p.stopLoss:
-			price, reason = p.stopLoss, "stop"
+			price, reason = math.Min(p.stopLoss, bar.Open()), "stop"
 		case p.takeProfit > 0 && bar.High() >= p.takeProfit:
 			price, reason = p.takeProfit, "limite"
 		}
 	} else {
 		switch {
 		case p.stopLoss > 0 && bar.High() >= p.stopLoss:
-			price, reason = p.stopLoss, "stop"
+			price, reason = math.Max(p.stopLoss, bar.Open()), "stop"
 		case p.takeProfit > 0 && bar.Low() <= p.takeProfit:
 			price, reason = p.takeProfit, "limite"
 		}
@@ -290,7 +320,7 @@ func (g *replayGateway) checkBarriers(symbol string, bar core.Bar) {
 		g.mu.Unlock()
 		return
 	}
-	pnl := unrealized(p, price)
+	pnl := p.conv.ToAccount(unrealized(p, price), price)
 	g.cash += pnl
 	delete(g.positions, symbol)
 	side := p.side.Opposite()
@@ -338,7 +368,7 @@ func (g *replayGateway) PlaceOrder(ctx context.Context, req core.OrderRequest) (
 	if hasPosition && existing.side != req.Side {
 		// Ordre de sens opposé = fermeture (le moteur ne fait jamais de
 		// retournement direct : il ferme, puis décide à nouveau).
-		pnl := unrealized(existing, price)
+		pnl := existing.conv.ToAccount(unrealized(existing, price), price)
 		g.cash += pnl
 		qty := existing.quantity
 		delete(g.positions, req.Symbol)
@@ -359,7 +389,12 @@ func (g *replayGateway) PlaceOrder(ctx context.Context, req core.OrderRequest) (
 		return id, nil
 	}
 
-	margin := req.Quantity * price / g.opts.Leverage
+	conv := data.ConversionFor(req.Symbol, g.currency())
+	warnInexact := !conv.Exact && !g.inexact[req.Symbol]
+	if warnInexact {
+		g.inexact[req.Symbol] = true
+	}
+	margin := req.Quantity * conv.NotionalPerUnit(price) / g.opts.Leverage
 	if margin > g.cash {
 		g.mu.Unlock()
 		g.report(core.ExecutionReport{
@@ -370,9 +405,14 @@ func (g *replayGateway) PlaceOrder(ctx context.Context, req core.OrderRequest) (
 	}
 	g.positions[req.Symbol] = &simPosition{
 		side: req.Side, quantity: req.Quantity, entryPrice: price,
-		stopLoss: req.StopLoss, takeProfit: req.TakeProfit, orderID: id,
+		stopLoss: req.StopLoss, takeProfit: req.TakeProfit, orderID: id, conv: conv,
 	}
 	g.mu.Unlock()
+	if warnInexact && g.opts.Logger != nil {
+		// Comme au backtest : pas de taux tiers inventé, mais on le dit.
+		g.opts.Logger.Warn("rejeu : P&L non convertible vers la devise du compte simulé, compté en devise de cotation",
+			"symbole", req.Symbol, "cotation", conv.Quote, "compte", g.currency())
+	}
 
 	g.report(core.ExecutionReport{
 		OrderID: id, Symbol: req.Symbol, Side: req.Side, Quantity: req.Quantity,

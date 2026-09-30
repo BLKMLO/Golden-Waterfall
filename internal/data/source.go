@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -184,6 +185,35 @@ func newHTTPClient() *http.Client {
 // compter des « échecs » là où il n'y a rien à télécharger.
 var errNoData = errors.New("aucune donnée à cette adresse")
 
+// maxPayload : taille maximale d'une réponse, et d'un fichier une fois
+// décompressé. Un jour Dukascopy décompressé tient en 1 440 × 24 octets,
+// une semaine FXCM en quelques centaines de kilo-octets : 64 Mo laisse une
+// marge immense, et empêche une réponse démesurée (serveur ou proxy
+// défaillant, bombe de décompression) de faire tomber le programme faute
+// de mémoire au milieu d'un téléchargement de nuit.
+var maxPayload int64 = 64 << 20
+
+// errTooLarge : contenu au-delà de maxPayload. Ce n'est pas une panne
+// passagère : on ne réessaie pas.
+var errTooLarge = errors.New("contenu démesuré, refusé")
+
+// readLimited lit au plus `limit` octets ; au-delà, errTooLarge.
+func readLimited(r io.Reader, limit int64) ([]byte, error) {
+	raw, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(raw)) > limit {
+		return nil, fmt.Errorf("%w (plus de %d Mo)", errTooLarge, limit>>20)
+	}
+	return raw, nil
+}
+
+// maxRetryAfter borne l'attente qu'un serveur peut imposer par
+// Retry-After : un en-tête à 999 999 secondes suspendait sinon le
+// téléchargement pendant onze jours, sans un mot.
+const maxRetryAfter = 5 * time.Minute
+
 // httpGet récupère une URL avec retries et backoff.
 //
 // Deux régimes de backoff, volontairement différents :
@@ -210,8 +240,11 @@ func httpGet(ctx context.Context, client *http.Client, url, label string, maxRet
 			}
 			continue
 		}
-		body, readErr := io.ReadAll(resp.Body)
+		body, readErr := readLimited(resp.Body, maxPayload)
 		resp.Body.Close()
+		if errors.Is(readErr, errTooLarge) {
+			return nil, fmt.Errorf("%s : %w", url, readErr)
+		}
 
 		switch {
 		case resp.StatusCode == http.StatusNotFound:
@@ -256,8 +289,11 @@ func retryAfter(header string, fallback time.Duration) time.Duration {
 	if header == "" {
 		return fallback
 	}
-	if secs, err := strconv.Atoi(header); err == nil && secs > 0 {
-		return time.Duration(secs) * time.Second
+	if secs, err := strconv.Atoi(strings.TrimSpace(header)); err == nil && secs > 0 {
+		if d := time.Duration(secs) * time.Second; secs < int(maxRetryAfter/time.Second) {
+			return d
+		}
+		return maxRetryAfter
 	}
 	return fallback
 }

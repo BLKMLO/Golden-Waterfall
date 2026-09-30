@@ -2,6 +2,7 @@ package view
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -110,9 +111,23 @@ type settingField struct {
 	Set    func(*config.Config, string) error
 }
 
+// setFloat lit un nombre saisi à la main. L'interface est en français :
+// « 0,5 » est accepté comme « 0.5 », et les espaces de milliers
+// (« 100 000 ») sont ignorés. NaN et l'infini, que strconv accepte
+// (« nan », « inf »), sont refusés : aucun réglage n'a de sens avec eux.
 func setFloat(dst *float64, raw string) error {
-	v, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
-	if err != nil {
+	clean := strings.Map(func(r rune) rune {
+		switch r {
+		case ' ', '\u00a0', '\u202f', '_':
+			return -1
+		}
+		return r
+	}, strings.TrimSpace(raw))
+	if strings.Count(clean, ",") == 1 && !strings.Contains(clean, ".") {
+		clean = strings.Replace(clean, ",", ".", 1)
+	}
+	v, err := strconv.ParseFloat(clean, 64)
+	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
 		return fmt.Errorf("nombre attendu, reçu %q", raw)
 	}
 	*dst = v
@@ -555,8 +570,8 @@ func (v *Settings) step(delta int) {
 	case kindBool:
 		v.apply(f, strconv.FormatBool(f.Get(&v.draft) != "true"))
 	case kindNumber:
-		cur, err := strconv.ParseFloat(strings.ReplaceAll(f.Get(&v.draft), " ", ""), 64)
-		if err != nil {
+		var cur float64
+		if err := setFloat(&cur, f.Get(&v.draft)); err != nil {
 			v.deps.Status("valeur illisible : " + f.Get(&v.draft))
 			return
 		}

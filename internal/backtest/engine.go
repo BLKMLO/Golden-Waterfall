@@ -279,6 +279,20 @@ func (e *Engine) Run(ctx context.Context, req Request) (*Result, error) {
 	var totalCosts float64
 	rejectedOrders := 0
 	exitReasons := map[string]int{}
+	// liquidate ferme la position au prix donné. La trésorerie ne reçoit
+	// que le brut MOINS le coût de sortie : le coût d'entrée l'a déjà
+	// quittée à l'ouverture. Y ajouter le P&L NET du trade (qui porte
+	// l'aller-retour complet) le retirait une seconde fois — l'équité
+	// finale, le rendement, le drawdown, le Sharpe et le budget de risque
+	// des entrées suivantes étaient alors faux d'un demi-spread par trade.
+	liquidate := func(price float64, when time.Time, reason string) {
+		tr, exitCost := closePosition(pos, req.Symbol, price, when, reason, costPerUnitPerSide, conv)
+		cash += tr.PnL + pos.entryCost
+		totalCosts += exitCost
+		trades = append(trades, tr)
+		exitReasons[reason]++
+		pos = nil
+	}
 
 	for i := from; i < len(series); i++ {
 		if i%4096 == 0 {
@@ -293,12 +307,7 @@ func (e *Engine) Run(ctx context.Context, req Request) (*Result, error) {
 		// 1. Barrières — évaluées sur les bougies SUIVANT l'entrée.
 		if pos != nil && i > pos.entryIndex {
 			if price, reason, hit := checkBarriers(pos, bar); hit {
-				tr, cost := closePosition(pos, req.Symbol, price, bar.Time, reason, costPerUnitPerSide, conv)
-				cash += tr.PnL
-				totalCosts += cost
-				trades = append(trades, tr)
-				exitReasons[reason]++
-				pos = nil
+				liquidate(price, bar.Time, reason)
 			}
 		}
 
@@ -306,12 +315,7 @@ func (e *Engine) Run(ctx context.Context, req Request) (*Result, error) {
 		// l'étiquetage : sur la bougie d'échéance, un stop ou une limite
 		// touchés l'emportent encore.
 		if pos != nil && i > pos.entryIndex && core.HoldExpired(bar.Time, barDuration, pos.deadline) {
-			tr, cost := closePosition(pos, req.Symbol, bar.Close(), bar.Time, "time", costPerUnitPerSide, conv)
-			cash += tr.PnL
-			totalCosts += cost
-			trades = append(trades, tr)
-			exitReasons["time"]++
-			pos = nil
+			liquidate(bar.Close(), bar.Time, "time")
 		}
 
 		forcedExit := false
@@ -321,12 +325,7 @@ func (e *Engine) Run(ctx context.Context, req Request) (*Result, error) {
 			if i == len(series)-1 {
 				reason = "final"
 			}
-			tr, cost := closePosition(pos, req.Symbol, bar.Close(), bar.Time, reason, costPerUnitPerSide, conv)
-			cash += tr.PnL
-			totalCosts += cost
-			trades = append(trades, tr)
-			exitReasons[reason]++
-			pos = nil
+			liquidate(bar.Close(), bar.Time, reason)
 			forcedExit = true
 		}
 
@@ -380,12 +379,7 @@ func (e *Engine) Run(ctx context.Context, req Request) (*Result, error) {
 				if reversal {
 					reason = "reversal"
 				}
-				tr, cost := closePosition(pos, req.Symbol, bar.Close(), bar.Time, reason, costPerUnitPerSide, conv)
-				cash += tr.PnL
-				totalCosts += cost
-				trades = append(trades, tr)
-				exitReasons[reason]++
-				pos = nil
+				liquidate(bar.Close(), bar.Time, reason)
 			} else if dec.Accepted() && sig.Action.IsEntry() && pos == nil {
 				entryPrice := bar.Close()
 				notional := dec.Order.Quantity * conv.NotionalPerUnit(entryPrice)

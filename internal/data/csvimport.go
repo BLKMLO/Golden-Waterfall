@@ -262,10 +262,6 @@ func parseCSV(r io.Reader, opts CSVOptions) (core.Series, error) {
 			}
 			p[c], present[c] = v, true
 		}
-		if p[colBidHigh] < p[colBidLow] {
-			return nil, fmt.Errorf("ligne %d : plus haut %g sous le plus bas %g — colonnes inversées ?",
-				r.n, p[colBidHigh], p[colBidLow])
-		}
 		bar := core.Bar{
 			Time:    t,
 			BidOpen: p[colBidOpen], BidHigh: p[colBidHigh], BidLow: p[colBidLow], BidClose: p[colBidClose],
@@ -278,9 +274,53 @@ func parseCSV(r io.Reader, opts CSVOptions) (core.Series, error) {
 			bar.AskOpen, bar.AskHigh, bar.AskLow, bar.AskClose =
 				p[colAskOpen], p[colAskHigh], p[colAskLow], p[colAskClose]
 		}
+		if err := checkBar(bar); err != nil {
+			return nil, fmt.Errorf("ligne %d : %w", r.n, err)
+		}
 		out = append(out, bar)
 	}
 	return out, nil
+}
+
+// checkBar : une bougie importée est-elle cohérente ?
+//
+// Prix finis et positifs, plus haut au-dessus du plus bas, ouverture et
+// clôture DANS la bougie (côté bid, et côté ask s'il est présent), volume
+// absent (NaN) ou positif. Des colonnes interverties ou décalées donnent
+// des bougies plausibles et fausses ; ce contrôle en attrape la plupart,
+// et un fichier qui ne le passe pas est REFUSÉ — il ne s'importe pas à
+// moitié. La tolérance (un milliardième, relatif) n'absorbe que l'arrondi
+// d'un export, jamais un vrai débordement.
+func checkBar(b core.Bar) error {
+	side := func(name string, o, h, l, c float64) error {
+		for _, v := range []float64{o, h, l, c} {
+			if !(v > 0) || math.IsInf(v, 0) {
+				return fmt.Errorf("prix %s non positif ou non fini (%g)", name, v)
+			}
+		}
+		eps := h * 1e-9
+		switch {
+		case h < l:
+			return fmt.Errorf("plus haut %s %g sous le plus bas %g — colonnes inversées ?", name, h, l)
+		case o > h+eps || o < l-eps:
+			return fmt.Errorf("ouverture %s %g hors de la bougie [%g ; %g] — colonnes décalées ?", name, o, l, h)
+		case c > h+eps || c < l-eps:
+			return fmt.Errorf("clôture %s %g hors de la bougie [%g ; %g] — colonnes décalées ?", name, c, l, h)
+		}
+		return nil
+	}
+	if err := side("bid", b.BidOpen, b.BidHigh, b.BidLow, b.BidClose); err != nil {
+		return err
+	}
+	if b.HasAsk() {
+		if err := side("ask", b.AskOpen, b.AskHigh, b.AskLow, b.AskClose); err != nil {
+			return err
+		}
+	}
+	if !math.IsNaN(b.Volume) && (b.Volume < 0 || math.IsInf(b.Volume, 0)) {
+		return fmt.Errorf("volume %g négatif ou infini", b.Volume)
+	}
+	return nil
 }
 
 // epochDivisor : secondes, millisecondes, microsecondes ou nanosecondes,

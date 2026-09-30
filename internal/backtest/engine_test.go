@@ -289,6 +289,48 @@ func TestSpreadIsMeasuredAndCharged(t *testing.T) {
 	}
 }
 
+// La valeur finale du compte doit être le capital plus la somme des P&L
+// NETS : le coût d'entrée quitte la trésorerie à l'ouverture, et le P&L du
+// trade le porte déjà. Avant correction, il en sortait une seconde fois à
+// la clôture (11 970 au lieu de 11 980 ici, soit un demi-spread de trop).
+func TestFinalEquityIsCapitalPlusNetPnL(t *testing.T) {
+	cfg := testConfig()
+	cfg.Costs.CommissionPerUnit = 0.001
+	series := makeBars([][4]float64{
+		{100, 100, 100, 100},
+		{100, 100, 100, 100}, // entrée longue
+		{100, 103, 99, 101},  // limite 102
+		{101, 101, 101, 101}, // entrée courte
+		{101, 101, 97, 98},   // limite 99
+		{98, 98, 98, 98},
+	}, 0.02)
+	strat := &scriptedStrategy{script: map[int]core.Signal{
+		1: {Action: core.EnterLong, TakeProfit: 102, StopLoss: 98},
+		3: {Action: core.EnterShort, TakeProfit: 99, StopLoss: 104},
+	}}
+	res, err := newEngine(cfg).Run(context.Background(), Request{
+		Symbol: "TEST", Series: series, From: 0, Strategy: strat, Timeframe: data.H1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Trades) != 2 {
+		t.Fatalf("%d trade(s), 2 attendus", len(res.Trades))
+	}
+	want := cfg.Backtest.InitialCapital + res.Stats.NetPnL
+	if math.Abs(res.Stats.FinalEquity-want) > 1e-6 {
+		t.Fatalf("équité finale %.6f, attendue capital + P&L net = %.6f (écart %.6f)",
+			res.Stats.FinalEquity, want, res.Stats.FinalEquity-want)
+	}
+	var cost float64
+	for _, tr := range res.Trades {
+		cost += tr.Cost
+	}
+	if math.Abs(res.Stats.Costs-cost) > 1e-9 {
+		t.Fatalf("coûts publiés %v, somme des coûts des trades %v", res.Stats.Costs, cost)
+	}
+}
+
 func TestNoAskSideMeansNoCostsAndItIsSaid(t *testing.T) {
 	cfg := testConfig()
 	series := makeBars([][4]float64{{100, 100, 100, 100}, {100, 100, 100, 100}}, 0)

@@ -55,6 +55,15 @@ const (
 	ReasonNoStop          = "signal sans stop exploitable : dimensionnement au risque impossible"
 	ReasonUnconvertible   = "devise non convertible : dimensionnement au risque impossible"
 	ReasonRiskBudgetSmall = "budget de risque insuffisant pour une seule unité"
+	// Motifs de COHÉRENCE du signal, vérifiés quel que soit le régime de
+	// taille. Un prix, un stop ou une limite NaN ou infini donnait une
+	// quantité NaN que tous les contrôles laissaient passer (NaN n'est ni
+	// « <= 0 » ni « > plafond ») ; chez Interactive Brokers, un stop NaN
+	// disparaissait du bracket et l'entrée partait NUE. Un stop du mauvais
+	// côté, lui, serait déclenché dès la transmission.
+	ReasonUnknownAction = "action de signal inconnue"
+	ReasonNonFinite     = "signal aux niveaux non finis (NaN ou infini)"
+	ReasonBarrierSide   = "barrière du mauvais côté du prix d'entrée"
 )
 
 // Manager applique les limites de la section `risk` de la configuration.
@@ -179,11 +188,21 @@ func (m *Manager) Evaluate(sig core.Signal, open []core.Position, account *core.
 			Quantity: absf(pos.Quantity),
 			Type:     core.Market,
 		}}
+
+	case core.EnterLong, core.EnterShort:
+
+	default:
+		// Une action que ce contrat ne connaît pas n'est pas une entrée :
+		// elle devenait un ACHAT (sens par défaut) sans que rien ne le dise.
+		return m.reject(ReasonUnknownAction)
 	}
 
 	// --- À partir d'ici : ENTRÉES uniquement ---
-	if m.maxPositionSize <= 0 {
+	if !(m.maxPositionSize > 0) {
 		return m.reject(ReasonInvalidSize)
+	}
+	if reason := checkLevels(sig); reason != "" {
+		return m.reject(reason)
 	}
 	if m.dailyLossReached(account) {
 		return m.reject(ReasonDailyLoss)
@@ -204,10 +223,10 @@ func (m *Manager) Evaluate(sig core.Signal, open []core.Position, account *core.
 	if quantity > m.maxPositionSize {
 		quantity, capped = m.maxPositionSize, true
 	}
-	// Dernier filet : une quantité nulle ou négative n'est pas un ordre.
-	// Le contrôle porte sur la taille RÉELLEMENT retenue, pas sur le seul
-	// plafond — c'est la seule qui parte au broker.
-	if quantity <= 0 {
+	// Dernier filet : une quantité nulle, négative ou non finie n'est pas
+	// un ordre. Le contrôle porte sur la taille RÉELLEMENT retenue, pas sur
+	// le seul plafond — c'est la seule qui parte au broker.
+	if !(quantity > 0) || math.IsInf(quantity, 0) {
 		return m.reject(ReasonInvalidSize)
 	}
 
@@ -231,6 +250,33 @@ func (m *Manager) Evaluate(sig core.Signal, open []core.Position, account *core.
 	}, Capped: capped}
 }
 
+// checkLevels : les niveaux d'une ENTRÉE sont-ils exploitables ?
+//
+// Tous doivent être finis et positifs ou nuls (0 = « non fourni »). Quand
+// le prix de référence est connu, le stop doit être du côté de la perte
+// et la limite du côté du gain ; sans lui, on vérifie au moins que stop
+// et limite ne sont pas intervertis. Les trois moteurs livrés respectent
+// déjà ces règles : ce contrôle n'écarte que des signaux faux, et il le
+// dit au lieu d'envoyer un ordre que le courtier exécuterait aussitôt.
+func checkLevels(sig core.Signal) string {
+	for _, v := range []float64{sig.Price, sig.StopLoss, sig.TakeProfit} {
+		if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
+			return ReasonNonFinite
+		}
+	}
+	long := sig.Action == core.EnterLong
+	sl, tp, px := sig.StopLoss, sig.TakeProfit, sig.Price
+	switch {
+	case px > 0 && sl > 0 && (long && sl >= px || !long && sl <= px):
+		return ReasonBarrierSide
+	case px > 0 && tp > 0 && (long && tp <= px || !long && tp >= px):
+		return ReasonBarrierSide
+	case sl > 0 && tp > 0 && (long && sl >= tp || !long && sl <= tp):
+		return ReasonBarrierSide
+	}
+	return ""
+}
+
 // sizeByRisk calcule la taille pour que la distance jusqu'au stop coûte
 // exactement `riskPerTradePct` % de l'équité :
 //
@@ -247,7 +293,7 @@ func (m *Manager) Evaluate(sig core.Signal, open []core.Position, account *core.
 // l'utilisateur n'a pas choisi, précisément le jour où la mesure a
 // échoué.
 func (m *Manager) sizeByRisk(sig core.Signal, account *core.AccountState) (float64, bool, string) {
-	if account == nil || account.Equity <= 0 {
+	if account == nil || !(account.Equity > 0) || math.IsInf(account.Equity, 0) {
 		return 0, false, ReasonNoEquity
 	}
 	if sig.Price <= 0 || sig.StopLoss <= 0 {
@@ -314,8 +360,14 @@ func (m *Manager) warnCurrencyMismatch(broker string) {
 // compte, TOUTES les entrées sont refusées. C'est le comportement voulu —
 // on ne dimensionne pas au jugé — mais il doit se voir, sinon la
 // stratégie paraît simplement muette.
+//
+// Les refus de COHÉRENCE (niveaux non finis, barrière du mauvais côté) y
+// figurent aussi : une telle entrée n'est pas dimensionnable non plus, et
+// c'est la même ligne d'avertissement qui doit la faire voir — sinon un
+// moteur défaillant passerait pour un moteur prudent.
 var SizingReasons = []string{
 	ReasonNoEquity, ReasonNoStop, ReasonUnconvertible, ReasonRiskBudgetSmall,
+	ReasonNonFinite, ReasonBarrierSide, ReasonUnknownAction,
 }
 
 // SizingRefusals compte, parmi des motifs de refus, ceux qui viennent du

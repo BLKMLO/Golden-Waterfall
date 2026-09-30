@@ -262,6 +262,14 @@ func Import(historyDir, symbol string, paths []string, opts ImportOptions) (Impo
 		if len(s) == 0 {
 			return ImportReport{}, fmt.Errorf("%s : aucune bougie lisible", p)
 		}
+		// Le CSV est contrôlé ligne à ligne à la lecture ; un Parquet tiers
+		// l'est ici, avec la même règle.
+		for _, bar := range s {
+			if err := checkBar(bar); err != nil {
+				return ImportReport{}, fmt.Errorf("%s : bougie du %s : %w", p,
+					bar.Time.UTC().Format("2006-01-02 15:04"), err)
+			}
+		}
 		all = append(all, s...)
 	}
 	report := ImportReport{Symbol: symbol}

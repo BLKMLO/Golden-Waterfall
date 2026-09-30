@@ -30,6 +30,12 @@ type Aggregator struct {
 
 	mu      sync.Mutex
 	current map[string]*core.Bar
+	// late : ticks écartés parce qu'ils appartiennent à une bougie DÉJÀ
+	// close (horloge qui recule, tick retardé par le réseau). Intégrés, ils
+	// clôturaient la bougie en cours puis en rouvraient une plus ancienne :
+	// le tampon perdait son ordre chronologique et recevait des doublons,
+	// ce que toutes les stratégies supposent impossible.
+	late int64
 }
 
 // NewAggregator crée un agrégateur pour une unité de temps.
@@ -48,6 +54,10 @@ func (a *Aggregator) Add(tick core.Tick) (core.Bar, bool) {
 	defer a.mu.Unlock()
 
 	cur, ok := a.current[tick.Symbol]
+	if ok && bucket.Before(cur.Time) {
+		a.late++
+		return core.Bar{}, false
+	}
 	if !ok || !cur.Time.Equal(bucket) {
 		var closed core.Bar
 		hasClosed := false
@@ -110,6 +120,13 @@ func (a *Aggregator) Current(symbol string) (core.Bar, bool) {
 		return core.Bar{}, false
 	}
 	return *cur, true
+}
+
+// Late : ticks écartés car antérieurs à la bougie en cours.
+func (a *Aggregator) Late() int64 {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.late
 }
 
 // Reset oublie toutes les bougies en cours (reconnexion).

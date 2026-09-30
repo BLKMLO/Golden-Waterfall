@@ -339,7 +339,7 @@ const repairHeader = "# Réparé automatiquement par Golden Waterfall"
 // writeRepaired sauvegarde l'ancien fichier puis écrit la racine réparée.
 func writeRepaired(file string, raw []byte, doc *yaml.Node) (string, error) {
 	backup := file + "." + time.Now().Format("2006-01-02T15-04-05") + ".bak"
-	if err := os.WriteFile(backup, raw, 0o644); err != nil {
+	if err := os.WriteFile(backup, raw, configPerm); err != nil {
 		return "", fmt.Errorf("sauvegarde de %s avant réparation : %w", file, err)
 	}
 	var buf bytes.Buffer
@@ -358,7 +358,7 @@ func writeRepaired(file string, raw []byte, doc *yaml.Node) (string, error) {
 		}
 	}
 	header := repairHeader + " le " + time.Now().Format("2006-01-02 15:04") + " : ancien fichier dans " + backup + "\n"
-	return backup, os.WriteFile(file, append([]byte(header), body.Bytes()...), 0o644)
+	return backup, os.WriteFile(file, append([]byte(header), body.Bytes()...), configPerm)
 }
 
 // Fix remet un réglage sur une valeur valide quand c'est app.New qui le

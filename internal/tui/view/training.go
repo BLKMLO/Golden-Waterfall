@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/BLKMLO/Golden-Waterfall/internal/backtest"
 	"github.com/BLKMLO/Golden-Waterfall/internal/data"
 	"github.com/BLKMLO/Golden-Waterfall/internal/risk"
 	"github.com/BLKMLO/Golden-Waterfall/internal/training"
@@ -473,7 +474,7 @@ func (v *Training) renderAggregate(res *training.Result, took time.Duration, wid
 		{Label: "Taux de gain", Value: component.Num(s.WinRate, 1) + " %"},
 		{Label: "Profit factor", Value: component.Ratio(s.ProfitFactor)},
 		{Label: "SQN", Value: component.Ratio(s.SQN)},
-		{Label: "Coûts", Value: component.Num(s.Costs, 2)},
+		{Label: "Coûts", Value: component.Num(s.Costs, 2), Note: beforeCosts(s)},
 		{Label: "Durée", Value: component.Duration(took)},
 	}
 	body := component.StatRowMax(th, cards, component.PanelContent(width), rows)
@@ -658,4 +659,14 @@ func (v *Training) renderRuns(width, height int) string {
 	body := component.Table(th, cols, rows, v.cursor, height-5, component.PanelContent(width))
 	body += "\n" + th.Muted.Render("o revient au résultat courant · suppr efface le run sélectionné")
 	return component.PanelH(th, "Entraînements archivés", body, width, height)
+}
+
+// beforeCosts : le résultat AVANT coûts (P&L net + coûts). Une règle sans
+// avantage et une règle dont le spread dévore l'avantage perdent toutes
+// deux ; seule cette ligne les distingue.
+func beforeCosts(s backtest.Stats) string {
+	if !s.CostsModelled || s.Trades == 0 {
+		return ""
+	}
+	return "avant coûts " + component.Money(s.NetPnL+s.Costs)
 }

@@ -174,18 +174,59 @@ Mesurée le 29 septembre 2026 dans le bac à sable de développement (Xeon
 | Calibrage complet (6 points, v1_0) sur 20 000 bougies M5 | 0,15 s |
 | Calibrage complet (12 points, v1_1, historique avec volume) sur 20 000 bougies M5 | 0,39 s (mesuré le 29/09/2026) |
 
-## Jamais mesuré
+## Première mesure sur historique réel (v0.8.2, 30 septembre 2026)
 
-Essai du binaire v0.8.1, sur un historique M1 SYNTHÉTIQUE (volume tiré au
-hasard, uniforme) : le filtre de volume ne laisse que 4 à 5 trades par
-point de grille, sous les 30 exigés — il n'est donc pas retenu, et c'est
-écrit dans la grille. Un volume uniforme sommé sur cinq minutes n'a
-presque pas de pics ; un volume de ticks réel en a bien davantage. **Rien
-ne dit encore que le filtre améliore Martinet** : il faut le mesurer.
+**Source** : FXCM (`candledata.fxcorporate.com`, M1 bid et ask, sans
+volume), téléchargée par `gw download EURUSD GBPUSD USDJPY --from 2022
+--to 2025 --source fxcm` : 4 176 619 bougies, avec les semaines que FXCM
+ne publie pas (1 en 2023, 4 en 2024, 4 en 2025, comptées dans les
+en-têtes). **Protocole** : `gw train EURUSD GBPUSD USDJPY --tf M15` puis
+`--tf M5`, configuration par défaut (capital 10 000 USD, levier 30,
+0,5 % de l'équité risquée par trade, plafond 100 000 unités, graine 42),
+5 plis — blocs de test consécutifs du 02/01/2024 au 31/12/2025. Aucun
+calendrier d'actualités archivé pour la période : le filtre n'a rien
+filtré (toutes les entrées « hors calendrier »). Agrégat OUT-OF-SAMPLE
+tel qu'écrit dans `run.json` :
 
-Martinet n'a **jamais été mesuré sur un historique réel** : tous les chiffres
-ci-dessus viennent de séries synthétiques. Toutes les valeurs de la
-définition (fenêtre, âge des zones, dépassement, tampon du stop, risque et
-spread maximaux, séance, barrière verticale) sont des conventions. Une
-mesure qui les démentirait donnerait une **nouvelle révision**
-(`martinet_v1_2`), qui remplacerait celle-ci — jamais une retouche en place.
+| | trades | gagnants | P&L net (USD) | coûts (USD) | avant coûts (USD) | profit factor | SQN |
+|---|---|---|---|---|---|---|---|
+| M15 | 2 814 | 986 (35,0 %) | −8 695,93 | 7 340,62 | −1 355,31 | 0,88 | −2,98 |
+| M5 | 6 815 | 2 291 (33,6 %) | −18 646,28 | 20 216,55 | +1 570,28 | 0,87 | −4,94 |
+
+Formules : profit factor = somme des gains ÷ somme des pertes (nettes de
+coûts) ; « avant coûts » = P&L net + coûts (spread médian mesuré dans
+l'historique, facturé moitié à l'entrée, moitié à la sortie) ;
+SQN = √n × moyenne des P&L ÷ écart-type des P&L (`backtest/stats.go`).
+
+Par paire, M15 : EURUSD 1 039 trades, PF 0,99, −258,15 ; GBPUSD 946,
+PF 0,87, −3 498,74 ; USDJPY 829, PF 0,78, −4 939,03. M5 : EURUSD 2 494,
+PF 0,88, −5 714,65 ; GBPUSD 2 127, PF 0,84, −8 410,56 ; USDJPY 2 194,
+PF 0,90, −4 521,06. Profit factor par pli, M15 : 0,81 · 0,99 · 0,94 ·
+0,72 · 0,96 ; M5 : 0,84 · 0,92 · 0,82 · 0,83 · 0,97 — aucun pli au-dessus
+de 1. Sorties, M15 : 1 742 stops, 792 limites, 279 horizons, 1 fin de
+semaine. Entrées ramenées au plafond : 1 425 sur 2 814 (M15), 5 215 sur
+6 815 (M5).
+
+Ce que ces chiffres permettent de dire :
+
+- **`martinet_v1_1` perd, nette de coûts, sur ces trois paires en
+  2024-2025**, en M15 comme en M5 — et ce n'est pas le hasard d'un petit
+  échantillon : SQN −2,98 sur 2 814 trades, −4,94 sur 6 815.
+- **Avant coûts, la règle est à peu près neutre** (−1 355 et +1 570 USD).
+  Elle n'a pas d'avantage que le spread dévorerait ; elle n'en a pas du
+  tout, et le spread la fait perdre. Toute révision devra d'abord montrer
+  un avantage AVANT coûts, puis qu'il survit au spread.
+- Le **filtre de volume** de v1_1 n'a pas pu être essayé : FXCM ne publie
+  pas de volume, les points filtrés de la grille sont archivés « non
+  essayés ». Il reste à mesurer sur Dukascopy.
+
+Les décisions de ce walk-forward sont identiques, pli par pli (trades,
+gagnants, perdants, motifs de sortie), à celles du binaire d'avant
+v0.8.2 ; seul le P&L change légèrement, le dimensionnement lisant
+désormais l'équité corrigée du backtest (M15 : −8 639,09 → −8 695,93).
+
+Toutes les valeurs de la définition (fenêtre, âge des zones, dépassement,
+tampon du stop, risque et spread maximaux, séance, barrière verticale)
+restent des conventions. Une mesure qui les démentirait donne une
+**nouvelle révision** (`martinet_v1_2`), qui remplacerait celle-ci —
+jamais une retouche en place.

@@ -6,7 +6,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"strings"
 	"sync"
@@ -75,7 +74,7 @@ func DecodeCandles(payload []byte, inst Instrument, day time.Time) ([]rawCandle,
 	if err != nil {
 		return nil, fmt.Errorf("flux LZMA illisible : %w", err)
 	}
-	raw, err := io.ReadAll(r)
+	raw, err := readLimited(r, maxPayload)
 	if err != nil {
 		return nil, fmt.Errorf("décompression interrompue : %w", err)
 	}

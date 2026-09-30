@@ -34,6 +34,29 @@ func TestAggregatorClosesBarOnBucketChange(t *testing.T) {
 	}
 }
 
+// TestAggregatorDropsLateTicks : un tick d'une bougie déjà close (horloge
+// qui recule, paquet retardé) ne doit ni clore la bougie en cours ni en
+// rouvrir une plus ancienne — le tampon perdrait son ordre chronologique.
+func TestAggregatorDropsLateTicks(t *testing.T) {
+	agg := NewAggregator(data.M1)
+	base := time.Date(2024, 4, 2, 10, 0, 0, 0, time.UTC)
+	agg.Add(core.Tick{Symbol: "EURUSD", Bid: 1.10, Time: base})
+	agg.Add(core.Tick{Symbol: "EURUSD", Bid: 1.11, Time: base.Add(time.Minute)}) // clôt 10:00
+	if _, ok := agg.Add(core.Tick{Symbol: "EURUSD", Bid: 1.50, Time: base.Add(30 * time.Second)}); ok {
+		t.Fatal("un tick en retard ne doit clore aucune bougie")
+	}
+	if agg.Late() != 1 {
+		t.Fatalf("%d tick(s) en retard comptés, 1 attendu", agg.Late())
+	}
+	closed, ok := agg.Add(core.Tick{Symbol: "EURUSD", Bid: 1.12, Time: base.Add(2 * time.Minute)})
+	if !ok || !closed.Time.Equal(base.Add(time.Minute)) {
+		t.Fatalf("la bougie de 10:01 doit se clore intacte : %+v", closed)
+	}
+	if closed.BidHigh != 1.11 {
+		t.Fatalf("le tick en retard a contaminé la bougie en cours : %+v", closed)
+	}
+}
+
 // TestAggregatorNeverInventsABar : sur un marché silencieux, la bougie
 // reste ouverte. La clore sur une minuterie inventerait une bougie que le
 // marché n'a pas produite.

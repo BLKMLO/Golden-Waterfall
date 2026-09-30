@@ -202,11 +202,11 @@ func DecodeFXCM(payload []byte) ([]core.Bar, error) {
 		if err != nil {
 			return nil, fmt.Errorf("gzip illisible : %w", err)
 		}
-		var buf bytes.Buffer
-		if _, err := buf.ReadFrom(zr); err != nil {
+		out, err := readLimited(zr, maxPayload)
+		if err != nil {
 			return nil, fmt.Errorf("décompression interrompue : %w", err)
 		}
-		raw = buf.Bytes()
+		raw = out
 	}
 	sc := bufio.NewScanner(bytes.NewReader(raw))
 	sc.Buffer(make([]byte, 64*1024), 1024*1024)
@@ -245,7 +245,7 @@ func DecodeFXCM(payload []byte) ([]core.Bar, error) {
 				return 0, fmt.Errorf("ligne %d : %d champs", line, len(f))
 			}
 			v, err := strconv.ParseFloat(strings.TrimSpace(f[i]), 64)
-			if err != nil || v <= 0 || math.IsInf(v, 0) {
+			if err != nil || !(v > 0) || math.IsInf(v, 0) { // NaN compris
 				return 0, fmt.Errorf("ligne %d : prix invalide %q", line, f[i])
 			}
 			return v, nil

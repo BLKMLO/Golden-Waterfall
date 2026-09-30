@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"math"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -262,5 +263,76 @@ func TestReplayStampsMarketTime(t *testing.T) {
 	if reports[0].Time.Year() != 2023 {
 		t.Fatalf("le compte rendu doit porter l'heure du MARCHÉ rejoué (2023), reçu %s",
 			reports[0].Time)
+	}
+}
+
+// TestReplayConvertsMarginAndPnLToAccountCurrency : sur un compte en
+// dollars, une position USDJPY de 10 000 unités immobilise 10 000 / 30
+// dollars, pas 10 000 × 150 / 30 yens pris pour des dollars (refus
+// « marge insuffisante » de TOUTES les entrées de la paire), et son P&L
+// en yens est ramené en dollars au prix de sortie.
+func TestReplayConvertsMarginAndPnLToAccountCurrency(t *testing.T) {
+	gw, err := New("replay", Options{
+		HistoryDir: t.TempDir(), InitialCapital: 10000, Leverage: 30, AccountCurrency: "USD",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := gw.(*replayGateway)
+	var reports []core.ExecutionReport
+	g.OnExecution(func(r core.ExecutionReport) { reports = append(reports, r) })
+	ctx := context.Background()
+	if err := g.Connect(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t0 := time.Date(2024, 1, 2, 10, 0, 0, 0, time.UTC)
+	g.lastPrice["USDJPY"], g.lastTime["USDJPY"] = 150, t0
+
+	if _, err := g.PlaceOrder(ctx, core.OrderRequest{Symbol: "USDJPY", Side: core.Buy, Quantity: 10000, Type: core.Market}); err != nil {
+		t.Fatal(err)
+	}
+	if len(reports) != 1 || reports[0].Status != core.Filled {
+		t.Fatalf("entrée USDJPY refusée alors que la marge vaut 333 USD : %+v", reports)
+	}
+	g.lastPrice["USDJPY"] = 151
+	acc, _ := g.Account(ctx)
+	if acc.Currency != "USD" {
+		t.Fatalf("devise du compte simulé %q, USD attendu", acc.Currency)
+	}
+	// 1 yen × 10 000 unités = 10 000 JPY, soit 10 000 / 151 USD.
+	want := 10000.0 / 151
+	if math.Abs(acc.Equity-(10000+want)) > 1e-6 {
+		t.Fatalf("équité %.6f, attendue %.6f (P&L latent converti)", acc.Equity, 10000+want)
+	}
+	if _, err := g.PlaceOrder(ctx, core.OrderRequest{Symbol: "USDJPY", Side: core.Sell, Quantity: 10000, Type: core.Market}); err != nil {
+		t.Fatal(err)
+	}
+	last := reports[len(reports)-1]
+	if !last.Closing || math.Abs(last.PnL-want) > 1e-6 {
+		t.Fatalf("P&L de sortie %.6f, attendu %.6f USD", last.PnL, want)
+	}
+}
+
+// TestReplayStopFillsAtGapOpen : comme au backtest, un stop franchi par
+// l'ouverture est servi à l'ouverture, pas au prix que personne n'offrait.
+func TestReplayStopFillsAtGapOpen(t *testing.T) {
+	gw, err := New("replay", Options{HistoryDir: t.TempDir(), InitialCapital: 10000, Leverage: 30})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := gw.(*replayGateway)
+	var reports []core.ExecutionReport
+	g.OnExecution(func(r core.ExecutionReport) { reports = append(reports, r) })
+	g.positions["EURUSD"] = &simPosition{side: core.Buy, quantity: 1000, entryPrice: 1.10,
+		stopLoss: 1.09, conv: data.ConversionFor("EURUSD", "USD")}
+	g.checkBarriers("EURUSD", core.Bar{Time: time.Now().UTC(), BidOpen: 1.08, BidHigh: 1.085, BidLow: 1.07, BidClose: 1.08})
+	if len(reports) != 1 || reports[0].FillPrice != 1.08 || reports[0].Reason != "stop" {
+		t.Fatalf("stop en gap : %+v, sortie à l'ouverture 1.08 attendue", reports)
+	}
+	g.positions["EURUSD"] = &simPosition{side: core.Sell, quantity: 1000, entryPrice: 1.10,
+		stopLoss: 1.11, conv: data.ConversionFor("EURUSD", "USD")}
+	g.checkBarriers("EURUSD", core.Bar{Time: time.Now().UTC(), BidOpen: 1.12, BidHigh: 1.13, BidLow: 1.115, BidClose: 1.12})
+	if len(reports) != 2 || reports[1].FillPrice != 1.12 {
+		t.Fatalf("stop court en gap : %+v, sortie à l'ouverture 1.12 attendue", reports)
 	}
 }

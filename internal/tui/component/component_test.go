@@ -241,6 +241,29 @@ func TestStatRowKeepsEveryCard(t *testing.T) {
 	}
 }
 
+// TestStatRowUsesTheWidthItHas : une seule rangée de cartes se partage la
+// largeur. Serrées à 14 colonnes, elles tronquaient « Unité de temps » et
+// « plafond 100000 » à côté d'une moitié de panneau vide.
+func TestStatRowUsesTheWidthItHas(t *testing.T) {
+	th := theme.Dark()
+	cards := []StatCard{
+		{Label: "Paire", Value: "EURUSD"}, {Label: "Unité de temps", Value: "H4"},
+		{Label: "Stratégie", Value: "colibri_v1_2"}, {Label: "Capital", Value: "10000"},
+		{Label: "Risque / trade", Value: "0.50 %", Note: "plafond 100000"},
+	}
+	out := StatRow(th, cards, 128)
+	for _, want := range []string{"Unité de temps", "Risque / trade", "plafond 100000"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("« %s » tronqué alors que la place existe :\n%s", want, out)
+		}
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if w := lipgloss.Width(line); w > 128 {
+			t.Fatalf("rangée de %d colonnes pour 128 disponibles", w)
+		}
+	}
+}
+
 // TestTableKeepsCellsWithTheirColumn : quand une colonne est retirée
 // faute de place, les cellules suivantes ne doivent PAS glisser d'un cran
 // — sinon le tableau affiche un prix sous l'entête « État », ce qui est

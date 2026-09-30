@@ -183,6 +183,15 @@ func StatRowMax(th theme.Theme, cards []StatCard, width, maxRows int) string {
 	if perRow < 1 {
 		perRow = 1
 	}
+	// Une seule rangée suffit : les cartes se partagent la largeur au lieu
+	// de s'entasser à 14 colonnes, tronquées (« Unité de tem… »,
+	// « plafond 1000… »), à côté d'une moitié de panneau vide. La largeur
+	// reste bornée (goodCard) pour qu'un écran très large ne les écarte
+	// pas au point de ne plus se lire comme une rangée.
+	const goodCard = 26
+	if len(cards) <= perRow {
+		perRow = max(len(cards), width/goodCard)
+	}
 	if extra := len(cards) - perRow*maxStatRows; extra > 0 {
 		cards = append(cards[:perRow*maxStatRows-1:perRow*maxStatRows-1], StatCard{
 			Label: "non affichées",

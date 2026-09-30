@@ -1,7 +1,9 @@
 package data
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -346,7 +348,10 @@ func ReadSeries(path string, from, to time.Time) (core.Series, FileHeader, error
 	}
 
 	timeField := pf.Schema().Fields()[cols[colTime]]
-	out := make(core.Series, 0, pf.NumRows())
+	// Réservation bornée (cf. Load) : NumRows vient des métadonnées d'un
+	// fichier qui peut être étranger ou abîmé. La tranche grandit au-delà
+	// si le fichier contient réellement plus d'une année.
+	out := make(core.Series, 0, min(max(pf.NumRows(), 0), maxBarsPerYear))
 	var times []int64
 	unit := int64(0)
 	var values [colCount][]float64
@@ -505,7 +510,10 @@ func readInt64Column(chunk parquet.ColumnChunk, dst *[]int64) error {
 	for {
 		page, err := pages.ReadPage()
 		if err != nil {
-			return nil // io.EOF compris : la colonne est finie
+			// io.EOF : la colonne est finie. Toute autre erreur est une page
+			// corrompue : l'avaler tronquait la colonne EN SILENCE, et
+			// l'année se relisait amputée comme si elle était entière.
+			return endOfColumn(err)
 		}
 		values := page.Values()
 		if reader, ok := values.(parquet.Int64Reader); ok {
@@ -513,6 +521,9 @@ func readInt64Column(chunk parquet.ColumnChunk, dst *[]int64) error {
 				n, err := reader.ReadInt64s(fast)
 				*dst = append(*dst, fast[:n]...)
 				if err != nil || n == 0 {
+					if e := endOfColumn(err); e != nil {
+						return e
+					}
 					break
 				}
 			}
@@ -530,10 +541,22 @@ func readInt64Column(chunk parquet.ColumnChunk, dst *[]int64) error {
 				*dst = append(*dst, v.Int64())
 			}
 			if err != nil || n == 0 {
+				if e := endOfColumn(err); e != nil {
+					return e
+				}
 				break
 			}
 		}
 	}
+}
+
+// endOfColumn : nil pour la fin normale d'une page ou d'une colonne
+// (io.EOF, ou aucune erreur), l'erreur elle-même sinon.
+func endOfColumn(err error) error {
+	if err == nil || errors.Is(err, io.EOF) {
+		return nil
+	}
+	return err
 }
 
 // timeUnit dit par combien diviser les entiers de la colonne
@@ -599,7 +622,7 @@ func readDoubleColumn(chunk parquet.ColumnChunk, dst *[]float64, present *[]bool
 	for {
 		page, err := pages.ReadPage()
 		if err != nil {
-			return nil // io.EOF compris : la colonne est finie
+			return endOfColumn(err) // cf. readInt64Column
 		}
 		values := page.Values()
 		if reader, ok := values.(parquet.DoubleReader); ok && page.NumNulls() == 0 {
@@ -610,6 +633,9 @@ func readDoubleColumn(chunk parquet.ColumnChunk, dst *[]float64, present *[]bool
 					*present = append(*present, true)
 				}
 				if err != nil || n == 0 {
+					if e := endOfColumn(err); e != nil {
+						return e
+					}
 					break
 				}
 			}
@@ -627,6 +653,9 @@ func readDoubleColumn(chunk parquet.ColumnChunk, dst *[]float64, present *[]bool
 				*present = append(*present, true)
 			}
 			if err != nil || n == 0 {
+				if e := endOfColumn(err); e != nil {
+					return e
+				}
 				break
 			}
 		}

@@ -474,7 +474,12 @@ func runTrain(args []string) error {
 			}
 		}
 	}
-	if *riskPct >= 0 {
+	// « Posée » se lit sur le jeu d'options, pas sur la valeur : un
+	// « --risk-per-trade nan » ou « -5 » était ignoré en silence, et le run
+	// tournait au réglage du fichier en se croyant forcé.
+	riskSet := false
+	fs.Visit(func(f *flag.Flag) { riskSet = riskSet || f.Name == "risk-per-trade" })
+	if riskSet {
 		if err := a.SetRiskPerTrade(*riskPct); err != nil {
 			return err
 		}
@@ -511,6 +516,7 @@ func runTrain(args []string) error {
 	fmt.Printf("Trades OOS : %d · taux de gain %s · P&L %.2f %s · profit factor %s\n",
 		res.Aggregate.Trades, winRate(res.Aggregate.Trades, res.Aggregate.WinRate), res.Aggregate.NetPnL,
 		cur, ratio(res.Aggregate.ProfitFactor))
+	printCosts(res.Aggregate, cur)
 	if !res.Aggregate.CurrencyExact {
 		fmt.Println("⚠ Des actifs ne sont pas convertibles vers la devise du compte : " +
 			"la somme des P&L mélange des devises. Les ratios restent exacts.")
@@ -530,6 +536,23 @@ func runTrain(args []string) error {
 		fmt.Println("Aucun modèle de production écrit.")
 	}
 	return nil
+}
+
+// printCosts dit ce que les coûts ont pris, et ce qu'était le résultat
+// AVANT eux (P&L net + coûts). C'est la première question à poser à une
+// règle perdante : n'a-t-elle aucun avantage, ou un avantage que le spread
+// dévore ? Mesuré sur FXCM 2024-2025, Martinet est dans le second cas
+// (avant coûts ≈ 0), Troglodyte dans le premier.
+func printCosts(s backtest.Stats, cur string) {
+	if !s.CostsModelled {
+		fmt.Println("⚠ Aucun coût modélisé (historique sans côté ask) : résultat optimiste.")
+		return
+	}
+	if s.Trades == 0 {
+		return
+	}
+	fmt.Printf("Coûts (spread + commission) : %.2f %s · P&L avant coûts : %+.2f %s (net + coûts)\n",
+		s.Costs, cur, s.NetPnL+s.Costs, cur)
 }
 
 // printNewsComparison : le même walk-forward rejoué sans le filtre
@@ -620,7 +643,12 @@ func runBacktest(args []string) error {
 	if len(pairs) != 1 {
 		return fmt.Errorf("usage : gw backtest [-tf H4] [--csv] PAIRE")
 	}
-	symbol := strings.ToUpper(pairs[0])
+	symbol := strings.ToUpper(strings.TrimSpace(pairs[0]))
+	// Vérifié comme partout ailleurs : le symbole entre dans des chemins
+	// (historique, modèle, fichier CSV exporté) — « ../x » en sortirait.
+	if _, err := data.LookupInstrument(symbol); err != nil {
+		return err
+	}
 
 	a, ctx, cancel, err := open()
 	if err != nil {
@@ -858,7 +886,10 @@ func sizingLabel(cfg config.RiskConfig) string {
 		return fmt.Sprintf("%.2f %% de l'équité par trade (plafond %.0f unités)",
 			cfg.RiskPerTradePct, cfg.MaxPositionSize)
 	}
-	return fmt.Sprintf("taille fixe de %.0f unités", cfg.MaxPositionSize)
+	// La taille fixe est fixed_position_size ; max_position_size n'en est
+	// que le plafond. Afficher le plafond annonçait 100 000 unités là où
+	// le moteur en prenait 10 000.
+	return fmt.Sprintf("taille fixe de %.0f unités (plafond %.0f)", cfg.FixedPositionSize, cfg.MaxPositionSize)
 }
 
 func runRuns() error {
