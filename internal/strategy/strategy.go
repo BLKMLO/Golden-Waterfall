@@ -253,6 +253,14 @@ func Register(name string, f Factory) {
 	registry[name] = f
 }
 
+// Successor : la remplaçante d'une révision retirée.
+func Successor(name string) (string, bool) {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+	s, ok := retired[name]
+	return s, ok
+}
+
 // New instancie une stratégie par son nom.
 func New(name string) (Strategy, error) {
 	registryMu.RLock()

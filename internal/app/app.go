@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/BLKMLO/Golden-Waterfall/internal/backtest"
+	"github.com/BLKMLO/Golden-Waterfall/internal/broker"
 	"github.com/BLKMLO/Golden-Waterfall/internal/config"
 	"github.com/BLKMLO/Golden-Waterfall/internal/core"
 	"github.com/BLKMLO/Golden-Waterfall/internal/data"
@@ -25,11 +26,10 @@ import (
 	"github.com/BLKMLO/Golden-Waterfall/internal/training"
 
 	// Import à effet de bord : chaque passerelle s'enregistre dans son
-	// init(). Sans cet import, le registre serait vide et le programme
-	// annoncerait « passerelle inconnue » pour une passerelle qui existe.
-	_ "github.com/BLKMLO/Golden-Waterfall/internal/broker"
-	// Même principe pour les moteurs de décision : le catalogue est le
-	// seul paquet qui nomme une implémentation de stratégie.
+	// init() (le paquet broker sert aussi à juger broker.name au
+	// démarrage). Même principe pour les moteurs de décision : le
+	// catalogue est le seul paquet qui nomme une implémentation de
+	// stratégie.
 	_ "github.com/BLKMLO/Golden-Waterfall/internal/strategies"
 )
 
@@ -79,7 +79,7 @@ func Open(paths config.Paths, mode Mode) (*App, error) {
 	if err := paths.EnsureDirs(); err != nil {
 		return nil, fmt.Errorf("préparation du dossier de données : %w", err)
 	}
-	cfg, err := config.Load(paths)
+	cfg, err := LoadConfig(paths)
 	if err != nil {
 		return nil, err
 	}
@@ -95,18 +95,9 @@ func Open(paths config.Paths, mode Mode) (*App, error) {
 	}
 	logger := logging.Logger
 
-	// La stratégie configurée doit exister AVANT d'ouvrir quoi que ce
-	// soit : un nom mal orthographié se découvre au démarrage, pas à la
-	// première bougie.
-	if _, err := strategy.New(cfg.Strategy.Name); err != nil {
-		logging.Close()
-		return nil, err
-	}
-	// Même règle pour la source d'historique : config ne connaît pas le
-	// registre de data, c'est donc ici qu'un nom inconnu est refusé.
-	if _, err := data.DescribeSource(cfg.History.Source); err != nil {
-		logging.Close()
-		return nil, fmt.Errorf("history.source : %w", err)
+	for _, r := range cfg.Repairs {
+		logger.Warn("configuration réparée au démarrage", "cle", r.Key, "ancienne", r.Old,
+			"nouvelle", r.New, "raison", r.Reason, "variable", r.Env, "sauvegarde", cfg.Backup)
 	}
 
 	var store *storage.Store
@@ -147,6 +138,63 @@ func Open(paths config.Paths, mode Mode) (*App, error) {
 		"strategie", cfg.Strategy.Name, "passerelle", cfg.Broker.Name, "mode", cfg.Broker.Mode)
 	warnUnsizable(cfg, logger)
 	return a, nil
+}
+
+// LoadConfig charge la configuration et répare aussi les réglages que
+// seuls les registres savent juger (config ne les connaît pas) : une
+// révision retirée par une mise à jour passe à sa remplaçante, un nom
+// inconnu à sa valeur par défaut. Toute commande qui lit la configuration
+// passe par là, pour que `gw config` montre ce que `gw` appliquera.
+func LoadConfig(paths config.Paths) (config.Config, error) {
+	cfg, err := config.Load(paths)
+	if err != nil {
+		return cfg, err
+	}
+	return cfg, repairRegistries(&cfg)
+}
+
+// repairRegistries remet sur une valeur connue les réglages jugés par les
+// registres : moteur, source d'historique, passerelle, source
+// d'actualités.
+func repairRegistries(cfg *config.Config) error {
+	def := config.Default()
+	if _, err := strategy.New(cfg.Strategy.Name); err != nil {
+		name, reason := def.Strategy.Name, "moteur inconnu de cette version"
+		if next, ok := strategy.Successor(cfg.Strategy.Name); ok {
+			// Sa remplaçante, pas le moteur par défaut : c'est le même
+			// moteur dans sa dernière révision. Elle demande un nouvel
+			// entraînement — l'écran Live le dit dans ses prérequis.
+			name, reason = next, "révision retirée : remplacée par sa dernière révision, à réentraîner"
+		}
+		if err := config.Fix(cfg, "strategy.name", name, reason); err != nil {
+			return err
+		}
+	}
+	if _, err := data.DescribeSource(cfg.History.Source); err != nil {
+		if err := config.Fix(cfg, "history.source", def.History.Source, "source d'historique inconnue de cette version"); err != nil {
+			return err
+		}
+	}
+	if !contains(broker.ListNames(), cfg.Broker.Name) {
+		if err := config.Fix(cfg, "broker.name", def.Broker.Name, "passerelle inconnue de cette version"); err != nil {
+			return err
+		}
+	}
+	if !contains(news.List(), cfg.News.Source) {
+		if err := config.Fix(cfg, "news.source", def.News.Source, "source d'actualités inconnue de cette version"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func contains(list []string, v string) bool {
+	for _, x := range list {
+		if x == v {
+			return true
+		}
+	}
+	return false
 }
 
 // warnUnsizable prévient au démarrage quand le dimensionnement au risque

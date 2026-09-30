@@ -160,8 +160,16 @@ le contrat `strategy.Strategy` ([`docs/architecture.md`](docs/architecture.md)).
 On choisit le moteur dans l'écran **Paramètres** (`strategy.name`) ; chaque
 moteur a ses propres modèles et demande son propre entraînement. Seule la
 **dernière révision** de chaque moteur est livrée (depuis v0.8.0) : une
-configuration restée sur une révision retirée est refusée au démarrage, en
-nommant celle qui la remplace.
+configuration restée sur une révision retirée passe d'office à celle qui
+la remplace (à réentraîner).
+
+**Configuration réparée d'office** (v0.8.2) : après une mise à jour, un
+réglage que la nouvelle version refuse — clé disparue, valeur hors
+bornes, révision retirée — est remis sur une valeur valide au lieu de
+bloquer le démarrage. `config.yaml` est corrigé en gardant ses
+commentaires, l'ancien est sauvegardé à côté (`config.yaml.<date>.bak`),
+et chaque réparation est annoncée dans le terminal, la barre d'état et le
+journal. Seule une erreur de syntaxe YAML empêche de démarrer.
 
 **Colibri** (`colibri_v1_2`, par défaut) est un **classifieur** : un gradient
 boosting écrit en Go apprend, sur des barrières à ± 1,5 ATR, l'issue nette de
@@ -210,8 +218,11 @@ devises de la paire. **Colibri n'y a jamais accès.** Le calendrier (flux
 public de la semaine en cours) est récupéré pendant une séance live ou par
 `gw news fetch`, et **archivé** : le backtest ne filtre que les périodes
 archivées et compte à part les entrées qu'il n'a pas pu vérifier. Les
-sources sont des modules remplaçables. Détail :
-[`docs/actualites.md`](docs/actualites.md).
+sources sont des modules remplaçables. Chaque walk-forward d'une stratégie
+qui déclare le filtre rejoue aussi ses plis **sans** lui, avec le même
+modèle : l'écart « avec − sans » se lit dans `gw train` et l'écran
+Entraînement, mesuré sur la seule période que le calendrier couvre.
+Détail : [`docs/actualites.md`](docs/actualites.md).
 
 ## Ligne de commande
 

@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -34,6 +35,11 @@ type Config struct {
 
 	// Paths n'est pas dans le YAML : il est calculé au démarrage.
 	Paths Paths `yaml:"-"`
+
+	// Repairs : réglages remis d'office au chargement (repair.go). Backup :
+	// copie de l'ancien config.yaml si le fichier a été réécrit.
+	Repairs []Repair `yaml:"-"`
+	Backup  string   `yaml:"-"`
 }
 
 // BrokerConfig : quelle gateway, et dans quel mode.
@@ -254,22 +260,57 @@ func Load(paths Paths) (Config, error) {
 	case err != nil:
 		return cfg, fmt.Errorf("lecture de %s : %w", file, err)
 	default:
-		// KnownFields : une clé inconnue est une FAUTE DE FRAPPE, pas une
-		// option ignorable. Un « max_positions » écrit au singulier qui
-		// passe inaperçu, c'est une limite de risque jamais appliquée.
-		dec := yaml.NewDecoder(strings.NewReader(string(raw)))
-		dec.KnownFields(true)
-		if err := dec.Decode(&cfg); err != nil && err.Error() != "EOF" {
-			return cfg, fmt.Errorf("config.yaml invalide (%s) : %w", file, err)
+		// Réparation automatique (repair.go) : une clé inconnue, une valeur
+		// illisible ou refusée — typiquement laissées par une version
+		// précédente — sont remises d'office et ANNONCÉES, au lieu de
+		// bloquer le démarrage. Seule une erreur de syntaxe reste fatale.
+		var doc yaml.Node
+		if err := yaml.Unmarshal(raw, &doc); err != nil {
+			return cfg, fmt.Errorf("config.yaml illisible (%s) : %w — corriger la syntaxe, ou le supprimer "+
+				"pour repartir du modèle", file, err)
 		}
+		if len(doc.Content) == 0 {
+			break // fichier vide : défauts
+		}
+		if doc.Content[0].Kind != yaml.MappingNode {
+			// Un fichier qui n'est pas une table ne décrit aucun réglage :
+			// il est sauvegardé puis remplacé par le modèle.
+			backup := file + "." + time.Now().Format("2006-01-02T15-04-05") + ".bak"
+			if err := os.WriteFile(backup, raw, 0o644); err != nil {
+				return cfg, err
+			}
+			if err := os.WriteFile(file, defaultConfigYAML, 0o644); err != nil {
+				return cfg, err
+			}
+			empty := yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{{Kind: yaml.MappingNode, Tag: "!!map"}}}
+			out, err := loadFrom(file, nil, &empty, paths)
+			out.Backup = backup
+			out.Repairs = append([]Repair{{Key: "config.yaml", Old: summary(doc.Content[0]), New: "modèle par défaut",
+				Reason: "le fichier n'est pas une table de réglages"}}, out.Repairs...)
+			return out, err
+		}
+		return loadFrom(file, raw, &doc, paths)
 	}
-	cfg.Paths = paths
+	// Premier lancement ou fichier vide : les défauts, et les variables
+	// d'environnement, réparées de même.
+	empty := yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{{Kind: yaml.MappingNode, Tag: "!!map"}}}
+	return loadFrom(file, nil, &empty, paths)
+}
 
-	if err := applyEnv(&cfg); err != nil {
-		return cfg, err
-	}
-	if err := cfg.Validate(); err != nil {
+// loadFrom répare et décode une racine YAML ; réécrit le fichier (après
+// sauvegarde) si une réparation le touche.
+func loadFrom(file string, raw []byte, doc *yaml.Node, paths Paths) (Config, error) {
+	cfg, repairs, changed, err := loadRepaired(doc.Content[0], paths)
+	if err != nil {
 		return cfg, fmt.Errorf("configuration invalide (%s) : %w", file, err)
+	}
+	cfg.Repairs = completeRepairs(cfg, repairs)
+	if changed && raw != nil {
+		backup, err := writeRepaired(file, raw, doc)
+		if err != nil {
+			return cfg, err
+		}
+		cfg.Backup = backup
 	}
 	return cfg, nil
 }
@@ -319,21 +360,6 @@ func EnvOverrides() map[string]string {
 	return out
 }
 
-// applyEnv applique les surcharges GW_* (dernier mot).
-func applyEnv(cfg *Config) error {
-	bindings := envBindings()
-	for _, b := range bindings {
-		v, ok := os.LookupEnv(b.key)
-		if !ok || v == "" {
-			continue
-		}
-		if err := b.apply(cfg, v); err != nil {
-			return fmt.Errorf("variable %s : %w", b.key, err)
-		}
-	}
-	return nil
-}
-
 func setInt(v string, dst *int) error {
 	n, err := strconv.Atoi(strings.TrimSpace(v))
 	if err != nil {
@@ -361,8 +387,19 @@ func setBool(v string, dst *bool) error {
 	return nil
 }
 
-// Validate refuse toute configuration dangereuse ou incohérente.
+// Validate refuse toute configuration dangereuse ou incohérente. Au
+// chargement, ses refus sont réparés (repair.go) ; l'écran Paramètres, lui,
+// refuse d'écrire un brouillon invalide.
 func (c Config) Validate() error {
+	if errs := c.problems(); len(errs) > 0 {
+		return fmt.Errorf("\n  - %s", strings.Join(errs, "\n  - "))
+	}
+	return nil
+}
+
+// problems : les refus de Validate, un par phrase. Chaque phrase cite en
+// PREMIER la clé à remettre à son défaut (repair.go s'en sert).
+func (c Config) problems() []string {
 	var errs []string
 	add := func(format string, args ...any) { errs = append(errs, fmt.Sprintf(format, args...)) }
 
@@ -480,10 +517,7 @@ func (c Config) Validate() error {
 	if c.Logging.BufferSize < 10 {
 		add("logging.buffer_size doit être >= 10")
 	}
-	if len(errs) > 0 {
-		return fmt.Errorf("\n  - %s", strings.Join(errs, "\n  - "))
-	}
-	return nil
+	return errs
 }
 
 // Live indique si le mode réel est armé.

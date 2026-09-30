@@ -43,8 +43,22 @@ func TestLoadedScreensFit(t *testing.T) {
 	}
 	tr, _ := NewTraining(deps).Update(trainingDoneMsg{result: wf, took: time.Minute})
 
+	// Le même, avec la comparaison avec / sans filtre d'actualités : une
+	// ligne de plus dans l'agrégat, une colonne de plus dans les plis.
+	wfNews := *wf
+	cmp := &training.NewsComparison{CoveredWeeks: 12, Blocked: 7, CurrencyExact: true}
+	cmp.Covered.With, cmp.Covered.Without = training.NewsSide{Trades: 54, NetPnL: -66.44}, training.NewsSide{Trades: 55, NetPnL: -70.98}
+	wfNews.News = cmp
+	wfNews.Folds = nil
+	for _, f := range wf.Folds {
+		f.News = cmp
+		wfNews.Folds = append(wfNews.Folds, f)
+	}
+	trNews, _ := NewTraining(deps).Update(trainingDoneMsg{result: &wfNews, took: time.Minute})
+
 	screens := map[string]Model{"Backtest avec résultat": bt, "Journal trades": j,
-		"Live avec positions": lv, "Entraînement avec résultat": tr}
+		"Live avec positions": lv, "Entraînement avec résultat": tr,
+		"Entraînement avec comparaison news": trNews}
 	for name, v := range screens {
 		for _, s := range bodySizes {
 			if h := lipgloss.Height(v.Render(s[0], s[1])); h > s[1] {

@@ -31,16 +31,151 @@ func TestLoadCreatesDefaultFileOnFirstRun(t *testing.T) {
 	}
 }
 
-func TestUnknownKeyIsRejected(t *testing.T) {
+// TestUnknownKeyIsRemovedAndAnnounced : une clé que cette version ne
+// connaît pas (retirée par une mise à jour, ou faute de frappe) est
+// supprimée du fichier — sauvegardé avant — et la réparation NOMME la clé.
+// Rien n'est ignoré en silence : « max_position » au singulier, qui
+// laisserait croire à une limite de risque, apparaît dans les réparations.
+func TestUnknownKeyIsRemovedAndAnnounced(t *testing.T) {
 	p := tempPaths(t)
 	os.MkdirAll(p.ConfigDir, 0o755)
-	// « max_position » au singulier : une faute de frappe qui, si elle
-	// passait, laisserait une limite de risque jamais appliquée.
-	os.WriteFile(p.ConfigFile(), []byte("risk:\n  max_position: 3\n"), 0o644)
-	if _, err := Load(p); err == nil {
-		t.Fatal("une clé inconnue doit faire échouer le chargement")
-	} else if !strings.Contains(err.Error(), "max_position") {
-		t.Fatalf("le message doit nommer la clé fautive : %v", err)
+	os.WriteFile(p.ConfigFile(), []byte("risk:\n  max_position: 3\n  max_open_positions: 3\n"), 0o644)
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Repairs) != 1 || cfg.Repairs[0].Key != "risk.max_position" || cfg.Repairs[0].New != "supprimée" {
+		t.Fatalf("réparation attendue nommant risk.max_position : %+v", cfg.Repairs)
+	}
+	if cfg.Risk.MaxOpenPositions != 3 {
+		t.Fatal("les réglages valides du fichier doivent être gardés")
+	}
+	raw, _ := os.ReadFile(p.ConfigFile())
+	if strings.Contains(string(raw), "max_position:") || !strings.Contains(string(raw), "max_open_positions: 3") {
+		t.Fatalf("fichier mal réparé :\n%s", raw)
+	}
+	if old, err := os.ReadFile(cfg.Backup); err != nil || !strings.Contains(string(old), "max_position: 3") {
+		t.Fatalf("l'ancien fichier doit être sauvegardé (%q) : %v", cfg.Backup, err)
+	}
+	// Au lancement suivant, plus rien à réparer.
+	again, err := Load(p)
+	if err != nil || len(again.Repairs) != 0 || again.Backup != "" {
+		t.Fatalf("un fichier réparé ne doit plus rien réparer : %+v, %v", again.Repairs, err)
+	}
+}
+
+// TestRefusedValuesAreResetToDefaultKeepingComments : une valeur refusée
+// revient à son défaut, une valeur illisible aussi ; les commentaires et
+// les autres réglages restent.
+func TestRefusedValuesAreResetToDefaultKeepingComments(t *testing.T) {
+	p := tempPaths(t)
+	os.MkdirAll(p.ConfigDir, 0o755)
+	os.WriteFile(p.ConfigFile(), []byte(`# mon réglage
+broker:
+  mode: "demo"      # valeur d'une vieille version
+  port: "abc"
+  host: "10.0.0.9"
+risk:
+  fixed_position_size: 50000
+  max_position_size: 20000
+`), 0o644)
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := Default()
+	if cfg.Broker.Mode != d.Broker.Mode || cfg.Broker.Port != d.Broker.Port || cfg.Broker.Host != "10.0.0.9" {
+		t.Fatalf("broker mal réparé : %+v", cfg.Broker)
+	}
+	// Incohérence entre deux clés : la PREMIÈRE citée revient à son défaut
+	// (10 000 ≤ 20 000), la seconde, cohérente alors, est gardée.
+	if cfg.Risk.FixedPositionSize != d.Risk.FixedPositionSize || cfg.Risk.MaxPositionSize != 20000 {
+		t.Fatalf("risque mal réparé : %+v", cfg.Risk)
+	}
+	keys := strings.Join(RepairKeys(cfg.Repairs), ",")
+	if keys != "broker.mode,broker.port,risk.fixed_position_size" {
+		t.Fatalf("réparations : %s", keys)
+	}
+	raw, _ := os.ReadFile(p.ConfigFile())
+	for _, want := range []string{"# mon réglage", "valeur d'une vieille version", "mode: paper", "host: \"10.0.0.9\""} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("« %s » absent du fichier réparé :\n%s", want, raw)
+		}
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestSyntaxErrorStillStops : on ne peut pas savoir ce qu'un fichier
+// illisible voulait dire — refus, avec le remède.
+func TestSyntaxErrorStillStops(t *testing.T) {
+	p := tempPaths(t)
+	os.MkdirAll(p.ConfigDir, 0o755)
+	os.WriteFile(p.ConfigFile(), []byte("broker:\n  mode: [paper\n"), 0o644)
+	if _, err := Load(p); err == nil || !strings.Contains(err.Error(), "syntaxe") {
+		t.Fatalf("erreur de syntaxe : refus nommant la syntaxe attendu, reçu %v", err)
+	}
+}
+
+// TestNotATableIsReplacedByTheTemplate : un fichier qui n'est pas une
+// table est sauvegardé puis remplacé par le modèle.
+func TestNotATableIsReplacedByTheTemplate(t *testing.T) {
+	p := tempPaths(t)
+	os.MkdirAll(p.ConfigDir, 0o755)
+	os.WriteFile(p.ConfigFile(), []byte("bonjour\n"), 0o644)
+	cfg, err := Load(p)
+	if err != nil || len(cfg.Repairs) != 1 || cfg.Backup == "" {
+		t.Fatalf("remplacement annoncé attendu : %+v, %v", cfg.Repairs, err)
+	}
+	raw, _ := os.ReadFile(p.ConfigFile())
+	if string(raw) != string(DefaultYAML()) {
+		t.Fatal("le modèle doit remplacer le fichier")
+	}
+}
+
+// TestFixPersistsAndAnnounces : Fix (appelé par app.New pour les registres)
+// écrit la nouvelle valeur dans le fichier, après sauvegarde.
+func TestFixPersistsAndAnnounces(t *testing.T) {
+	p := tempPaths(t)
+	os.MkdirAll(p.ConfigDir, 0o755)
+	os.WriteFile(p.ConfigFile(), []byte("strategy:\n  name: martinet_v1_0 # ancien\n"), 0o644)
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Fix(&cfg, "strategy.name", "martinet_v1_1", "révision retirée"); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Strategy.Name != "martinet_v1_1" || len(cfg.Repairs) != 1 || cfg.Backup == "" {
+		t.Fatalf("réparation mal appliquée : %+v %+v", cfg.Strategy, cfg.Repairs)
+	}
+	back, _ := Load(p)
+	if back.Strategy.Name != "martinet_v1_1" {
+		t.Fatal("la réparation doit être écrite dans config.yaml")
+	}
+	if err := Fix(&back, "strategy.name", "troglodyte_v1_1", "deuxième réparation"); err != nil {
+		t.Fatal(err)
+	}
+	twice, _ := os.ReadFile(p.ConfigFile())
+	if n := strings.Count(string(twice), repairHeader); n != 1 {
+		t.Fatalf("une seule ligne d'en-tête de réparation attendue, %d :\n%s", n, twice)
+	}
+	Fix(&back, "strategy.name", "martinet_v1_1", "retour")
+	raw, _ := os.ReadFile(p.ConfigFile())
+	if !strings.Contains(string(raw), "# ancien") {
+		t.Fatalf("le commentaire de la ligne doit rester :\n%s", raw)
+	}
+	// Valeur forcée par l'environnement : ignorée, fichier intact.
+	t.Setenv("GW_STRATEGY", "martinet_v1_0")
+	env, _ := Load(p)
+	before, _ := os.ReadFile(p.ConfigFile())
+	if err := Fix(&env, "strategy.name", "martinet_v1_1", "révision retirée"); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := os.ReadFile(p.ConfigFile())
+	if string(before) != string(after) || env.Repairs[len(env.Repairs)-1].Env != "GW_STRATEGY" {
+		t.Fatal("une valeur venue de l'environnement ne doit pas réécrire le fichier")
 	}
 }
 
@@ -65,11 +200,25 @@ func TestEnvOverridesFile(t *testing.T) {
 	}
 }
 
-func TestInvalidEnvValueIsAnError(t *testing.T) {
+// TestInvalidEnvValueIsIgnoredAndAnnounced : une variable GW_* refusée est
+// ignorée pour cette exécution, en le disant ; le fichier n'est pas touché.
+func TestInvalidEnvValueIsIgnoredAndAnnounced(t *testing.T) {
 	p := tempPaths(t)
 	t.Setenv("GW_BROKER_PORT", "pas-un-nombre")
-	if _, err := Load(p); err == nil {
-		t.Fatal("une valeur d'environnement invalide doit être refusée")
+	t.Setenv("GW_MODE", "demo")
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Broker.Port != Default().Broker.Port || cfg.Broker.Mode != Default().Broker.Mode {
+		t.Fatalf("valeurs du fichier attendues : %+v", cfg.Broker)
+	}
+	envs := map[string]bool{}
+	for _, r := range cfg.Repairs {
+		envs[r.Env] = true
+	}
+	if !envs["GW_BROKER_PORT"] || !envs["GW_MODE"] || cfg.Backup != "" {
+		t.Fatalf("variables ignorées ET annoncées, fichier intact, attendus : %+v", cfg.Repairs)
 	}
 }
 
@@ -249,8 +398,13 @@ func TestEveryEnvironmentVariableActs(t *testing.T) {
 		{"GW_SEED", "x"}, {"GW_NEWS", "peut-être"}, {"GW_BROKER_PORT", "port"},
 	} {
 		t.Setenv(bad.key, bad.value)
-		if _, err := Load(DefaultPaths()); err == nil || !strings.Contains(err.Error(), bad.key) {
-			t.Errorf("%s=%s accepté (%v)", bad.key, bad.value, err)
+		cfg, err := Load(DefaultPaths())
+		found := false
+		for _, r := range cfg.Repairs {
+			found = found || r.Env == bad.key
+		}
+		if err != nil || !found {
+			t.Errorf("%s=%s : variable ignorée ET annoncée attendue (%v, %+v)", bad.key, bad.value, err, cfg.Repairs)
 		}
 		t.Setenv(bad.key, env[bad.key])
 	}

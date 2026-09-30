@@ -19,7 +19,9 @@ Golden-Waterfall/
 │   │                           l'autre : atelier et commandes de travail).
 │   │
 │   ├── config/
-│   │   ├── config.go           Structure unique + validation fail-fast.
+│   │   ├── config.go           Structure unique + validation.
+│   │   ├── repair.go           Réparation d'office annoncée (clé inconnue,
+│   │   │                       valeur refusée, variable GW_* refusée).
 │   │   ├── paths.go            Emplacements par OS (XDG, AppData, macOS).
 │   │   ├── timeframe.go        Liste des unités de temps (vérif croisée).
 │   │   └── default_config.yaml Modèle commenté EMBARQUÉ dans le binaire.
@@ -174,8 +176,8 @@ supposaient autrefois de Colibri est désormais DÉCLARÉ par la stratégie :
 **Une génération ne livre que sa dernière révision** (v0.8.0). Une
 révision nouvelle remplace l'ancienne dans le code ; l'ancienne est
 déclarée par `strategy.Retire(ancienne, remplaçante)`, si bien qu'une
-configuration restée dessus est refusée au démarrage en nommant la
-remplaçante. Ses modèles archivés restent sur le disque, lisibles par
+configuration restée dessus passe d'office à la remplaçante
+(`strategy.Successor`, réparation annoncée). Ses modèles archivés restent sur le disque, lisibles par
 `gw runs`, et ne sont plus chargés par personne.
 
 **Deux interfaces** (v0.8.0). `gw` ouvre l'application en mode
@@ -237,12 +239,35 @@ Pourquoi c'est vital : le producteur d'un tick est la boucle de flux de
 prix d'un broker. La faire attendre un abonné lent, ou la tuer sur une
 panique d'abonné, coûterait le flux de marché du symbole — en silence.
 
-### 4. Configuration centralisée, validée, fail-fast
+### 4. Configuration centralisée, validée, réparée d'office — jamais en silence
 
-Tout passe par `config.Load()`. Aucune lecture directe de l'environnement
-ou du YAML ailleurs. Une valeur absurde **fait échouer le démarrage** avec
-un message qui nomme la clé fautive ; rien n'est corrigé en silence, et une
-clé inconnue (faute de frappe) est une erreur, pas une option ignorée.
+Tout passe par `config.Load()` (et `app.LoadConfig`, qui juge en plus ce
+que seuls les registres connaissent : moteur, source d'historique,
+passerelle, source d'actualités). Aucune lecture directe de
+l'environnement ou du YAML ailleurs.
+
+Depuis v0.8.2 (règle du propriétaire), un réglage refusé ne bloque plus
+le démarrage : c'est le cas typique d'une mise à jour qui retire une clé,
+resserre une borne ou retire une révision de moteur. `config/repair.go`
+le remet d'office sur une valeur valide :
+
+| Constat | Réparation |
+|---|---|
+| Clé ou section inconnue de cette version | supprimée |
+| Valeur illisible pour son type | valeur par défaut |
+| Valeur refusée par `Validate` | la première clé citée par le message revient à son défaut ; la suivante si le problème persiste |
+| Révision de moteur retirée | sa remplaçante (`strategy.Successor`) |
+| Moteur, source, passerelle, source d'actualités inconnus | valeur par défaut |
+| Variable `GW_*` refusée | ignorée pour cette exécution, fichier intact |
+| Fichier qui n'est pas une table | remplacé par le modèle |
+| Erreur de syntaxe YAML | **refus de démarrer** : on ne sait pas ce que le fichier voulait dire |
+
+`config.yaml` est corrigé en place — les commentaires restent — après une
+copie `config.yaml.<date>.bak`. Chaque réparation (clé, ancienne valeur,
+nouvelle, raison) est dans `Config.Repairs`, écrite dans le journal,
+affichée sur la sortie d'erreur par la CLI et dans la barre d'état des deux
+interfaces pendant une minute. L'écran Paramètres, lui, continue de
+refuser d'écrire un brouillon invalide.
 
 Priorité : défauts du code → `config.yaml` → variables `GW_*`.
 L'environnement a le dernier mot : une variable qu'on prend la peine

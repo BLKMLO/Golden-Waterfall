@@ -173,6 +173,7 @@ func open() (*app.App, context.Context, context.CancelFunc, error) {
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	announceRepairs(a.Config)
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	return a, ctx, cancel, nil
 }
@@ -186,8 +187,26 @@ func runTUI(mode tui.Mode) error {
 	if err != nil {
 		return err
 	}
+	// Aussi dans la barre d'état de l'interface ; ici, pour qu'il en reste
+	// une trace dans le terminal après la sortie.
+	announceRepairs(a.Config)
 	defer a.Close()
 	return tui.Run(a, mode)
+}
+
+// announceRepairs dit, sur la sortie d'erreur, quels réglages ont été
+// remis d'office au démarrage — jamais en silence.
+func announceRepairs(cfg config.Config) {
+	if len(cfg.Repairs) == 0 {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "⚠ Configuration réparée automatiquement (%d réglage(s)) :\n", len(cfg.Repairs))
+	for _, r := range cfg.Repairs {
+		fmt.Fprintf(os.Stderr, "  - %s\n", r)
+	}
+	if cfg.Backup != "" {
+		fmt.Fprintf(os.Stderr, "  Ancien fichier sauvegardé : %s\n", cfg.Backup)
+	}
 }
 
 func runPaths() error {
@@ -212,10 +231,11 @@ func runConfig(args []string) error {
 		os.Stdout.Write(config.DefaultYAML())
 		return nil
 	}
-	cfg, err := config.Load(config.DefaultPaths())
+	cfg, err := app.LoadConfig(config.DefaultPaths())
 	if err != nil {
 		return err
 	}
+	announceRepairs(cfg)
 	fmt.Printf("fichier            : %s\n", cfg.Paths.ConfigFile())
 	fmt.Printf("passerelle         : %s (%s)\n", cfg.Broker.Name, cfg.Broker.Mode)
 	fmt.Printf("stratégie          : %s (kill-switch %v)\n", cfg.Strategy.Name, cfg.Strategy.Enabled)
@@ -500,6 +520,7 @@ func runTrain(args []string) error {
 			res.Aggregate.RejectedOrders)
 	}
 	printSizing(a.Config.Risk, res.Aggregate)
+	printNewsComparison(res, cur)
 	printFoldErrors(res.Folds)
 	if res.FinalDir != "" {
 		fmt.Printf("Modèle de production : %s\n", res.FinalDir)
@@ -509,6 +530,53 @@ func runTrain(args []string) error {
 		fmt.Println("Aucun modèle de production écrit.")
 	}
 	return nil
+}
+
+// printNewsComparison : le même walk-forward rejoué sans le filtre
+// d'actualités. L'écart ne se lit que sur la période que le calendrier
+// couvre ; sans elle, on dit qu'il n'y a rien à lire.
+func printNewsComparison(res *training.Result, cur string) {
+	c := res.News
+	if c == nil {
+		return
+	}
+	fmt.Println("\nFiltre d'actualités — même modèle, mêmes blocs out-of-sample, avec et sans filtre :")
+	if !c.Measured() {
+		fmt.Printf("  ⚠ Aucune décision pendant une semaine archivée (%d semaine(s) au calendrier) : "+
+			"l'écart ne mesure rien.\n  Archiver le calendrier de la période (gw news fetch chaque semaine, "+
+			"gw news import pour le passé).\n", c.CoveredWeeks)
+		return
+	}
+	side := func(s training.NewsSide) string {
+		return fmt.Sprintf("%4d trades · taux de gain %s · P&L %10.2f · PF %s",
+			s.Trades, winRate(s.Trades, pct(s.Wins, s.Trades)), s.NetPnL, ratio(s.ProfitFactor()))
+	}
+	fmt.Printf("  Période couverte par le calendrier (%d semaine(s) archivée(s)) :\n", c.CoveredWeeks)
+	fmt.Printf("    avec filtre   %s\n", side(c.Covered.With))
+	fmt.Printf("    sans filtre   %s\n", side(c.Covered.Without))
+	fmt.Printf("    écart         %+.2f %s (avec − sans) · %d entrée(s) écartée(s) par une annonce\n",
+		c.Covered.Delta(), cur, c.Blocked)
+	fmt.Printf("  Tout l'out-of-sample : écart %+.2f %s · %d entrée(s) décidée(s) hors couverture, "+
+		"où les deux branches ne diffèrent que par ricochet\n", c.Total.Delta(), cur, c.Uncovered)
+	var folds []string
+	for _, f := range res.Folds {
+		if f.News != nil && f.News.Measured() {
+			folds = append(folds, fmt.Sprintf("pli %d %+.2f", f.Index, f.News.Covered.Delta()))
+		}
+	}
+	if len(folds) > 0 {
+		fmt.Printf("  Écart par pli (période couverte) : %s\n", strings.Join(folds, " · "))
+	}
+	if !c.CurrencyExact {
+		fmt.Println("  ⚠ Des P&L de devises différentes sont additionnés : comparer les profit factors, pas les montants.")
+	}
+}
+
+func pct(k, n int) float64 {
+	if n == 0 {
+		return 0
+	}
+	return float64(k) / float64(n) * 100
 }
 
 // printFoldErrors dit pourquoi des plis n'ont rien produit.
@@ -794,10 +862,11 @@ func sizingLabel(cfg config.RiskConfig) string {
 }
 
 func runRuns() error {
-	cfg, err := config.Load(config.DefaultPaths())
+	cfg, err := app.LoadConfig(config.DefaultPaths())
 	if err != nil {
 		return err
 	}
+	announceRepairs(cfg)
 	runs, err := training.ListRuns(cfg.Paths.ModelsDir())
 	if err != nil {
 		return err
@@ -850,10 +919,11 @@ func truncate(s string, n int) string {
 // interface ouverte, et le calendrier n'en a pas besoin. Le service est
 // construit depuis la configuration, comme app.New le fait.
 func runNews(args []string) error {
-	cfg, err := config.Load(config.DefaultPaths())
+	cfg, err := app.LoadConfig(config.DefaultPaths())
 	if err != nil {
 		return err
 	}
+	announceRepairs(cfg)
 	svc, err := news.NewService(app.NewsOptions(cfg), nil)
 	if err != nil {
 		return err

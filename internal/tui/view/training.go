@@ -530,7 +530,33 @@ func (v *Training) renderAggregate(res *training.Result, took time.Duration, wid
 		}
 		body += "\n" + style.Render(component.Truncate(prefix+msg, width-6))
 	}
+	if line, warn := newsComparisonLine(res, s.Currency); line != "" {
+		style := th.Text
+		if warn {
+			style = th.Warning
+		}
+		body += "\n" + style.Render(component.Truncate(line, width-6))
+	}
 	return component.Panel(th, "Agrégat OUT-OF-SAMPLE", body, width)
+}
+
+// newsComparisonLine résume, en une ligne, le même walk-forward rejoué
+// sans le filtre d'actualités (détail : gw train). Vide si le filtre
+// n'agit pas pour ce run.
+func newsComparisonLine(res *training.Result, cur string) (string, bool) {
+	c := res.News
+	if c == nil {
+		return "", false
+	}
+	if !c.Measured() {
+		return fmt.Sprintf("⚠ Avec / sans filtre news : aucune décision pendant une semaine archivée "+
+			"(%d au calendrier) — l'écart ne mesure rien", c.CoveredWeeks), true
+	}
+	return fmt.Sprintf("Avec / sans filtre news, période couverte : %d / %d trades · P&L %s / %s · écart %+.2f %s · "+
+		"%d entrée(s) écartée(s)",
+		c.Covered.With.Trades, c.Covered.Without.Trades,
+		component.Money(c.Covered.With.NetPnL), component.Money(c.Covered.Without.NetPnL),
+		c.Covered.Delta(), cur, c.Blocked), false
 }
 
 func (v *Training) renderFolds(res *training.Result, width, height int) string {
@@ -541,6 +567,10 @@ func (v *Training) renderFolds(res *training.Result, width, height int) string {
 		{Title: "Trades", Width: 7, Right: true, Priority: 1},
 		{Title: "P&L", Width: 11, Right: true},
 		{Title: "AUC", Width: 7, Right: true},
+	}
+	if res.News != nil {
+		// Écart avec − sans filtre news, sur la période couverte du pli.
+		cols = append(cols, component.Column{Title: "Δ news", Width: 10, Right: true, Priority: 3})
 	}
 	rows := make([][]string, 0, len(res.Folds))
 	for _, f := range res.Folds {
@@ -558,10 +588,18 @@ func (v *Training) renderFolds(res *training.Result, width, height int) string {
 		if f.Err != "" {
 			label = th.Negative.Render("échec")
 		}
-		rows = append(rows, []string{
+		row := []string{
 			fmt.Sprintf("%d", f.Index), label,
 			component.Count(f.Stats.Trades), pnl, auc,
-		})
+		}
+		if res.News != nil {
+			delta := component.Dash
+			if f.News != nil && f.News.Measured() {
+				delta = component.Money(f.News.Covered.Delta())
+			}
+			row = append(row, delta)
+		}
+		rows = append(rows, row)
 	}
 	return component.PanelH(th, "Plis",
 		component.Table(th, cols, rows, -1, height-4, component.PanelContent(width)), width, height)

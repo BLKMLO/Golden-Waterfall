@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/BLKMLO/Golden-Waterfall/internal/app"
 	"github.com/BLKMLO/Golden-Waterfall/internal/config"
 )
 
@@ -324,12 +325,25 @@ func TestConfigShowsTheHistorySource(t *testing.T) {
 	}
 }
 
-func TestUnknownHistorySourceRefusesToStart(t *testing.T) {
+// TestUnknownHistorySourceIsIgnoredAndAnnounced : une source inconnue ne
+// bloque plus le démarrage ; venue de GW_HISTORY_SOURCE, elle est ignorée
+// pour l'exécution, et c'est dit (réparation rendue par app.LoadConfig).
+func TestUnknownHistorySourceIsIgnoredAndAnnounced(t *testing.T) {
 	isolate(t)
 	t.Setenv("GW_HISTORY_SOURCE", "nawak")
-	_, err := capture(t, func() error { return run([]string{"migrate"}) })
-	if err == nil || !strings.Contains(err.Error(), "history.source") {
-		t.Fatalf("une source inconnue doit refuser le démarrage en nommant la clé : %v", err)
+	if _, err := capture(t, func() error { return run([]string{"migrate"}) }); err != nil {
+		t.Fatalf("une source inconnue ne doit plus bloquer : %v", err)
+	}
+	cfg, err := app.LoadConfig(config.DefaultPaths())
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, r := range cfg.Repairs {
+		found = found || (r.Key == "history.source" && r.Env == "GW_HISTORY_SOURCE")
+	}
+	if !found || cfg.History.Source != config.Default().History.Source {
+		t.Fatalf("variable ignorée ET annoncée attendue : %+v (source %q)", cfg.Repairs, cfg.History.Source)
 	}
 }
 

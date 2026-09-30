@@ -94,6 +94,44 @@ dans une mesure, il faut importer un calendrier historique.
 Si une récupération échoue (réseau, 429), rien n'est déclaré couvert, le
 journal et `gw news` le disent, et l'archive existante reste utilisée.
 
+## Mesurer l'effet du filtre : avec / sans (v0.8.2)
+
+Le filtre n'agit qu'à l'exécution : il ne change ni l'entraînement ni le
+modèle. Pour une stratégie qui le déclare, et quand `news.enabled` est
+vrai, **chaque pli du walk-forward rejoue son bloc out-of-sample deux
+fois, avec le MÊME modèle** : une fois avec le filtre, une fois sans.
+L'écart ne peut venir que du filtre.
+
+- **Période couverte** : trades dont la décision (close de la bougie
+  d'entrée, l'instant que le filtre juge) tombe dans une semaine
+  archivée. C'est le seul endroit où le filtre peut agir, donc le seul
+  écart qui mesure quelque chose.
+- **Tout l'out-of-sample** : hors couverture, les deux branches ne
+  diffèrent que par ricochet (une entrée refusée libère la place d'une
+  autre plus tard). Les entrées décidées hors couverture sont comptées.
+- **Sans semaine couverte** dans les blocs de test, la comparaison ne
+  mesure rien et le dit (« l'écart ne mesure rien »), au lieu d'un écart
+  nul qui passerait pour « le filtre ne sert à rien ».
+- Écart = P&L net avec filtre − P&L net sans filtre (positif : le filtre
+  a rapporté). Détail par pli. Si des paires ne sont pas convertibles
+  vers la devise du compte, les montants additionnent des devises
+  différentes : c'est signalé, et seuls les profit factors se comparent.
+
+Où le lire : `gw train` (tableau complet), `gw backtrain` → écran
+Entraînement (une ligne dans l'agrégat, colonne « Δ news » par pli),
+`run.json` (`news_comparison`, par pli et pour le run).
+
+Coût : un backtest de plus par pli et par paire, aucun entraînement de
+plus.
+
+Essai du binaire (30/09/2026) : historique M1 SYNTHÉTIQUE, calendrier
+SYNTHÉTIQUE importé (une annonce USD et une EUR à fort impact chaque jour
+ouvré, juillet → septembre 2026), Martinet M5, 5 plis : 25 entrées
+écartées, 126 trades avec filtre contre 149 sans, écart −206,35 USD. Ces
+chiffres ne disent RIEN du marché : ils montrent que la mesure
+fonctionne. Pour une vraie mesure, il faut un calendrier réel archivé
+(`gw news fetch` chaque semaine, `gw news import` pour le passé).
+
 ## Réglages (`news` dans config.yaml, écran Paramètres de `gw` ou de `gw backtrain`)
 
 | Clé | Défaut | Sens |
