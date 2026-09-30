@@ -210,8 +210,11 @@ devises de la paire. **Colibri n'y a jamais accès.** Le calendrier (flux
 public de la semaine en cours) est récupéré pendant une séance live ou par
 `gw news fetch`, et **archivé** : le backtest ne filtre que les périodes
 archivées et compte à part les entrées qu'il n'a pas pu vérifier. Les
-sources sont des modules remplaçables. Détail :
-[`docs/actualites.md`](docs/actualites.md).
+sources sont des modules remplaçables. Chaque walk-forward d'une stratégie
+qui déclare le filtre rejoue aussi ses plis **sans** lui, avec le même
+modèle : l'écart « avec − sans » se lit dans `gw train` et l'écran
+Entraînement, mesuré sur la seule période que le calendrier couvre.
+Détail : [`docs/actualites.md`](docs/actualites.md).
 
 ## Ligne de commande
 

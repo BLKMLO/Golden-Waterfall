@@ -189,6 +189,7 @@ d'être vraie.
 | Ligne Prérequis + détail `p` ; « pas de modèle » seulement une fois connecté | TUI Live | Connecter sans savoir qu'aucun modèle n'existe ; affirmer « pas de modèle » avant de l'avoir cherché |
 | Confiance affichée seulement si > 0 | TUI Live | « LONG 0.00 » pour une règle qui n'a pas de probabilité (Martinet) |
 | Simulation du calibrage confrontée au moteur, trade par trade (filtre de volume compris) | martinet |
+| Comparaison avec / sans filtre news par pli, même modèle ; écart sur la seule période couverte ; « ne mesure rien » sans semaine couverte | training, CLI, TUI Entraînement | Prendre un écart nul faute de calendrier pour « le filtre ne sert à rien » ; attribuer au filtre un écart hors couverture |
 | Points de grille filtrés « non essayés » sans volume ; modèle filtré refusé sans volume (chauffe, `ModelVolume` en live) | martinet, live | Un filtre de volume qui rend un modèle muet sur FXCM ou IB, en silence | Calibrer une règle que l'exécution ne suit pas |
 
 ## Conventions
@@ -574,9 +575,10 @@ période archivée.
    HISTORIQUE en CSV (date, heure, devise, impact, titre ; `--tz`, comme
    `gw import`), les semaines couvertes = celles du fichier ; (b)
    `gw news fetch` planifié chaque semaine pour ne plus perdre de
-   semaine ; (c) mesure A/B : `gw train --news off|on` et un écart par
-   pli, sur la seule période couverte (le reste compté à part). Tant que
-   rien de cela n'existe, le filtre ne compte dans aucune mesure.
+   semaine. (c) la mesure avec / sans est FAITE en v0.8.2
+   (`training/newscompare.go`, automatique dans tout walk-forward d'une
+   stratégie qui déclare le filtre). Sans (a) ou (b), elle ne mesure
+   presque rien : le passé n'est pas archivé.
 6. **Troglodyte, suite** : archiver un calendrier historique (`gw news
    import`) pour que le filtre compte dans une mesure ; variances
    variables dans le modèle lui-même ; avec un contrat multi-jambes, une

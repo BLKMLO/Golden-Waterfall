@@ -500,6 +500,7 @@ func runTrain(args []string) error {
 			res.Aggregate.RejectedOrders)
 	}
 	printSizing(a.Config.Risk, res.Aggregate)
+	printNewsComparison(res, cur)
 	printFoldErrors(res.Folds)
 	if res.FinalDir != "" {
 		fmt.Printf("Modèle de production : %s\n", res.FinalDir)
@@ -509,6 +510,53 @@ func runTrain(args []string) error {
 		fmt.Println("Aucun modèle de production écrit.")
 	}
 	return nil
+}
+
+// printNewsComparison : le même walk-forward rejoué sans le filtre
+// d'actualités. L'écart ne se lit que sur la période que le calendrier
+// couvre ; sans elle, on dit qu'il n'y a rien à lire.
+func printNewsComparison(res *training.Result, cur string) {
+	c := res.News
+	if c == nil {
+		return
+	}
+	fmt.Println("\nFiltre d'actualités — même modèle, mêmes blocs out-of-sample, avec et sans filtre :")
+	if !c.Measured() {
+		fmt.Printf("  ⚠ Aucune décision pendant une semaine archivée (%d semaine(s) au calendrier) : "+
+			"l'écart ne mesure rien.\n  Archiver le calendrier de la période (gw news fetch chaque semaine, "+
+			"gw news import pour le passé).\n", c.CoveredWeeks)
+		return
+	}
+	side := func(s training.NewsSide) string {
+		return fmt.Sprintf("%4d trades · taux de gain %s · P&L %10.2f · PF %s",
+			s.Trades, winRate(s.Trades, pct(s.Wins, s.Trades)), s.NetPnL, ratio(s.ProfitFactor()))
+	}
+	fmt.Printf("  Période couverte par le calendrier (%d semaine(s) archivée(s)) :\n", c.CoveredWeeks)
+	fmt.Printf("    avec filtre   %s\n", side(c.Covered.With))
+	fmt.Printf("    sans filtre   %s\n", side(c.Covered.Without))
+	fmt.Printf("    écart         %+.2f %s (avec − sans) · %d entrée(s) écartée(s) par une annonce\n",
+		c.Covered.Delta(), cur, c.Blocked)
+	fmt.Printf("  Tout l'out-of-sample : écart %+.2f %s · %d entrée(s) décidée(s) hors couverture, "+
+		"où les deux branches ne diffèrent que par ricochet\n", c.Total.Delta(), cur, c.Uncovered)
+	var folds []string
+	for _, f := range res.Folds {
+		if f.News != nil && f.News.Measured() {
+			folds = append(folds, fmt.Sprintf("pli %d %+.2f", f.Index, f.News.Covered.Delta()))
+		}
+	}
+	if len(folds) > 0 {
+		fmt.Printf("  Écart par pli (période couverte) : %s\n", strings.Join(folds, " · "))
+	}
+	if !c.CurrencyExact {
+		fmt.Println("  ⚠ Des P&L de devises différentes sont additionnés : comparer les profit factors, pas les montants.")
+	}
+}
+
+func pct(k, n int) float64 {
+	if n == 0 {
+		return 0
+	}
+	return float64(k) / float64(n) * 100
 }
 
 // printFoldErrors dit pourquoi des plis n'ont rien produit.

@@ -29,6 +29,7 @@ import (
 	"github.com/BLKMLO/Golden-Waterfall/internal/config"
 	"github.com/BLKMLO/Golden-Waterfall/internal/core"
 	"github.com/BLKMLO/Golden-Waterfall/internal/data"
+	"github.com/BLKMLO/Golden-Waterfall/internal/news"
 	"github.com/BLKMLO/Golden-Waterfall/internal/risk"
 	"github.com/BLKMLO/Golden-Waterfall/internal/strategy"
 )
@@ -78,7 +79,10 @@ type Fold struct {
 	// calculable — l'interface affiche « — », jamais un 0,5 décoratif.
 	OOSAUC    float64 `json:"oos_auc"`
 	HasOOSAUC bool    `json:"has_oos_auc"`
-	Err       string  `json:"error,omitempty"`
+	// News : le même bloc rejoué avec et sans filtre d'actualités (nil si
+	// la stratégie ne le déclare pas ou si news.enabled est faux).
+	News *NewsComparison `json:"news_comparison,omitempty"`
+	Err  string          `json:"error,omitempty"`
 }
 
 // Result : sortie complète d'un walk-forward.
@@ -100,6 +104,8 @@ type Result struct {
 	FinalErr   string  `json:"final_model_error,omitempty"`
 	MeanOOSAUC float64 `json:"mean_oos_auc"`
 	HasMeanAUC bool    `json:"has_mean_oos_auc"`
+	// News : somme des comparaisons avec / sans filtre de tous les plis.
+	News *NewsComparison `json:"news_comparison,omitempty"`
 }
 
 // Runner exécute les walk-forwards.
@@ -292,6 +298,15 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 		result.MeanOOSAUC = aucSum / float64(aucCount)
 		result.HasMeanAUC = true
 	}
+	for _, f := range folds {
+		if f.News == nil {
+			continue
+		}
+		if result.News == nil {
+			result.News = &NewsComparison{CurrencyExact: true}
+		}
+		result.News.add(*f.News)
+	}
 
 	// --- 5. Modèle de production -------------------------------------------
 	// Entraîné sur TOUT l'historique disponible : c'est celui qui part en
@@ -460,6 +475,18 @@ func (r *Runner) runFold(ctx context.Context, req Request, k int, b foldBounds,
 	// Évaluation OUT-OF-SAMPLE, actif par actif.
 	engine := backtest.NewEngine(r.cfg, r.risk).WithNews(r.news)
 	results := make([]*backtest.Result, len(symbols))
+	// Comparaison avec / sans filtre d'actualités : même modèle, même bloc,
+	// un moteur SANS filtre. Seulement si le filtre agit pour ce run.
+	var gate *news.Gate
+	if r.news != nil && strat.Describe().UsesNews {
+		gate = r.news.Gate()
+	}
+	var bare *backtest.Engine
+	var withoutNews []*backtest.Result
+	if gate != nil {
+		bare = backtest.NewEngine(r.cfg, r.risk)
+		withoutNews = make([]*backtest.Result, len(symbols))
+	}
 	var aucSum float64
 	var aucCount int
 	for i, sym := range symbols {
@@ -507,6 +534,14 @@ func (r *Runner) runFold(ctx context.Context, req Request, k int, b foldBounds,
 		}
 		results[i] = res
 		fold.TestBars += res.Stats.Bars
+		if bare != nil {
+			if withoutNews[i], err = bare.Run(ctx, backtest.Request{
+				Symbol: sym, Series: block, From: offset,
+				Strategy: evalStrat, Timeframe: req.Timeframe,
+			}); err != nil {
+				return fold, results, err
+			}
+		}
 
 		if t, ok := evalStrat.(strategy.Trainable); ok {
 			if auc, ok := t.ScoreOOS(sym, block, offset); ok {
@@ -528,6 +563,10 @@ func (r *Runner) runFold(ctx context.Context, req Request, k int, b foldBounds,
 
 	if aucCount > 0 {
 		fold.OOSAUC, fold.HasOOSAUC = aucSum/float64(aucCount), true
+	}
+	if gate != nil {
+		cmp := compareNews(results, withoutNews, gate.Calendar, req.Timeframe.Duration())
+		fold.News = &cmp
 	}
 	fold.Stats = backtest.AggregateStats(results, r.cfg.Backtest.InitialCapital)
 	fold.Stats.Symbol = fmt.Sprintf("pli %d", k+1)
