@@ -243,7 +243,7 @@ func minInt(a, b int) int {
 // réglage et l'autre à un autre — exactement ce que l'écran Paramètres
 // s'interdit avec son brouillon.
 func (a *App) SetRiskPerTrade(pct float64) error {
-	if pct < 0 || pct > 100 {
+	if !(pct >= 0 && pct <= 100) { // NaN compris
 		return fmt.Errorf("risque par trade hors bornes : %g %% (attendu 0 à 100)", pct)
 	}
 	if a.Live != nil && a.Live.Snapshot().Connected {

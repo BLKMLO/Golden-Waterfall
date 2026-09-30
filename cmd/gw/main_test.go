@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/BLKMLO/Golden-Waterfall/internal/app"
+	"github.com/BLKMLO/Golden-Waterfall/internal/backtest"
 	"github.com/BLKMLO/Golden-Waterfall/internal/config"
 )
 
@@ -204,8 +205,11 @@ func TestTrainArgsSeparatePairsFromFlags(t *testing.T) {
 // dimensionnement au risque est actif annoncerait une quantité que le
 // moteur ne prendra presque jamais.
 func TestSizingLabelSaysWhichRegime(t *testing.T) {
+	// La taille fixe est fixed_position_size (10 000), pas le plafond
+	// (100 000). L'ancien contrôle « contient 10000 » passait aussi sur
+	// « 100000 » : c'est ainsi que le libellé faux a survécu.
 	fixed := sizingLabel(config.RiskConfig{MaxPositionSize: 100000, FixedPositionSize: 10000})
-	if !strings.Contains(fixed, "fixe") || !strings.Contains(fixed, "10000") {
+	if !strings.HasPrefix(fixed, "taille fixe de 10000 unités") {
 		t.Fatalf("taille fixe : %q", fixed)
 	}
 	sized := sizingLabel(config.RiskConfig{
@@ -450,5 +454,22 @@ func TestWinRateWithoutTradesIsNotZero(t *testing.T) {
 	}
 	if winRate(4, 25) != "25.0 %" {
 		t.Fatalf("winRate(4, 25) = %q", winRate(4, 25))
+	}
+}
+
+// TestPrintCostsShowsTheResultBeforeCosts : « avant coûts » = net + coûts,
+// la question qui départage « aucun avantage » et « avantage dévoré par le
+// spread ».
+func TestPrintCostsShowsTheResultBeforeCosts(t *testing.T) {
+	out, _ := capture(t, func() error {
+		printCosts(backtest.Stats{Trades: 10, NetPnL: -80, Costs: 100, CostsModelled: true}, "USD")
+		return nil
+	})
+	if !strings.Contains(out, "100.00 USD") || !strings.Contains(out, "+20.00 USD") {
+		t.Fatalf("coûts ou P&L avant coûts absents : %q", out)
+	}
+	out, _ = capture(t, func() error { printCosts(backtest.Stats{Trades: 10}, "USD"); return nil })
+	if !strings.Contains(out, "Aucun coût modélisé") {
+		t.Fatalf("l'absence de coûts doit être dite : %q", out)
 	}
 }

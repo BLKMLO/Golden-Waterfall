@@ -184,3 +184,21 @@ func TestReloadDropsPendingEdits(t *testing.T) {
 		t.Fatal("le rechargement a gardé la modification abandonnée")
 	}
 }
+
+// TestNumbersAcceptTheFrenchDecimalComma : l'interface est en français ;
+// « 0,5 » doit se lire 0,5, et « nan » ou « inf » (que strconv accepte)
+// doivent être refusés.
+func TestNumbersAcceptTheFrenchDecimalComma(t *testing.T) {
+	for raw, want := range map[string]float64{"0,5": 0.5, "0.25": 0.25, "100 000": 100000, " 2 ": 2, "1 000,5": 1000.5} {
+		var v float64
+		if err := setFloat(&v, raw); err != nil || v != want {
+			t.Errorf("%q lu %v (%v), %v attendu", raw, v, err, want)
+		}
+	}
+	for _, raw := range []string{"nan", "NaN", "inf", "-Inf", "1,2,3", "abc", ""} {
+		v := 7.0
+		if err := setFloat(&v, raw); err == nil || v != 7 {
+			t.Errorf("%q accepté (%v)", raw, v)
+		}
+	}
+}

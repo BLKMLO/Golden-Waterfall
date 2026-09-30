@@ -307,7 +307,7 @@ func (g *ibGateway) Connect(ctx context.Context) error {
 	switch {
 	case !ok:
 		err = fmt.Errorf("TWS n'a pas fourni la valeur liquidative du compte %s", account)
-	case g.opts.AccountCurrency != "" && nl.currency != g.opts.AccountCurrency:
+	case g.opts.AccountCurrency != "" && !strings.EqualFold(nl.currency, strings.TrimSpace(g.opts.AccountCurrency)):
 		err = fmt.Errorf("le compte %s est tenu en %s, backtest.account_currency vaut %s : "+
 			"le dimensionnement au risque serait faux — aligner la configuration sur le compte",
 			account, nl.currency, g.opts.AccountCurrency)
@@ -1019,7 +1019,7 @@ func (g *ibGateway) PlaceOrder(ctx context.Context, req core.OrderRequest) (stri
 		return "", fmt.Errorf("%s n'est pas négociable par cette passerelle (forex IDEALPRO uniquement)", req.Symbol)
 	}
 	qty := math.Floor(req.Quantity + 1e-9)
-	if qty < 1 {
+	if !(qty >= 1) || math.IsInf(qty, 0) {
 		return "", fmt.Errorf("quantité %g < 1 unité : IB n'exécute que des unités entières", req.Quantity)
 	}
 	if req.Type != "" && req.Type != core.Market {
@@ -1066,6 +1066,14 @@ func (g *ibGateway) placeSimple(symbol string, side core.OrderSide, c ibContract
 
 func (g *ibGateway) placeBracket(req core.OrderRequest, c ibContract, qty float64) (string, error) {
 	sl, tp := ibRoundPrice(req.Symbol, req.StopLoss), ibRoundPrice(req.Symbol, req.TakeProfit)
+	// Une barrière demandée mais illisible (NaN, négative) disparaissait
+	// du bracket : `sl > 0` étant faux, le stop n'était pas posé et
+	// l'entrée partait NUE. Le risque refuse déjà ces signaux ; la
+	// passerelle, qui engage l'argent, ne s'y fie pas.
+	if req.StopLoss != 0 && !(sl > 0) || req.TakeProfit != 0 && !(tp > 0) {
+		return "", fmt.Errorf("barrière illisible pour %s (stop %v, limite %v) : entrée refusée plutôt que partie sans protection",
+			req.Symbol, req.StopLoss, req.TakeProfit)
+	}
 	// Barrières du mauvais côté : IB les exécuterait aussitôt.
 	if req.Side == core.Buy && sl > 0 && tp > 0 && sl >= tp ||
 		req.Side == core.Sell && sl > 0 && tp > 0 && sl <= tp {

@@ -192,9 +192,8 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 	}
 	bounds := splitFolds(commonStart, commonEnd, req.Folds)
 
-	runID := started.UTC().Format("20060102-150405")
-	runRoot := filepath.Join(r.cfg.Paths.ModelsDir(), req.Strategy, runID)
-	if err := os.MkdirAll(runRoot, 0o755); err != nil {
+	runID, runRoot, err := newRunDir(filepath.Join(r.cfg.Paths.ModelsDir(), req.Strategy), started)
+	if err != nil {
 		return nil, err
 	}
 
@@ -330,6 +329,34 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 	report(Progress{Phase: "terminé", Ratio: 1, Finished: true,
 		Message: fmt.Sprintf("%d trades out-of-sample, %s", result.Aggregate.Trades, result.Duration.Round(time.Second))})
 	return result, nil
+}
+
+// newRunDir crée le dossier d'un run, nommé par son heure de départ.
+//
+// Deux entraînements lancés dans la même seconde (la CLI pendant que
+// l'atelier tourne) recevaient le même dossier : le second écrasait les
+// plis et le modèle du premier. Le dossier est donc créé de façon
+// EXCLUSIVE, avec un suffixe « -2 », « -3 »… s'il existe déjà.
+func newRunDir(root string, started time.Time) (string, string, error) {
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return "", "", err
+	}
+	base := started.UTC().Format("20060102-150405")
+	for n := 1; n <= 1000; n++ {
+		id := base
+		if n > 1 {
+			id = fmt.Sprintf("%s-%d", base, n)
+		}
+		dir := filepath.Join(root, id)
+		err := os.Mkdir(dir, 0o755)
+		if err == nil {
+			return id, dir, nil
+		}
+		if !os.IsExist(err) {
+			return "", "", err
+		}
+	}
+	return "", "", fmt.Errorf("aucun nom de run libre pour %s dans %s", base, root)
 }
 
 func foldMessage(f Fold) string {

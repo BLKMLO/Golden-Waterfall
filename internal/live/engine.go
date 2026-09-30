@@ -121,8 +121,11 @@ type Stats struct {
 	// l'instant — comme au backtest.
 	NewsBlocked   int64
 	NewsUncovered int64
-	LastTick      time.Time
-	LastBar       time.Time
+	// LateTicks : ticks écartés parce qu'ils datent d'une bougie déjà close
+	// (Aggregator.Late) — comptés et affichés, jamais intégrés.
+	LateTicks int64
+	LastTick  time.Time
+	LastBar   time.Time
 }
 
 // NewEngine assemble le moteur. Le câblage réel se fait dans Runtime.
@@ -170,8 +173,10 @@ func (e *Engine) Enabled() bool {
 // Stats renvoie une copie des compteurs.
 func (e *Engine) Stats() Stats {
 	e.mu.RLock()
-	defer e.mu.RUnlock()
-	return e.stats
+	st := e.stats
+	e.mu.RUnlock()
+	st.LateTicks = e.agg.Late()
+	return st
 }
 
 // Seed installe l'historique récent d'un symbole dans le tampon, pour que

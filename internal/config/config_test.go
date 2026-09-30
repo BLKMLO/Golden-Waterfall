@@ -1,6 +1,7 @@
 package config
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -441,5 +442,98 @@ func TestKnownTimeframesAreAllValid(t *testing.T) {
 	}
 	if len(DefaultYAML()) == 0 {
 		t.Error("modèle de configuration embarqué vide")
+	}
+}
+
+// TestSaveDoesNotPersistTheEnvironment : une clé forcée par GW_* garde,
+// dans le fichier, la valeur du FICHIER. Sinon `GW_MODE=live gw` lancé
+// une fois, puis un réglage anodin enregistré depuis l'écran Paramètres,
+// laissaient `broker.mode: live` dans config.yaml pour toujours.
+func TestSaveDoesNotPersistTheEnvironment(t *testing.T) {
+	p := tempPaths(t)
+	if _, err := Load(p); err != nil { // crée le fichier (mode paper)
+		t.Fatal(err)
+	}
+	t.Setenv("GW_MODE", "live")
+	t.Setenv("GW_THEME", "light")
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Broker.Mode != "live" || cfg.UI.Theme != "light" {
+		t.Fatalf("l'environnement doit primer à l'exécution : %s / %s", cfg.Broker.Mode, cfg.UI.Theme)
+	}
+	cfg.Risk.MaxOpenPositions = 7 // le réglage que l'utilisateur a vraiment changé
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	os.Unsetenv("GW_MODE")
+	os.Unsetenv("GW_THEME")
+	back, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back.Broker.Mode != "paper" || back.UI.Theme != "auto" {
+		t.Fatalf("valeurs d'environnement écrites dans le fichier : mode %s, thème %s", back.Broker.Mode, back.UI.Theme)
+	}
+	if back.Risk.MaxOpenPositions != 7 {
+		t.Fatalf("le réglage modifié doit être enregistré : %d", back.Risk.MaxOpenPositions)
+	}
+	if st, err := os.Stat(p.ConfigFile()); err == nil && st.Mode().Perm()&0o077 != 0 {
+		t.Fatalf("config.yaml créé avec des droits trop larges : %v", st.Mode().Perm())
+	}
+}
+
+// TestNonFiniteNumbersAreRefused : NaN n'est ni « <= 0 » ni « > 100 » ;
+// sans contrôle explicite, il traversait la validation et neutralisait
+// les garde-fous du risque.
+func TestNonFiniteNumbersAreRefused(t *testing.T) {
+	nan, inf := math.NaN(), math.Inf(1)
+	cases := map[string]func(*Config){
+		"broker.replay_speed":       func(c *Config) { c.Broker.ReplaySpeed = nan },
+		"risk.max_position_size":    func(c *Config) { c.Risk.MaxPositionSize = nan },
+		"risk.fixed_position_size":  func(c *Config) { c.Risk.FixedPositionSize = inf },
+		"risk.max_daily_loss_pct":   func(c *Config) { c.Risk.MaxDailyLossPct = nan },
+		"risk.risk_per_trade_pct":   func(c *Config) { c.Risk.RiskPerTradePct = nan },
+		"costs.commission_per_unit": func(c *Config) { c.Costs.CommissionPerUnit = inf },
+		"backtest.initial_capital":  func(c *Config) { c.Backtest.InitialCapital = nan },
+		"backtest.leverage":         func(c *Config) { c.Backtest.Leverage = nan },
+		"backtest.account_currency": func(c *Config) { c.Backtest.AccountCurrency = "U$D" },
+		"logging.buffer_size":       func(c *Config) { c.Logging.BufferSize = 1 << 40 },
+		"ui.refresh_millis":         func(c *Config) { c.UI.RefreshMillis = 1 << 30 },
+	}
+	for key, mutate := range cases {
+		c := Default()
+		mutate(&c)
+		err := c.Validate()
+		if err == nil || !strings.Contains(err.Error(), key) {
+			t.Errorf("%s : valeur non finie ou démesurée acceptée (%v)", key, err)
+		}
+	}
+}
+
+// TestNaNInTheFileIsRepaired : « .nan » dans config.yaml est remis à son
+// défaut au chargement, et c'est annoncé.
+func TestNaNInTheFileIsRepaired(t *testing.T) {
+	p := tempPaths(t)
+	if err := os.MkdirAll(p.ConfigDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p.ConfigFile(), []byte("risk:\n  max_position_size: .nan\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Risk.MaxPositionSize != Default().Risk.MaxPositionSize {
+		t.Fatalf("plafond NaN non réparé : %v", cfg.Risk.MaxPositionSize)
+	}
+	found := false
+	for _, r := range cfg.Repairs {
+		found = found || r.Key == "risk.max_position_size"
+	}
+	if !found {
+		t.Fatalf("la réparation doit être annoncée : %+v", cfg.Repairs)
 	}
 }

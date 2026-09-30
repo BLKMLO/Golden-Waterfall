@@ -244,6 +244,30 @@ années : 60 entrées « hors calendrier »). Colibri n'a pas pu être mesuré
 sur ces données : FXCM ne publie pas de volume, et ses révisions en
 exigent un.
 
+**Deuxième mesure sur historique réel (v0.8.2, 30 septembre 2026),
+`troglodyte_v1_1` seule.** Même source (FXCM, EURUSD, GBPUSD, USDJPY),
+historique 2022 → 2025 seulement ; `gw train EURUSD GBPUSD USDJPY --tf
+H4` puis `--tf H1`, configuration par défaut, 5 plis — blocs de test du
+02/01/2024 au 31/12/2025. Agrégat OUT-OF-SAMPLE (`run.json`) :
+
+| | trades | gagnants | P&L net (USD) | coûts (USD) | avant coûts (USD) | profit factor | SQN |
+|---|---|---|---|---|---|---|---|
+| H4 | 71 | 16 (22,5 %) | −532,86 | 14,42 | −518,44 | 0,58 | −1,75 |
+| H1 | 410 | 92 (22,4 %) | −2 727,21 | 220,65 | −2 506,56 | 0,65 | −3,07 |
+
+« Avant coûts » = P&L net + coûts. Par paire, H4 : EURUSD 32 trades,
+PF 0,57, −197,34 ; GBPUSD 29, PF 0,37, −332,71 ; USDJPY 10, PF 0,99,
+−2,81. H1 : EURUSD 113, PF 0,49, −944,06 ; GBPUSD 187, PF 0,45,
+−2 187,86 ; USDJPY 110, PF 1,22, +404,70.
+
+Sur 2024-2025, `troglodyte_v1_1` perd, et **avant coûts déjà** : ce
+n'est pas le spread qui la fait perdre (14 USD de coûts en H4). Le
+PF 1,13 de la mesure v0.7.3 (tests 2019-2026) ne se retrouve pas sur
+cette période plus récente et plus courte ; les deux restent de petits
+échantillons en H4 (60 et 71 trades). En H1, 410 trades et un SQN de
+−3,07 disent plus nettement que la règle, telle quelle, n'a pas
+d'avantage dans cette unité de temps.
+
 ## Limites connues de v1_0
 
 (Les trois premières sont traitées par v1_1, plus bas.)

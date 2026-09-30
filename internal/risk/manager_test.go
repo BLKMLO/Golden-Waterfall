@@ -402,3 +402,67 @@ func TestDirectionalExitClosesOnlyItsSide(t *testing.T) {
 		t.Fatalf("ExitLong ne doit PAS fermer une position courte : %+v", d)
 	}
 }
+
+// TestNonFiniteLevelsAreRefused : un stop, une limite ou un prix NaN ou
+// infini donnait une quantité NaN, qu'aucun contrôle n'arrêtait (NaN
+// n'est ni « <= 0 » ni « > plafond ») ; chez IB, le stop disparaissait du
+// bracket et l'entrée partait nue. Refusé, dans les deux régimes de taille.
+func TestNonFiniteLevelsAreRefused(t *testing.T) {
+	nan, inf := math.NaN(), math.Inf(1)
+	for _, cfg := range []config.RiskConfig{baseConfig(), sizingConfig(1)} {
+		for _, sig := range []core.Signal{
+			entry("EURUSD", 1.1000, nan),
+			entry("EURUSD", nan, 1.0900),
+			entry("EURUSD", inf, 1.0900),
+			{Symbol: "EURUSD", Action: core.EnterLong, Price: 1.1, StopLoss: 1.09, TakeProfit: nan},
+			{Symbol: "EURUSD", Action: core.EnterShort, Price: 1.1, StopLoss: -1.2},
+		} {
+			m := newManager(cfg)
+			d := m.Evaluate(sig, nil, &core.AccountState{Equity: 10000})
+			if d.Accepted() || d.Reason != ReasonNonFinite {
+				t.Fatalf("risque %g %% : signal %+v accepté ou mal motivé : %+v", cfg.RiskPerTradePct, sig, d)
+			}
+		}
+	}
+}
+
+// TestBarrierOnTheWrongSideIsRefused : un stop au-dessus du prix d'un
+// achat serait déclenché dès sa transmission.
+func TestBarrierOnTheWrongSideIsRefused(t *testing.T) {
+	cases := []core.Signal{
+		{Symbol: "EURUSD", Action: core.EnterLong, Price: 1.10, StopLoss: 1.11},
+		{Symbol: "EURUSD", Action: core.EnterLong, Price: 1.10, StopLoss: 1.09, TakeProfit: 1.10},
+		{Symbol: "EURUSD", Action: core.EnterShort, Price: 1.10, StopLoss: 1.09},
+		{Symbol: "EURUSD", Action: core.EnterShort, Price: 1.10, StopLoss: 1.11, TakeProfit: 1.12},
+		// Sans prix de référence : stop et limite intervertis.
+		{Symbol: "EURUSD", Action: core.EnterLong, StopLoss: 1.12, TakeProfit: 1.08},
+	}
+	for _, sig := range cases {
+		m := newManager(baseConfig())
+		if d := m.Evaluate(sig, nil, nil); d.Accepted() || d.Reason != ReasonBarrierSide {
+			t.Fatalf("barrière du mauvais côté acceptée : %+v → %+v", sig, d)
+		}
+	}
+	// Les bons côtés passent, dans les deux sens.
+	m := newManager(baseConfig())
+	for _, sig := range []core.Signal{
+		{Symbol: "EURUSD", Action: core.EnterLong, Price: 1.10, StopLoss: 1.09, TakeProfit: 1.12},
+		{Symbol: "EURUSD", Action: core.EnterShort, Price: 1.10, StopLoss: 1.11, TakeProfit: 1.08},
+	} {
+		if d := m.Evaluate(sig, nil, nil); !d.Accepted() {
+			t.Fatalf("barrières correctes refusées : %+v → %s", sig, d.Reason)
+		}
+	}
+	if n, _ := SizingRefusals(map[string]int{ReasonBarrierSide: 2, ReasonNonFinite: 1}); n != 3 {
+		t.Fatalf("les refus de cohérence doivent se voir avec ceux du dimensionnement : %d", n)
+	}
+}
+
+// TestUnknownActionIsNotABuy : une action hors contrat devenait un achat.
+func TestUnknownActionIsNotABuy(t *testing.T) {
+	m := newManager(baseConfig())
+	d := m.Evaluate(core.Signal{Symbol: "EURUSD", Action: "ENTER_SIDEWAYS", Price: 1.1}, nil, nil)
+	if d.Accepted() || d.Reason != ReasonUnknownAction {
+		t.Fatalf("action inconnue acceptée : %+v", d)
+	}
+}

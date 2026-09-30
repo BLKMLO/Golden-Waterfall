@@ -3,6 +3,7 @@ package config
 import (
 	_ "embed"
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -254,7 +255,7 @@ func Load(paths Paths) (Config, error) {
 		if err := paths.EnsureDirs(); err != nil {
 			return cfg, fmt.Errorf("création du dossier de configuration : %w", err)
 		}
-		if err := os.WriteFile(file, defaultConfigYAML, 0o644); err != nil {
+		if err := os.WriteFile(file, defaultConfigYAML, configPerm); err != nil {
 			return cfg, fmt.Errorf("écriture de la configuration par défaut : %w", err)
 		}
 	case err != nil:
@@ -276,10 +277,10 @@ func Load(paths Paths) (Config, error) {
 			// Un fichier qui n'est pas une table ne décrit aucun réglage :
 			// il est sauvegardé puis remplacé par le modèle.
 			backup := file + "." + time.Now().Format("2006-01-02T15-04-05") + ".bak"
-			if err := os.WriteFile(backup, raw, 0o644); err != nil {
+			if err := os.WriteFile(backup, raw, configPerm); err != nil {
 				return cfg, err
 			}
-			if err := os.WriteFile(file, defaultConfigYAML, 0o644); err != nil {
+			if err := os.WriteFile(file, defaultConfigYAML, configPerm); err != nil {
 				return cfg, err
 			}
 			empty := yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{{Kind: yaml.MappingNode, Tag: "!!map"}}}
@@ -415,8 +416,8 @@ func (c Config) problems() []string {
 	if c.Broker.ClientID < 0 || c.Broker.ClientID > 2147483647 {
 		add("broker.client_id hors bornes : %d (0 à 2147483647)", c.Broker.ClientID)
 	}
-	if c.Broker.ReplaySpeed <= 0 {
-		add("broker.replay_speed doit être > 0 (bougies par seconde)")
+	if !positive(c.Broker.ReplaySpeed) {
+		add("broker.replay_speed doit être un nombre fini > 0 (bougies par seconde)")
 	}
 	if _, err := parseTimeframeName(c.Broker.Timeframe); err != nil {
 		add("broker.timeframe : %v", err)
@@ -430,11 +431,16 @@ func (c Config) problems() []string {
 	if c.Strategy.Name == "" {
 		add("strategy.name est vide")
 	}
-	if c.Risk.MaxPositionSize <= 0 {
-		add("risk.max_position_size doit être > 0 (reçu %g)", c.Risk.MaxPositionSize)
+	// Tous les nombres à virgule doivent être FINIS. YAML lit « .nan » et
+	// « .inf », l'écran Paramètres lisait « nan » : NaN n'étant ni « <= 0 »
+	// ni « > plafond », il traversait chaque contrôle — un plafond NaN ne
+	// plafonnait plus rien, une perte journalière NaN bloquait toutes les
+	// entrées, un levier NaN supprimait le contrôle de marge.
+	if !positive(c.Risk.MaxPositionSize) {
+		add("risk.max_position_size doit être un nombre fini > 0 (reçu %g)", c.Risk.MaxPositionSize)
 	}
-	if c.Risk.FixedPositionSize <= 0 {
-		add("risk.fixed_position_size doit être > 0 (reçu %g)", c.Risk.FixedPositionSize)
+	if !positive(c.Risk.FixedPositionSize) {
+		add("risk.fixed_position_size doit être un nombre fini > 0 (reçu %g)", c.Risk.FixedPositionSize)
 	}
 	if c.Risk.FixedPositionSize > c.Risk.MaxPositionSize {
 		// Sans ce refus, la taille fixe serait silencieusement rabotée au
@@ -454,22 +460,22 @@ func (c Config) problems() []string {
 			"le plafond par symbole ne pourrait jamais être atteint",
 			c.Risk.MaxOpenPositions, c.Risk.MaxPositionsPerSymbol)
 	}
-	if c.Risk.MaxDailyLossPct < 0 || c.Risk.MaxDailyLossPct > 100 {
+	if !(c.Risk.MaxDailyLossPct >= 0 && c.Risk.MaxDailyLossPct <= 100) {
 		add("risk.max_daily_loss_pct doit être dans [0, 100] (reçu %g)", c.Risk.MaxDailyLossPct)
 	}
-	if c.Risk.RiskPerTradePct < 0 || c.Risk.RiskPerTradePct > 100 {
+	if !(c.Risk.RiskPerTradePct >= 0 && c.Risk.RiskPerTradePct <= 100) {
 		add("risk.risk_per_trade_pct doit être dans [0, 100] (reçu %g)", c.Risk.RiskPerTradePct)
 	}
-	if c.Costs.CommissionPerUnit < 0 {
-		add("costs.commission_per_unit ne peut pas être négatif")
+	if !(c.Costs.CommissionPerUnit >= 0) || math.IsInf(c.Costs.CommissionPerUnit, 0) {
+		add("costs.commission_per_unit doit être un nombre fini >= 0 (reçu %g)", c.Costs.CommissionPerUnit)
 	}
-	if c.Backtest.InitialCapital <= 0 {
-		add("backtest.initial_capital doit être > 0")
+	if !positive(c.Backtest.InitialCapital) {
+		add("backtest.initial_capital doit être un nombre fini > 0 (reçu %g)", c.Backtest.InitialCapital)
 	}
-	if c.Backtest.Leverage < 1 {
-		add("backtest.leverage doit être >= 1 (1 = compte cash strict)")
+	if !(c.Backtest.Leverage >= 1) || math.IsInf(c.Backtest.Leverage, 0) {
+		add("backtest.leverage doit être un nombre fini >= 1 (1 = compte cash strict ; reçu %g)", c.Backtest.Leverage)
 	}
-	if len(strings.TrimSpace(c.Backtest.AccountCurrency)) != 3 {
+	if !isCurrencyCode(c.Backtest.AccountCurrency) {
 		add("backtest.account_currency doit être un code ISO de 3 lettres (reçu %q)",
 			c.Backtest.AccountCurrency)
 	}
@@ -505,8 +511,9 @@ func (c Config) problems() []string {
 	if c.News.RefreshMinutes < 5 {
 		add("news.refresh_minutes doit être >= 5 (le flux ne change pas à la minute ; au-delà on le surcharge)")
 	}
-	if c.UI.RefreshMillis < 50 {
-		add("ui.refresh_millis doit être >= 50 (en deçà, la TUI brûle du CPU pour rien)")
+	if c.UI.RefreshMillis < 50 || c.UI.RefreshMillis > 60000 {
+		add("ui.refresh_millis doit être dans [50, 60000] (en deçà, la TUI brûle du CPU pour rien ; "+
+			"au-delà, l'écran ne vit plus) (reçu %d)", c.UI.RefreshMillis)
 	}
 	if c.UI.Theme != "auto" && c.UI.Theme != "dark" && c.UI.Theme != "light" {
 		add("ui.theme doit valoir \"auto\", \"dark\" ou \"light\" (reçu %q)", c.UI.Theme)
@@ -514,10 +521,29 @@ func (c Config) problems() []string {
 	if _, err := core.ParseLevel(c.Logging.Level); err != nil {
 		add("logging.level : %v", err)
 	}
-	if c.Logging.BufferSize < 10 {
-		add("logging.buffer_size doit être >= 10")
+	if c.Logging.BufferSize < 10 || c.Logging.BufferSize > 1_000_000 {
+		// Le tampon est réservé d'un bloc au démarrage : une valeur
+		// démesurée faisait tomber le programme avant même la réparation.
+		add("logging.buffer_size doit être dans [10, 1000000] (reçu %d)", c.Logging.BufferSize)
 	}
 	return errs
+}
+
+// positive : un nombre fini strictement positif (faux pour NaN et ±∞).
+func positive(v float64) bool { return v > 0 && !math.IsInf(v, 1) }
+
+// isCurrencyCode : trois lettres, comme un code ISO 4217 (« USD », « eur »).
+func isCurrencyCode(s string) bool {
+	s = strings.TrimSpace(s)
+	if len(s) != 3 {
+		return false
+	}
+	for _, r := range s {
+		if !(r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z') {
+			return false
+		}
+	}
+	return true
 }
 
 // Live indique si le mode réel est armé.
@@ -534,14 +560,60 @@ func (c Config) LiveSymbols() []string {
 // Save réécrit le fichier config.yaml à partir de la configuration courante.
 // Les commentaires du modèle sont perdus : la TUI n'écrit donc que sur
 // demande explicite (touche de sauvegarde), jamais en tâche de fond.
+//
+// Une clé FORCÉE par une variable GW_* garde la valeur du FICHIER : la
+// configuration courante porte celle de l'environnement, et l'écrire
+// l'aurait rendue permanente. Un `GW_MODE=live gw` lancé une fois, suivi
+// d'un réglage de thème enregistré, laissait sinon `broker.mode: live`
+// dans config.yaml pour toutes les séances suivantes.
 func (c Config) Save() error {
-	raw, err := yaml.Marshal(c)
+	out := c
+	if forced := EnvOverrides(); len(forced) > 0 {
+		file := fileConfig(c.Paths)
+		for path := range forced {
+			restorePath(&out, file, path)
+		}
+	}
+	raw, err := yaml.Marshal(out)
 	if err != nil {
 		return err
 	}
 	header := "# Configuration de Golden Waterfall — réécrite depuis l'interface.\n" +
 		"# Le modèle commenté d'origine est consultable avec `gw config --default`.\n"
-	return os.WriteFile(c.Paths.ConfigFile(), append([]byte(header), raw...), 0o644)
+	return os.WriteFile(c.Paths.ConfigFile(), append([]byte(header), raw...), configPerm)
+}
+
+// configPerm : droits d'un fichier de configuration CRÉÉ par le programme.
+// Il peut nommer le compte courtier (broker.account) : lecture réservée à
+// l'utilisateur. Un fichier existant garde ses droits.
+const configPerm = 0o600
+
+// fileConfig : les défauts recouverts par le seul FICHIER, sans
+// environnement ni réparation. Un fichier illisible donne les défauts.
+func fileConfig(paths Paths) Config {
+	cfg := Default()
+	if raw, err := os.ReadFile(paths.ConfigFile()); err == nil {
+		_ = yaml.Unmarshal(raw, &cfg)
+	}
+	return cfg
+}
+
+// restorePath recopie dans dst la valeur que src porte au chemin
+// « section.clé ».
+func restorePath(dst *Config, src Config, path string) {
+	var doc yaml.Node
+	raw, err := yaml.Marshal(src)
+	if err != nil || yaml.Unmarshal(raw, &doc) != nil || len(doc.Content) == 0 {
+		return
+	}
+	secName, key := splitPath(path)
+	n := child(child(doc.Content[0], secName), key)
+	if n == nil {
+		return
+	}
+	probe := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	setNode(probe, path, n)
+	_ = decodeStrict(probe, dst)
 }
 
 // DefaultYAML renvoie le modèle commenté embarqué dans le binaire.

@@ -238,10 +238,19 @@ Pour un CSV, en plus :
 - **fuseau** : UTC par défaut, `--tz` sinon (nom IANA). Un export
   MetaTrader est souvent à l'heure du courtier ; HistData est à l'heure
   de New York sans changement d'heure (`Etc/GMT+5`) ;
-- une ligne illisible (prix non numérique ou non positif, plus haut sous
-  le plus bas, champs manquants) **refuse le fichier**, avec son numéro.
+- une ligne illisible (prix non numérique ou non positif, champs
+  manquants) ou impossible (voir ci-dessous) **refuse le fichier**, avec
+  son numéro.
 
-Pour tout import :
+Pour tout import, CSV **et Parquet** (v0.8.2 ; un Parquet tiers n'était
+jusque-là contrôlé en rien) :
+
+- chaque bougie doit être **possible** : prix finis et positifs, plus haut
+  au-dessus du plus bas, ouverture et clôture DANS la bougie, côté bid
+  comme côté ask s'il est présent, volume absent ou positif. Des colonnes
+  décalées donnent des prix plausibles et une bougie impossible : le
+  fichier est refusé, en nommant la ligne (CSV) ou l'horodatage
+  (Parquet). Vérifié sur 4 176 619 bougies FXCM réelles : aucune refusée ;
 
 - l'historique doit être du **M1** : un écart médian entre bougies
   différent d'une minute est refusé (un fichier H1 ferait des « bougies
@@ -266,7 +275,17 @@ que la relecture prendrait pour des données.
 
 La relecture est blindée : fichiers au nom non conforme **ignorés** (une
 copie manuelle ne doit pas doubler les bougies), doublons d'horodatage
-dédupliqués, ordre rétabli, période inversée refusée d'emblée.
+dédupliqués, ordre rétabli, période inversée refusée d'emblée. Une page
+Parquet **corrompue** est une erreur qui nomme le fichier (v0.8.2 : elle
+était prise pour la fin de la colonne, et l'année se relisait amputée
+sans un mot) ; la mémoire réservée d'après l'en-tête est bornée à une
+année de M1, quoi que le fichier annonce.
+
+Le téléchargement est borné lui aussi (v0.8.2) : une réponse, ou un
+fichier une fois décompressé, au-delà de 64 Mo est refusé sans nouvelle
+tentative (un jour Dukascopy décompressé tient en 1 440 × 24 octets), et
+un `Retry-After` ne peut suspendre le téléchargement plus de 5 minutes
+par tentative.
 
 ## Unités de temps
 

@@ -290,3 +290,24 @@ func TestRefusesATimeframeTheStrategyDoesNotTrade(t *testing.T) {
 		t.Fatalf("refus nommant les unités acceptées attendu, reçu %v", err)
 	}
 }
+
+// TestRunDirsNeverCollide : deux entraînements lancés dans la même seconde
+// (CLI et atelier) ne doivent pas partager — donc écraser — un dossier.
+func TestRunDirsNeverCollide(t *testing.T) {
+	root := t.TempDir()
+	at := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
+	id1, dir1, err := newRunDir(root, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id2, dir2, err := newRunDir(root, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id1 == id2 || dir1 == dir2 {
+		t.Fatalf("même dossier pour deux runs : %s / %s", dir1, dir2)
+	}
+	if id1 != "20260930-120000" || id2 != "20260930-120000-2" {
+		t.Fatalf("identifiants %q et %q", id1, id2)
+	}
+}

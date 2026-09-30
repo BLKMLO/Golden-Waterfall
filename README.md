@@ -210,6 +210,16 @@ Détail : [`docs/martinet.md`](docs/martinet.md).
 Seuils, grilles et fenêtres sont des **conventions** ; le calibrage choisit
 in-sample, le walk-forward juge hors échantillon.
 
+**Mesuré sur historique réel** (v0.8.2 ; FXCM, EURUSD GBPUSD USDJPY,
+blocs de test hors échantillon du 02/01/2024 au 31/12/2025, configuration
+par défaut) : **aucun moteur mesurable n'est rentable net de coûts** sur
+cette période. Martinet : profit factor 0,88 en M15 (2 814 trades), 0,87
+en M5 (6 815), à peu près neutre AVANT coûts — c'est le spread qui le fait
+perdre. Troglodyte : 0,58 en H4 (71 trades), 0,65 en H1 (410), déjà
+perdant avant coûts. Colibri n'a pas pu être mesuré : il exige un volume
+que FXCM ne publie pas. Chiffres, formules et protocole :
+[`docs/martinet.md`](docs/martinet.md), [`docs/troglodyte.md`](docs/troglodyte.md).
+
 ### Le filtre d'actualités
 
 Pour les stratégies qui le **déclarent** (Troglodyte, Martinet), aucune entrée

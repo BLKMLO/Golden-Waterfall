@@ -208,6 +208,13 @@ func (v *Live) Update(msg tea.Msg) (Model, tea.Cmd) {
 		case "c":
 			return v, v.toggleConnection()
 		case "k":
+			if !v.deps.App.Live.Connected() {
+				// Sans moteur, il n'y a rien à basculer : annoncer
+				// « DÉSARMÉ » laisserait croire à un réglage pris en compte.
+				v.deps.Status("non connecté : le kill-switch se règle une fois connecté " +
+					"(au démarrage : strategy.enabled)")
+				return v, nil
+			}
 			on := v.deps.App.Live.ToggleKillSwitch()
 			if on {
 				v.deps.Status("kill-switch ARMÉ — les paires armées peuvent trader")
@@ -257,6 +264,13 @@ func (v *Live) moveCursor(delta int) {
 }
 
 func (v *Live) toggleConnection() tea.Cmd {
+	if v.connecting {
+		// Une seconde connexion lancée pendant la première aurait fait
+		// tourner deux passerelles ; le runtime la sérialise, l'écran ne
+		// la demande même pas.
+		v.deps.Status("connexion déjà en cours — patienter")
+		return nil
+	}
 	if v.deps.App.Live.Connected() {
 		v.deps.App.Live.Disconnect()
 		v.deps.Status("passerelle déconnectée")
@@ -580,7 +594,7 @@ func (v *Live) renderAccount(width, rows int) string {
 			Note: fmt.Sprintf("plafond %.1f %%", v.deps.App.Config.Risk.MaxDailyLossPct)},
 		{Label: "Ticks", Value: component.Count(int(snap.Stats.Ticks)),
 			Note: "dernier " + component.Clock(snap.Stats.LastTick)},
-		{Label: "Bougies", Value: component.Count(int(snap.Stats.Bars))},
+		{Label: "Bougies", Value: component.Count(int(snap.Stats.Bars)), Note: lateNote(snap.Stats.LateTicks)},
 		{Label: "Ordres", Value: component.Count(int(snap.Stats.Orders)),
 			Note: fmt.Sprintf("%d exécutés", snap.Stats.Fills)},
 	}
@@ -592,6 +606,14 @@ func (v *Live) renderAccount(width, rows int) string {
 			"Rien n'est estimé à sa place.")
 	}
 	return component.Panel(th, "Compte", body, width)
+}
+
+// lateNote : des ticks antérieurs à la bougie en cours ont été écartés.
+func lateNote(n int64) string {
+	if n == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d tick(s) en retard écarté(s)", n)
 }
 
 // minBandHeight : en deçà, la bande « paires suivies + graphique » ne

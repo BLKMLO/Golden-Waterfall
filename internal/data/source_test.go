@@ -358,3 +358,52 @@ func TestDropWeekend(t *testing.T) {
 		t.Fatal("sans dimanche, le vendredi doit clore la semaine")
 	}
 }
+
+// TestOversizedPayloadsAreRefused : une réponse démesurée, ou une bombe de
+// décompression, est refusée sans être relue en boucle — et sans que le
+// programme tente de la tenir en mémoire.
+func TestOversizedPayloadsAreRefused(t *testing.T) {
+	old := maxPayload
+	maxPayload = 1024
+	t.Cleanup(func() { maxPayload = old })
+
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Write(bytes.Repeat([]byte("x"), 4096))
+	}))
+	defer srv.Close()
+	if _, err := httpGet(context.Background(), http.DefaultClient, srv.URL, "test", 3); !errors.Is(err, errTooLarge) || hits.Load() != 1 {
+		t.Fatalf("réponse démesurée : %v après %d requête(s), refus immédiat attendu", err, hits.Load())
+	}
+
+	// Gzip : 1 Ko compressé qui se déploie bien au-delà de la limite.
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	zw.Write([]byte("DateTime,BidOpen,BidHigh,BidLow,BidClose\n"))
+	zw.Write(bytes.Repeat([]byte("0"), 64*1024))
+	zw.Close()
+	if _, err := DecodeFXCM(buf.Bytes()); !errors.Is(err, errTooLarge) {
+		t.Fatalf("bombe gzip : %v", err)
+	}
+}
+
+// TestRetryAfterIsBounded : un serveur ne suspend pas un téléchargement
+// pendant des jours par un en-tête Retry-After.
+func TestRetryAfterIsBounded(t *testing.T) {
+	if d := retryAfter("999999", time.Second); d != maxRetryAfter {
+		t.Fatalf("Retry-After démesuré accepté : %v", d)
+	}
+	if d := retryAfter("30", time.Second); d != 30*time.Second {
+		t.Fatalf("Retry-After raisonnable modifié : %v", d)
+	}
+}
+
+// TestFXCMRefusesNaNPrices : « NaN » se lit en flottant ; ce n'est pas un
+// prix (NaN <= 0 est faux, d'où un contrôle explicite).
+func TestFXCMRefusesNaNPrices(t *testing.T) {
+	raw := "DateTime,BidOpen,BidHigh,BidLow,BidClose\n01/02/2024 10:00:00.000,NaN,1.1,1.0,1.05\n"
+	if _, err := DecodeFXCM([]byte(raw)); err == nil {
+		t.Fatal("prix NaN accepté")
+	}
+}

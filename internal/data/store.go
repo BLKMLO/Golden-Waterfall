@@ -164,6 +164,10 @@ func yearFiles(dir string) (map[int]string, error) {
 	return out, nil
 }
 
+// maxBarsPerYear : bougies M1 d'une année bissextile entière, week-ends
+// compris — la borne haute de tout fichier annuel.
+const maxBarsPerYear = 366 * 24 * 60
+
 // Load relit l'historique M1 complet d'un symbole sur [from, to].
 //
 // Robuste aux maladresses : fichiers parasites ignorés, années hors de la
@@ -209,10 +213,15 @@ func Load(historyDir, symbol string, from, to time.Time) (core.Series, error) {
 	// C'est une ESTIMATION HAUTE (les bornes de dates peuvent en écarter
 	// une partie) : elle ne sert qu'à réserver, jamais à annoncer un
 	// nombre de bougies.
+	//
+	// Le compte d'un en-tête est BORNÉ par ce qu'une année de M1 peut
+	// contenir : un fichier copié à la main ou abîmé qui annoncerait 10¹⁵
+	// lignes faisait sinon échouer la réservation — un arrêt brutal du
+	// programme, au lieu d'une erreur de lecture qui nomme le fichier.
 	estimate := int64(0)
 	for _, f := range files {
-		if h, err := ReadHeader(f.path); err == nil {
-			estimate += h.Count
+		if h, err := ReadHeader(f.path); err == nil && h.Count > 0 {
+			estimate += min(h.Count, maxBarsPerYear)
 		}
 	}
 	all := make(core.Series, 0, estimate)

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/BLKMLO/Golden-Waterfall/internal/core"
 )
 
 func writeText(t *testing.T, name, body string) string {
@@ -170,6 +172,12 @@ func TestReadCSVRefusesBadLines(t *testing.T) {
 		"ligne courte":   "time,open,high,low,close\n2024-01-02 10:00,1,1\n",
 		"entête seule":   "time,open,high,low,close\n",
 		"sans prix":      "time,price\n2024-01-02 10:00,1\n",
+		// Colonnes décalées : des prix plausibles, une bougie impossible.
+		"clôture hors bougie":   "time,open,high,low,close\n2024-01-02 10:00,1.10,1.12,1.09,1.15\n",
+		"ouverture hors bougie": "time,open,high,low,close\n2024-01-02 10:00,1.05,1.12,1.09,1.10\n",
+		"volume négatif":        "time,open,high,low,close,volume\n2024-01-02 10:00,1.10,1.12,1.09,1.11,-3\n",
+		"ask incohérent": "time,bid_open,bid_high,bid_low,bid_close,ask_open,ask_high,ask_low,ask_close\n" +
+			"2024-01-02 10:00,1.10,1.12,1.09,1.11,1.10,1.09,1.12,1.11\n",
 	} {
 		if _, err := ReadCSV(writeText(t, "x.csv", body), CSVOptions{}); err == nil {
 			t.Errorf("%s : fichier accepté", name)
@@ -229,5 +237,26 @@ func TestImportRefusesNonM1(t *testing.T) {
 	_, err := Import(t.TempDir(), "EURUSD", []string{path}, ImportOptions{})
 	if err == nil || !strings.Contains(err.Error(), "M1") {
 		t.Fatalf("historique H1 accepté : %v", err)
+	}
+}
+
+// TestImportChecksForeignParquetToo : un Parquet tiers passe par la même
+// règle que le CSV — une bougie impossible refuse le fichier entier.
+func TestImportChecksForeignParquetToo(t *testing.T) {
+	dir := t.TempDir()
+	start := time.Date(2024, 1, 2, 10, 0, 0, 0, time.UTC)
+	bars := make([]core.Bar, 0, 3)
+	for i := 0; i < 3; i++ {
+		bars = append(bars, core.Bar{Time: start.Add(time.Duration(i) * time.Minute),
+			BidOpen: 1.10, BidHigh: 1.12, BidLow: 1.09, BidClose: 1.11, Volume: 1})
+	}
+	bars[1].BidClose = 1.20 // hors de la bougie
+	src := filepath.Join(dir, "foreign.parquet")
+	if err := WriteSeries(src, FileHeader{Symbol: "EURUSD", Year: 2024, Scale: 100000}, bars); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Import(filepath.Join(dir, "history"), "EURUSD", []string{src}, ImportOptions{})
+	if err == nil || !strings.Contains(err.Error(), "2024-01-02 10:01") {
+		t.Fatalf("bougie impossible importée, ou non datée dans le refus : %v", err)
 	}
 }

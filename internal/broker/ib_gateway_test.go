@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"math"
 	"net"
 	"os"
 	"path/filepath"
@@ -590,5 +591,35 @@ func TestIBBracketsSurviveARestart(t *testing.T) {
 	got := map[string]bool{c1[2]: true, c2[2]: true}
 	if !got[strconv.FormatInt(tp, 10)] || !got[strconv.FormatInt(sl, 10)] {
 		t.Fatalf("après redémarrage, la sortie doit annuler les barrières de la séance précédente : %q %q", c1, c2)
+	}
+}
+
+// TestIBRefusesAnUnreadableBarrier : un stop NaN disparaissait du bracket
+// (« sl > 0 » faux) et le parent partait seul, sans protection. Rien ne
+// doit être transmis à TWS.
+func TestIBRefusesAnUnreadableBarrier(t *testing.T) {
+	tws := newFakeTWS(t)
+	h, err := newIBHarness(t, tws, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, req := range []core.OrderRequest{
+		{Symbol: "EURUSD", Side: core.Buy, Quantity: 20000, Type: core.Market, StopLoss: math.NaN(), TakeProfit: 1.1},
+		{Symbol: "EURUSD", Side: core.Buy, Quantity: 20000, Type: core.Market, StopLoss: 1.07, TakeProfit: -1},
+		{Symbol: "EURUSD", Side: core.Buy, Quantity: math.NaN(), Type: core.Market, StopLoss: 1.07},
+	} {
+		if _, err := h.gw.PlaceOrder(context.Background(), req); err == nil {
+			t.Fatalf("ordre %+v accepté", req)
+		}
+	}
+	tws.none("3", 300*time.Millisecond)
+}
+
+// TestIBAcceptsTheAccountCurrencyInAnyCase : « usd » dans la
+// configuration désigne bien le compte en USD que TWS annonce.
+func TestIBAcceptsTheAccountCurrencyInAnyCase(t *testing.T) {
+	tws := newFakeTWS(t)
+	if _, err := newIBHarness(t, tws, Options{AccountCurrency: "usd"}); err != nil {
+		t.Fatalf("devise en minuscules refusée : %v", err)
 	}
 }

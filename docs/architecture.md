@@ -262,12 +262,21 @@ le remet d'office sur une valeur valide :
 | Fichier qui n'est pas une table | remplacé par le modèle |
 | Erreur de syntaxe YAML | **refus de démarrer** : on ne sait pas ce que le fichier voulait dire |
 
+Tout nombre à virgule doit être FINI : YAML lit `.nan` et `.inf`, et NaN
+n'étant ni « <= 0 » ni « > plafond », il traversait sinon chaque contrôle
+(un `max_position_size` NaN ne plafonnait plus rien). Il est réparé comme
+toute valeur refusée.
+
 `config.yaml` est corrigé en place — les commentaires restent — après une
-copie `config.yaml.<date>.bak`. Chaque réparation (clé, ancienne valeur,
+copie `config.yaml.<date>.bak` (droits 0600 : le fichier peut nommer le
+compte courtier). Chaque réparation (clé, ancienne valeur,
 nouvelle, raison) est dans `Config.Repairs`, écrite dans le journal,
 affichée sur la sortie d'erreur par la CLI et dans la barre d'état des deux
 interfaces pendant une minute. L'écran Paramètres, lui, continue de
-refuser d'écrire un brouillon invalide.
+refuser d'écrire un brouillon invalide ; et il n'écrit jamais la valeur
+d'une clé forcée par une variable `GW_*` : c'est celle du FICHIER qui
+est enregistrée (v0.8.2 — un `GW_MODE=live` d'un soir se retrouvait sinon
+dans config.yaml au premier réglage enregistré).
 
 Priorité : défauts du code → `config.yaml` → variables `GW_*`.
 L'environnement a le dernier mot : une variable qu'on prend la peine
@@ -303,6 +312,15 @@ est ce plafond commun.
 distance jusqu'au stop coûte ce pourcentage de l'équité. Quand l'équité,
 le stop ou la conversion de devise manquent, l'entrée est **refusée avec
 son motif** — jamais repliée sur une taille arbitraire.
+
+Avant tout calcul de taille, et quel que soit le régime, les niveaux
+d'une entrée sont vérifiés (v0.8.2) : prix, stop et limite finis et
+positifs (0 = non fourni), stop du côté de la perte et limite du côté du
+gain. Un signal qui échoue est refusé avec son motif
+(`ReasonNonFinite`, `ReasonBarrierSide`) et compté avec les refus de
+dimensionnement, qu'affichent les écrans. Les trois moteurs livrés ne
+produisent pas de tels signaux : les walk-forward réels rejoués avant et
+après ce contrôle ont pris exactement les mêmes décisions.
 
 Deux clés distinctes, et elles ne veulent pas dire la même chose :
 `max_position_size` est une GARDE (aucune entrée ne la dépasse, quel que

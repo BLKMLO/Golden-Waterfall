@@ -111,6 +111,14 @@ type Runtime struct {
 	risk   *risk.Manager
 	news   *news.Service
 
+	// connMu sérialise connexion et déconnexion. Deux connexions
+	// concurrentes (touche « c » pressée pendant qu'une connexion attend
+	// TWS) créaient chacune passerelle et moteur ; la seconde écrasait la
+	// première dans le runtime sans l'arrêter, et le moteur orphelin
+	// continuait de recevoir des prix — et de passer des ordres — sans
+	// plus apparaître nulle part.
+	connMu sync.Mutex
+
 	mu       sync.RWMutex
 	gateway  broker.Gateway
 	engine   *Engine
@@ -185,7 +193,9 @@ func (r *Runtime) ConnectAs(ctx context.Context, account string) error {
 }
 
 func (r *Runtime) connect(ctx context.Context, account string) error {
-	r.Disconnect()
+	r.connMu.Lock()
+	defer r.connMu.Unlock()
+	r.disconnect()
 
 	tf, err := data.ParseTimeframe(r.cfg.Broker.Timeframe)
 	if err != nil {
@@ -392,6 +402,13 @@ func (r *Runtime) warmupSeries(symbol string, tf data.Timeframe, bufferBars int)
 
 // Disconnect arrête tout proprement. Appelable plusieurs fois.
 func (r *Runtime) Disconnect() {
+	r.connMu.Lock()
+	defer r.connMu.Unlock()
+	r.disconnect()
+}
+
+// disconnect : Disconnect, verrou de connexion déjà tenu.
+func (r *Runtime) disconnect() {
 	r.mu.Lock()
 	gw, cancel := r.gateway, r.cancel
 	r.gateway, r.engine, r.cancel = nil, nil, nil
