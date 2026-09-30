@@ -4,8 +4,12 @@
 # Ce fichier est créé automatiquement au premier lancement. Il ne contient
 # QUE du fonctionnel : rien de secret, il peut être versionné tel quel.
 #
-# Règle de validation : une valeur absurde fait ÉCHOUER le démarrage avec un
-# message explicite. Aucun réglage n'est corrigé en silence.
+# Règle de validation : un réglage refusé (valeur absurde, clé inconnue,
+# révision de moteur retirée par une mise à jour) est remis d'office sur une
+# valeur valide — sa remplaçante ou son défaut —, ce fichier est corrigé
+# après une copie datée à côté de lui, et chaque réparation est ANNONCÉE
+# (terminal, barre d'état, journal, `gw config`). Jamais en silence. Seule
+# une erreur de SYNTAXE YAML empêche de démarrer.
 #
 # Les variables d'environnement GW_* ont le dernier mot (GW_BROKER, GW_MODE,
 # GW_STRATEGY, GW_STRATEGY_ENABLED, GW_LOG_LEVEL, GW_THEME, GW_TIMEFRAME,

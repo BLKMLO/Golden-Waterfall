@@ -1,7 +1,9 @@
 package app
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/BLKMLO/Golden-Waterfall/internal/config"
@@ -166,5 +168,34 @@ func TestWorkshopRunsBesideATradingSession(t *testing.T) {
 	}
 	if err := workshop.SetRiskPerTrade(0); err != nil || workshop.Live != nil {
 		t.Fatalf("SetRiskPerTrade ne doit pas créer de moteur live dans l'atelier : %v", err)
+	}
+}
+
+// TestRetiredOrUnknownSettingsAreRepairedAtStartup : le cas réel d'une
+// mise à jour — config.yaml nomme martinet_v1_0 (retirée en v0.8.1) et
+// une passerelle que la version ne connaît pas. Le démarrage n'échoue
+// plus : la révision passe à sa remplaçante, la passerelle à son défaut,
+// le fichier est corrigé et chaque réparation est rendue.
+func TestRetiredOrUnknownSettingsAreRepairedAtStartup(t *testing.T) {
+	paths := tempPaths(t)
+	if err := paths.EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(paths.ConfigFile(), []byte("strategy:\n  name: martinet_v1_0\nbroker:\n  name: mt5\n"), 0o644)
+	a, err := New(paths)
+	if err != nil {
+		t.Fatalf("une révision retirée ne doit plus bloquer le démarrage : %v", err)
+	}
+	defer a.Close()
+	if a.Config.Strategy.Name != "martinet_v1_1" || a.Config.Broker.Name != config.Default().Broker.Name {
+		t.Fatalf("réglages attendus martinet_v1_1 / %s : %s / %s",
+			config.Default().Broker.Name, a.Config.Strategy.Name, a.Config.Broker.Name)
+	}
+	if keys := strings.Join(config.RepairKeys(a.Config.Repairs), ","); keys != "broker.name,strategy.name" {
+		t.Fatalf("réparations annoncées : %s", keys)
+	}
+	back, err := config.Load(paths)
+	if err != nil || back.Strategy.Name != "martinet_v1_1" || back.Broker.Name != config.Default().Broker.Name {
+		t.Fatalf("les réparations doivent être écrites dans config.yaml : %+v %v", back.Strategy, err)
 	}
 }

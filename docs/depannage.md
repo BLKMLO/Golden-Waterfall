@@ -59,14 +59,15 @@ cessait d'être vraie — ce ne sont pas des intentions.
 | Une année se télécharge à moitié | l'écrit, la marque incomplète, et la refait à la prochaine demande |
 | Un fichier d'historique est tronqué | refuse de le lire et nomme le fichier et le remède |
 | Un fichier au nom inattendu traîne dans le dossier | l'ignore, plutôt que de compter ses bougies deux fois |
-| La configuration contient une valeur absurde | refuse de démarrer, en nommant la clé fautive |
-| La configuration contient une faute de frappe | refuse de démarrer : une clé inconnue est une limite jamais appliquée |
+| La configuration contient une valeur refusée (après une mise à jour, ou à la main) | démarre : la clé revient à son défaut, `config.yaml` est corrigé après sauvegarde (`config.yaml.<date>.bak`), et c'est annoncé (terminal, barre d'état, journal, `gw config`) |
+| La configuration contient une clé inconnue (retirée par une mise à jour, faute de frappe) | démarre : la clé est supprimée du fichier, et c'est annoncé en la nommant — une faute de frappe sur une limite de risque se voit donc dans l'annonce |
+| `config.yaml` a une erreur de syntaxe YAML | refuse de démarrer : corriger la syntaxe, ou supprimer le fichier pour repartir du modèle |
 | Le jeu d'entraînement est trop petit | refuse d'entraîner, plutôt que de livrer un modèle décoratif |
 | Une seule classe dans les labels | refuse d'entraîner, plutôt qu'un modèle constant déguisé |
 | Le courtier ne répond pas sur les positions | s'abstient de décider, plutôt que de trader sur une image périmée |
 | La perte journalière maximale est atteinte | bloque toute nouvelle entrée ; les sorties restent toujours possibles |
 | Une deuxième instance de `gw` est lancée | échoue proprement : la base est déjà ouverte. `gw backtrain` et les commandes de travail (`train`, `backtest`, `download`…) ne l'ouvrent pas : elles tournent pendant une séance |
-| `strategy.name` nomme une révision retirée (`colibri_v1_0`, `colibri_v1_1`, `troglodyte_v1_0`) | refus au démarrage, qui nomme la remplaçante ; changer le nom et réentraîner |
+| `strategy.name` nomme une révision retirée (`colibri_v1_0`, `colibri_v1_1`, `troglodyte_v1_0`, `martinet_v1_0`) | passe d'office à sa remplaçante, annoncé ; réentraîner (la ligne Prérequis de l'écran Live le rappelle) |
 | Martinet refuse de s'entraîner ou de se connecter | il ne travaille qu'en M1, M5 ou M15 : régler `training.timeframe` ET `broker.timeframe` (`gw config` le signale) |
 | Écran Live : « → manque : … » | la ligne Prérequis dit ce qui empêche la séance de trader ; `p` en donne le détail et le remède |
 | TWS injoignable, API désactivée, mauvais port | refuse la connexion en disant quoi vérifier |

@@ -173,6 +173,7 @@ func open() (*app.App, context.Context, context.CancelFunc, error) {
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	announceRepairs(a.Config)
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	return a, ctx, cancel, nil
 }
@@ -186,8 +187,26 @@ func runTUI(mode tui.Mode) error {
 	if err != nil {
 		return err
 	}
+	// Aussi dans la barre d'état de l'interface ; ici, pour qu'il en reste
+	// une trace dans le terminal après la sortie.
+	announceRepairs(a.Config)
 	defer a.Close()
 	return tui.Run(a, mode)
+}
+
+// announceRepairs dit, sur la sortie d'erreur, quels réglages ont été
+// remis d'office au démarrage — jamais en silence.
+func announceRepairs(cfg config.Config) {
+	if len(cfg.Repairs) == 0 {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "⚠ Configuration réparée automatiquement (%d réglage(s)) :\n", len(cfg.Repairs))
+	for _, r := range cfg.Repairs {
+		fmt.Fprintf(os.Stderr, "  - %s\n", r)
+	}
+	if cfg.Backup != "" {
+		fmt.Fprintf(os.Stderr, "  Ancien fichier sauvegardé : %s\n", cfg.Backup)
+	}
 }
 
 func runPaths() error {
@@ -212,10 +231,11 @@ func runConfig(args []string) error {
 		os.Stdout.Write(config.DefaultYAML())
 		return nil
 	}
-	cfg, err := config.Load(config.DefaultPaths())
+	cfg, err := app.LoadConfig(config.DefaultPaths())
 	if err != nil {
 		return err
 	}
+	announceRepairs(cfg)
 	fmt.Printf("fichier            : %s\n", cfg.Paths.ConfigFile())
 	fmt.Printf("passerelle         : %s (%s)\n", cfg.Broker.Name, cfg.Broker.Mode)
 	fmt.Printf("stratégie          : %s (kill-switch %v)\n", cfg.Strategy.Name, cfg.Strategy.Enabled)
@@ -842,10 +862,11 @@ func sizingLabel(cfg config.RiskConfig) string {
 }
 
 func runRuns() error {
-	cfg, err := config.Load(config.DefaultPaths())
+	cfg, err := app.LoadConfig(config.DefaultPaths())
 	if err != nil {
 		return err
 	}
+	announceRepairs(cfg)
 	runs, err := training.ListRuns(cfg.Paths.ModelsDir())
 	if err != nil {
 		return err
@@ -898,10 +919,11 @@ func truncate(s string, n int) string {
 // interface ouverte, et le calendrier n'en a pas besoin. Le service est
 // construit depuis la configuration, comme app.New le fait.
 func runNews(args []string) error {
-	cfg, err := config.Load(config.DefaultPaths())
+	cfg, err := app.LoadConfig(config.DefaultPaths())
 	if err != nil {
 		return err
 	}
+	announceRepairs(cfg)
 	svc, err := news.NewService(app.NewsOptions(cfg), nil)
 	if err != nil {
 		return err

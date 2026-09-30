@@ -351,3 +351,18 @@ func TestHeaderAlwaysNamesTheInterface(t *testing.T) {
 		}
 	})
 }
+
+// TestRepairedConfigIsAnnouncedInTheStatusBar : des réglages remis
+// d'office au démarrage se lisent dans la barre d'état, dans les deux
+// interfaces.
+func TestRepairedConfigIsAnnouncedInTheStatusBar(t *testing.T) {
+	a := newTestApp(t)
+	a.Config.Repairs = []config.Repair{{Key: "strategy.name", Old: "martinet_v1_0", New: "martinet_v1_1"}}
+	for _, mode := range []Mode{Trading, Backtrain} {
+		m := New(a, mode)
+		m.Update(tea.WindowSizeMsg{Width: 160, Height: 40})
+		if f := m.renderFooter(); !strings.Contains(f, "réparé") || !strings.Contains(f, "strategy.name") {
+			t.Fatalf("mode %d : annonce absente de la barre d'état :\n%s", mode, f)
+		}
+	}
+}

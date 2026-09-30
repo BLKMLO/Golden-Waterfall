@@ -23,7 +23,8 @@
   propriétaire, v0.8.0) : `colibri_v1_2` (défaut), `troglodyte_v1_1`,
   `martinet_v1_1`. Une nouvelle révision REMPLACE la précédente : code de
   l'ancienne supprimé, `strategy.Retire(ancienne, nouvelle)` dans l'`init()`
-  pour qu'une config restée dessus soit refusée en nommant la remplaçante.
+  pour qu'une config restée dessus passe D'OFFICE à la remplaçante
+  (réparation annoncée, v0.8.2).
   Retirées en v0.8.0 : `colibri_v1_0`, `colibri_v1_1`, `troglodyte_v1_0` ;
   en v0.8.1 : `martinet_v1_0`.
   Avant de retirer : capturer modèles + décisions de la révision gardée,
@@ -80,8 +81,10 @@ Configuration : `config.yaml` dans le dossier utilisateur, créé au premier
 lancement depuis le modèle **embarqué** (`internal/config/default_config.yaml`).
 Priorité : défauts → YAML → variables `GW_*` (l'environnement a le dernier
 mot). Nouvelle clé = struct + `Default()` + `Validate()` + modèle YAML +
-écran Paramètres (+ `envBindings` si variable), sinon une clé inconnue fait
-refuser le démarrage.
+écran Paramètres (+ `envBindings` si variable), sinon la clé est SUPPRIMÉE
+du fichier comme inconnue au démarrage suivant (réparation, voir règle 4).
+Un message de `Validate` doit citer EN PREMIER la clé à remettre à son
+défaut (`config/repair.go` la repère par son nom dans le message).
 
 Publication : PR fusionnée par **squash** sur `main`, puis onglet
 **Actions → Release → Run workflow** avec le numéro (`v0.5.0`), ou tag
@@ -98,8 +101,17 @@ identique).
    le risque ; **aucun trade sans compte rendu réel**.
 2. **Câblage uniquement dans `internal/app/app.go` (`app.New`)**.
 3. **Bus d'événements** (`core/bus.go`) : ne bloque JAMAIS un producteur.
-4. **Config centralisée et fail-fast** : valeur absurde ou clé inconnue =
-   refus de démarrer, avec la clé nommée.
+4. **Config centralisée, réparée d'office, jamais en silence** (v0.8.2,
+   règle du propriétaire : « si un paramètre ne prend pas après une mise à
+   jour, il se réinitialise automatiquement ») : clé inconnue → supprimée ;
+   valeur illisible ou refusée → défaut ; révision retirée → remplaçante ;
+   moteur, source, passerelle, source news inconnus → défaut
+   (`app.LoadConfig`, registres) ; variable `GW_*` refusée → ignorée pour
+   l'exécution. config.yaml corrigé EN PLACE (commentaires gardés) après
+   `config.yaml.<date>.bak`, chaque réparation dans `Config.Repairs` et
+   annoncée : stderr, barre d'état 1 min, journal, `gw config`. Seule une
+   erreur de SYNTAXE bloque. L'écran Paramètres, lui, refuse toujours
+   d'écrire un brouillon invalide (`Validate`).
 5. **Paper → live** = `broker.mode`. Rien d'autre.
 6. **L'interface ne ment jamais** (tableau ci-dessous).
 7. **Ne jamais modifier une définition de modèle publiée** (features,
@@ -183,7 +195,8 @@ d'être vraie.
 | Migration : Parquet différent déjà présent = conversion sautée | data | Un vieux `.gwb` qui efface une année retéléchargée |
 | Erreurs de pli et du modèle final affichées (`FinalErr`) | CLI, TUI Entraînement | « 0 trade, AUC — » sans cause |
 | Taux de gain « — » sans trade | CLI | « 0 % » là où rien n'est mesuré |
-| `strategy.Retire` : révision retirée refusée en nommant la remplaçante | strategy, app, CLI | Une config restée sur une révision retirée, « inconnue » sans remède |
+| `strategy.Retire` + `strategy.Successor` : révision retirée remplacée d'office par sa remplaçante, annoncée | strategy, app, CLI | Un logiciel qui ne démarre plus après une mise à jour ; un moteur changé sans le dire |
+| `Config.Repairs` + sauvegarde datée : toute réparation de config nommée (clé, ancienne, nouvelle, raison) | config, app, CLI, TUI | Un réglage remis à son défaut en silence ; perdre l'ancien fichier |
 | `Description.Timeframes` + `CheckTimeframe` | walk-forward, backtest, live, prérequis, `gw config` | Des chiffres de scalpeur calculés en H4 |
 | Modèle refusé en live hors de l'unité où il a été entraîné (`training.Coverage`) | live, prérequis | Un modèle H4 appliqué à des bougies M5, en silence (Colibri ne le vérifiait pas) |
 | Ligne Prérequis + détail `p` ; « pas de modèle » seulement une fois connecté | TUI Live | Connecter sans savoir qu'aucun modèle n'existe ; affirmer « pas de modèle » avant de l'avoir cherché |
@@ -417,7 +430,8 @@ d'être vraie.
   décision. Fériés jamais filtrants. Hors semaine couverte → NON filtrée,
   COMPTÉE (`NewsUncovered`). Sorties jamais filtrées.
 - `news` n'importe PAS `config` (sinon cycle via `data`) : `app.NewsOptions`
-  traduit. Source inconnue = refus de démarrer (dans `app.New`).
+  traduit. Source inconnue = remise à son défaut au démarrage
+  (`app.LoadConfig`), annoncée.
 - Récupération : live (si la stratégie déclare, toutes les
   `refresh_minutes`) et `gw news fetch`. Tests : faux serveur HTTP, jamais
   le réseau ; extrait réel du flux dans `testdata/`.
@@ -486,10 +500,10 @@ Dependabot hebdomadaire, `charmbracelet/x/*` GROUPÉS.
 
 Licence **MIT**, choisie par le propriétaire du projet.
 
-## État du projet (29 septembre 2026, v0.8.1)
+## État du projet (30 septembre 2026, v0.8.2)
 
 27 paquets, suite verte avec `-race`. `cat` des fichiers `.go` :
-26910 lignes hors tests, 13000 de tests (v0.8.1 ; couverture ci-dessous
+27722 lignes hors tests, 13466 de tests (v0.8.2 ; couverture ci-dessous
 mesurée en v0.8.0).
 
 Couverture mesurée le 29 septembre 2026 (`go test -cover`) :
@@ -513,6 +527,10 @@ l'atelier identique à la CLI, les deux interfaces à 60×18 et 132×34 ;
 En **v0.8.1**, même historique : `gw train` `martinet_v1_1` (12 points
 par pli, filtre de volume essayé puis écarté faute de trades : 4 à 5 par
 point), refus de `martinet_v1_0` nommant v1_1.
+En **v0.8.2**, sur le binaire : une `config.yaml` restée sur
+`martinet_v1_0` est réparée en `martinet_v1_1` (sauvegarde `.bak`,
+entête « Réparé automatiquement », annonce dans `gw config` et dans la
+barre d'état de `gw backtrain`).
 
 Validé réellement : walk-forward et backtest de bout en bout sur un
 historique importé depuis pyarrow ; Parquet écrit relu par pyarrow ; rendu
@@ -684,6 +702,14 @@ de défaire.
   `gw train` sur le binaire. Toujours faire tourner le binaire.
 - **Un fichier étranger lu comme une semaine d'archive** (test d'import
   posé dans `news/`) → noms de fichiers vérifiés.
+- **Un logiciel qui ne démarre plus après sa propre mise à jour** (v0.8.1 :
+  `strategy.name: martinet_v1_0` retirée → `gw` et `gw backtrain`
+  refusaient de s'ouvrir) → une valeur refusée revient à son défaut (ou à
+  la remplaçante d'une révision retirée), fichier sauvegardé puis corrigé,
+  et c'est ANNONCÉ (`config/repair.go`, `app.LoadConfig`). Seule une
+  erreur de SYNTAXE YAML reste bloquante. Toute nouvelle règle de
+  `problems()` doit citer sa clé (`section.clé`) dans le message, sinon la
+  réparation ne sait pas quoi remettre à zéro.
 - **Une source qui publie le dimanche soir** (FXCM) aurait décalé la
   clôture de fin de semaine APRÈS le week-end : trouvé en relisant
   l'hypothèse écrite dans ce fichier, pas par les tests. Toute nouvelle

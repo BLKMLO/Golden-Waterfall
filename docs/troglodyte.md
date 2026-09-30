@@ -265,7 +265,8 @@ exigent un.
 > **Depuis v0.8.0, seule `troglodyte_v1_1` est livrée** (un moteur ne
 > garde que sa dernière révision). `troglodyte_v1_0` a été retirée avec son
 > code (prix brut, seuils fixes, branche sans stop suiveur) ; une
-> configuration qui la nomme est refusée en nommant `troglodyte_v1_1`.
+> configuration qui la nomme passe d'office à `troglodyte_v1_1` (réparation
+> annoncée, depuis v0.8.2).
 > Retrait vérifié : modèle et décisions de v1_1 identiques octet pour
 > octet avant et après. Les sections sur v1_0 restent comme archive.
 

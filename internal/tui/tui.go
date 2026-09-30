@@ -26,6 +26,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/BLKMLO/Golden-Waterfall/internal/app"
+	"github.com/BLKMLO/Golden-Waterfall/internal/config"
 	"github.com/BLKMLO/Golden-Waterfall/internal/live"
 	"github.com/BLKMLO/Golden-Waterfall/internal/tui/component"
 	"github.com/BLKMLO/Golden-Waterfall/internal/tui/theme"
@@ -35,8 +36,13 @@ import (
 // tickMsg cadence le rafraîchissement des écrans temps réel.
 type tickMsg time.Time
 
-// statusLifetime : durée d'affichage d'un message éphémère.
-const statusLifetime = 8 * time.Second
+// statusLifetime : durée d'affichage d'un message éphémère ;
+// repairStatusLifetime : celle de l'annonce des réglages réparés au
+// démarrage, qu'on ne doit pas manquer.
+const (
+	statusLifetime       = 8 * time.Second
+	repairStatusLifetime = time.Minute
+)
 
 type statusMsg struct {
 	text string
@@ -66,6 +72,7 @@ type Model struct {
 	events        chan tea.Msg
 	status        string
 	statusAt      time.Time
+	statusLife    time.Duration
 	showHelp      bool
 	helpOffset    int
 	refresh       time.Duration
@@ -86,6 +93,14 @@ func New(a *app.App, mode Mode) *Model {
 		th:      th,
 		events:  make(chan tea.Msg, 256),
 		refresh: time.Duration(a.Config.UI.RefreshMillis) * time.Millisecond,
+	}
+	m.statusLife = statusLifetime
+	if n := len(a.Config.Repairs); n > 0 {
+		// Réglages remis d'office au démarrage : dit tout de suite, et
+		// plus longtemps qu'un message ordinaire.
+		m.status = fmt.Sprintf("⚠ config.yaml réparé automatiquement (%d réglage(s) : %s) — détail : Journal, gw config",
+			n, strings.Join(config.RepairKeys(a.Config.Repairs), ", "))
+		m.statusAt, m.statusLife = time.Now(), repairStatusLifetime
 	}
 	m.deps = view.Deps{
 		App:   a,
@@ -170,7 +185,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	case statusMsg:
-		m.status, m.statusAt = msg.text, msg.at
+		m.status, m.statusAt, m.statusLife = msg.text, msg.at, statusLifetime
 		return m, m.listen()
 
 	case tea.KeyMsg:
@@ -239,7 +254,7 @@ func (m *Model) globalKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 		// cruel.
 		if m.anyBusy() {
 			m.status = "un travail est en cours — Ctrl+C pour forcer la sortie"
-			m.statusAt = time.Now()
+			m.statusAt, m.statusLife = time.Now(), statusLifetime
 			return nil, true
 		}
 		m.quitting = true
@@ -539,7 +554,7 @@ func (m *Model) renderFooter() string {
 	// chaque message, ce qui est exactement ce qu'on ne veut pas d'une
 	// interface qu'on regarde en continu.
 	status := ""
-	if m.status != "" && time.Since(m.statusAt) < statusLifetime {
+	if m.status != "" && time.Since(m.statusAt) < m.statusLife {
 		status = m.th.Info.Render(" " + component.Truncate(m.status, m.width-2))
 	}
 	return m.rule() + "\n" + status + "\n" + component.Clip(hints, m.width)
