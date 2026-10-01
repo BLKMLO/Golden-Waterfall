@@ -244,7 +244,7 @@ années : 60 entrées « hors calendrier »). Colibri n'a pas pu être mesuré
 sur ces données : FXCM ne publie pas de volume, et ses révisions en
 exigent un.
 
-**Deuxième mesure sur historique réel (v0.8.2, 30 septembre 2026),
+**Deuxième mesure sur historique réel (v0.8.3, 30 septembre 2026),
 `troglodyte_v1_1` seule.** Même source (FXCM, EURUSD, GBPUSD, USDJPY),
 historique 2022 → 2025 seulement ; `gw train EURUSD GBPUSD USDJPY --tf
 H4` puis `--tf H1`, configuration par défaut, 5 plis — blocs de test du

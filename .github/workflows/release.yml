@@ -51,8 +51,15 @@ jobs:
           go vet ./...
           go test -race ./...
 
+      # Une version déjà publiée ne se republie que depuis SON commit
+      # (rattraper un fichier manquant). Depuis un autre commit, l'envoi
+      # « --clobber » remplacerait ses binaires par ceux d'un code que son
+      # tag ne désigne pas : c'est arrivé à v0.8.2, republiée depuis le
+      # commit de l'audit. Une nouvelle version prend un nouveau numéro.
       - name: Déterminer la version
         id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           version="${{ inputs.version || github.ref_name }}"
@@ -60,6 +67,12 @@ jobs:
             v*) ;;
             *) echo "La version doit commencer par « v », reçu : $version" >&2; exit 1 ;;
           esac
+          if tagged="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${version}" --jq .sha 2>/dev/null)"; then
+            if [ "$tagged" != "$GITHUB_SHA" ]; then
+              echo "$version désigne déjà le commit $tagged, pas $GITHUB_SHA : choisir un nouveau numéro de version." >&2
+              exit 1
+            fi
+          fi
           echo "value=$version" >> "$GITHUB_OUTPUT"
 
       # Le projet est en Go pur, sans cgo : la compilation croisée depuis un

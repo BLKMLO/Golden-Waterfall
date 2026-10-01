@@ -174,7 +174,7 @@ Mesurée le 29 septembre 2026 dans le bac à sable de développement (Xeon
 | Calibrage complet (6 points, v1_0) sur 20 000 bougies M5 | 0,15 s |
 | Calibrage complet (12 points, v1_1, historique avec volume) sur 20 000 bougies M5 | 0,39 s (mesuré le 29/09/2026) |
 
-## Première mesure sur historique réel (v0.8.2, 30 septembre 2026)
+## Première mesure sur historique réel (v0.8.3, 30 septembre 2026)
 
 **Source** : FXCM (`candledata.fxcorporate.com`, M1 bid et ask, sans
 volume), téléchargée par `gw download EURUSD GBPUSD USDJPY --from 2022
@@ -222,7 +222,7 @@ Ce que ces chiffres permettent de dire :
 
 Les décisions de ce walk-forward sont identiques, pli par pli (trades,
 gagnants, perdants, motifs de sortie), à celles du binaire d'avant
-v0.8.2 ; seul le P&L change légèrement, le dimensionnement lisant
+v0.8.3 ; seul le P&L change légèrement, le dimensionnement lisant
 désormais l'équité corrigée du backtest (M15 : −8 639,09 → −8 695,93).
 
 Toutes les valeurs de la définition (fenêtre, âge des zones, dépassement,
