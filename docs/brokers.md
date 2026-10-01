@@ -58,10 +58,10 @@ Ce qu'elle fait honnêtement :
 - surveille stop et limite à chaque bougie et rapporte la sortie, comme le
   ferait un courtier dont les ordres attachés se déclenchent — avec les
   règles du backtest : un stop franchi par l'ouverture (gap) est servi à
-  l'ouverture, une limite à son prix exact (v0.8.2 ; avant, le stop était
+  l'ouverture, une limite à son prix exact (v0.8.3 ; avant, le stop était
   toujours servi à son prix, ce qui flattait le rejeu) ;
 - tient le compte dans la devise de `backtest.account_currency` : marge
-  et P&L d'une paire sont convertis comme au backtest (v0.8.2 ; avant, une
+  et P&L d'une paire sont convertis comme au backtest (v0.8.3 ; avant, une
   position USDJPY demandait sa marge en yens comparée à des dollars, et
   toutes ses entrées étaient refusées « marge insuffisante »). Une croisée
   sans taux tiers (EURGBP sur un compte USD) reste comptée en devise de

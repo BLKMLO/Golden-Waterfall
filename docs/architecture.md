@@ -275,7 +275,7 @@ affichée sur la sortie d'erreur par la CLI et dans la barre d'état des deux
 interfaces pendant une minute. L'écran Paramètres, lui, continue de
 refuser d'écrire un brouillon invalide ; et il n'écrit jamais la valeur
 d'une clé forcée par une variable `GW_*` : c'est celle du FICHIER qui
-est enregistrée (v0.8.2 — un `GW_MODE=live` d'un soir se retrouvait sinon
+est enregistrée (v0.8.3 — un `GW_MODE=live` d'un soir se retrouvait sinon
 dans config.yaml au premier réglage enregistré).
 
 Priorité : défauts du code → `config.yaml` → variables `GW_*`.
@@ -314,7 +314,7 @@ le stop ou la conversion de devise manquent, l'entrée est **refusée avec
 son motif** — jamais repliée sur une taille arbitraire.
 
 Avant tout calcul de taille, et quel que soit le régime, les niveaux
-d'une entrée sont vérifiés (v0.8.2) : prix, stop et limite finis et
+d'une entrée sont vérifiés (v0.8.3) : prix, stop et limite finis et
 positifs (0 = non fourni), stop du côté de la perte et limite du côté du
 gain. Un signal qui échoue est refusé avec son motif
 (`ReasonNonFinite`, `ReasonBarrierSide`) et compté avec les refus de

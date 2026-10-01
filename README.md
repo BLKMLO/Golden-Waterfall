@@ -210,7 +210,7 @@ Détail : [`docs/martinet.md`](docs/martinet.md).
 Seuils, grilles et fenêtres sont des **conventions** ; le calibrage choisit
 in-sample, le walk-forward juge hors échantillon.
 
-**Mesuré sur historique réel** (v0.8.2 ; FXCM, EURUSD GBPUSD USDJPY,
+**Mesuré sur historique réel** (v0.8.3 ; FXCM, EURUSD GBPUSD USDJPY,
 blocs de test hors échantillon du 02/01/2024 au 31/12/2025, configuration
 par défaut) : **aucun moteur mesurable n'est rentable net de coûts** sur
 cette période. Martinet : profit factor 0,88 en M15 (2 814 trades), 0,87

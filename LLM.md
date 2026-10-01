@@ -204,7 +204,7 @@ d'être vraie.
 | Simulation du calibrage confrontée au moteur, trade par trade (filtre de volume compris) | martinet |
 | Comparaison avec / sans filtre news par pli, même modèle ; écart sur la seule période couverte ; « ne mesure rien » sans semaine couverte | training, CLI, TUI Entraînement | Prendre un écart nul faute de calendrier pour « le filtre ne sert à rien » ; attribuer au filtre un écart hors couverture |
 | Points de grille filtrés « non essayés » sans volume ; modèle filtré refusé sans volume (chauffe, `ModelVolume` en live) | martinet, live | Un filtre de volume qui rend un modèle muet sur FXCM ou IB, en silence | Calibrer une règle que l'exécution ne suit pas |
-| Équité du backtest = capital + Σ P&L nets (`liquidate`, test d'identité) | backtest | Un coût d'entrée retiré deux fois de la trésorerie : équité, rendement, drawdown, Sharpe et budget de risque faux (v0.8.2) |
+| Équité du backtest = capital + Σ P&L nets (`liquidate`, test d'identité) | backtest | Un coût d'entrée retiré deux fois de la trésorerie : équité, rendement, drawdown, Sharpe et budget de risque faux (v0.8.3) |
 | `checkLevels` : `ReasonNonFinite`, `ReasonBarrierSide` ; `ReasonUnknownAction` (comptés avec les refus de dimensionnement) ; IB refuse une barrière illisible | risk, broker IB | Un ordre à quantité NaN ; une entrée IB partie sans son stop NaN ; un stop déclenché dès sa pose ; une action inconnue exécutée comme un ACHAT |
 | Rejeu converti vers `backtest.account_currency` ; stop servi à l'ouverture sur gap | broker replay | Toutes les entrées USDJPY refusées « marge insuffisante » ; un P&L en yens ajouté à des dollars ; un rejeu plus flatteur que le backtest |
 | `Aggregator.Late` → `Stats.LateTicks`, note de la carte Bougies | live, TUI Live | Un tick en retard qui rouvre une bougie passée et désordonne le tampon |
@@ -246,7 +246,7 @@ d'être vraie.
 - **NaN traverse les comparaisons** : `x <= 0` et `x > max` sont FAUX pour
   NaN. Tout flottant venu de l'extérieur (config, saisie, fichier, signal,
   courtier) se contrôle par la forme positive (`!(x > 0)`,
-  `!(x >= 0 && x <= 100)`) et `math.IsInf` (v0.8.2).
+  `!(x >= 0 && x <= 100)`) et `math.IsInf` (v0.8.3).
 - Nouvelle passerelle : `Register()` dans un `init()`. Nouvelle stratégie :
   `strategy/<oiseau>/` + `Register()` + UNE ligne dans
   `internal/strategies/strategies.go`.
@@ -427,7 +427,7 @@ d'être vraie.
 - **Rejeu** : horodate au temps du marché rejoué, jamais l'heure réelle ;
   compte tenu dans `backtest.account_currency` (marge et P&L convertis
   par `data.ConversionFor`, comme au backtest) ; stop servi au pire de la
-  barrière et de l'ouverture (v0.8.2).
+  barrière et de l'ouverture (v0.8.3).
 - **bbolt** verrouille le fichier : une seconde instance `gw` échoue, c'est
   voulu. `gw backtrain` et les commandes de travail ne l'ouvrent pas
   (`app.Workshop`).
@@ -516,10 +516,10 @@ Dependabot hebdomadaire, `charmbracelet/x/*` GROUPÉS.
 
 Licence **MIT**, choisie par le propriétaire du projet.
 
-## État du projet (30 septembre 2026, v0.8.2)
+## État du projet (30 septembre 2026, v0.8.3)
 
 27 paquets, suite verte avec `-race`. `cat` des fichiers `.go` :
-28155 lignes hors tests, 13972 de tests (v0.8.2 après l'audit ; couverture
+28155 lignes hors tests, 13972 de tests (v0.8.3, après l'audit ; couverture
 ci-dessous mesurée en v0.8.0).
 
 Couverture mesurée le 29 septembre 2026 (`go test -cover`) :
@@ -546,8 +546,8 @@ point), refus de `martinet_v1_0` nommant v1_1.
 En **v0.8.2**, sur le binaire : une `config.yaml` restée sur
 `martinet_v1_0` est réparée en `martinet_v1_1` (sauvegarde `.bak`,
 entête « Réparé automatiquement », annonce dans `gw config` et dans la
-barre d'état de `gw backtrain`) ; une `config.yaml` à `.nan`/`.inf` est
-réparée et annoncée. **Audit v0.8.2** : téléchargement RÉEL FXCM
+barre d'état de `gw backtrain`). En **v0.8.3**, une `config.yaml` à
+`.nan`/`.inf` est réparée et annoncée. **Audit v0.8.3** : téléchargement RÉEL FXCM
 (EURUSD, GBPUSD, USDJPY, 2022 → 2025, 4 176 619 bougies, aucune refusée
 par `checkBar`) ; **première mesure de Martinet sur historique réel** et
 seconde de Troglodyte (tableaux dans `docs/martinet.md` et
@@ -582,7 +582,7 @@ un vrai TWS, la règle de fin de semaine live sur un vrai flux, le filtre
 d'actualités sur une période archivée.
 
 **Mesuré sur historique réel (FXCM, tests 02/01/2024 → 31/12/2025,
-v0.8.2)** : AUCUN moteur mesurable n'est rentable net de coûts.
+v0.8.3)** : AUCUN moteur mesurable n'est rentable net de coûts.
 `martinet_v1_1` M15 PF 0,88 (2 814 trades, SQN −2,98), M5 PF 0,87
 (6 815, SQN −4,94), à peu près NEUTRE avant coûts (−1 355 et +1 570 USD
 pour 7 341 et 20 217 de coûts) ; `troglodyte_v1_1` H4 PF 0,58 (71),
@@ -598,7 +598,7 @@ H1 PF 0,65 (410, SQN −3,07), perdant AVANT coûts.
    réseau que Dukascopy ne limite pas). Troglodyte est mesuré sur FXCM
    (v0.7.3) ; élargir à plus de paires. Un démenti donne une nouvelle
    révision, qui remplace l'ancienne, jamais une retouche.
-2 bis. **Martinet : trouver un avantage AVANT coûts.** Mesuré en v0.8.2
+2 bis. **Martinet : trouver un avantage AVANT coûts.** Mesuré en v0.8.3
    sur FXCM (M15, M5 ; `docs/martinet.md`) : neutre avant coûts, perdant
    après (SQN −2,98 et −4,94). Une `martinet_v1_2` doit d'abord montrer
    un P&L avant coûts nettement positif (ligne « P&L avant coûts » de
@@ -712,6 +712,14 @@ de défaire.
   déplacement d'ordre : le contrat ne sait pas modifier un stop posé.
 
 ## Leçons (bugs corrigés dont la cause peut revenir)
+
+- **Une version republiée depuis un autre commit** (l'audit lancé sous le
+  numéro v0.8.2 déjà publié : `gh release upload --clobber` a remplacé
+  les binaires de v0.8.2 par ceux de l'audit, tag et notes restant sur
+  l'ancien commit) → `release.yml` refuse un numéro dont le tag désigne un
+  autre commit ; v0.8.2 recompilée depuis son tag, l'audit publié en
+  v0.8.3. Avant une release : `git ls-remote --tags origin` pour prendre
+  le numéro suivant.
 
 - Un **cumul publié comme une mesure** (rejets d'un `risk.Manager`
   partagé) → compteurs par run (`Fork`).

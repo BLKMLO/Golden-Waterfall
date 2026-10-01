@@ -242,7 +242,7 @@ Pour un CSV, en plus :
   manquants) ou impossible (voir ci-dessous) **refuse le fichier**, avec
   son numéro.
 
-Pour tout import, CSV **et Parquet** (v0.8.2 ; un Parquet tiers n'était
+Pour tout import, CSV **et Parquet** (v0.8.3 ; un Parquet tiers n'était
 jusque-là contrôlé en rien) :
 
 - chaque bougie doit être **possible** : prix finis et positifs, plus haut
@@ -276,12 +276,12 @@ que la relecture prendrait pour des données.
 La relecture est blindée : fichiers au nom non conforme **ignorés** (une
 copie manuelle ne doit pas doubler les bougies), doublons d'horodatage
 dédupliqués, ordre rétabli, période inversée refusée d'emblée. Une page
-Parquet **corrompue** est une erreur qui nomme le fichier (v0.8.2 : elle
+Parquet **corrompue** est une erreur qui nomme le fichier (v0.8.3 : elle
 était prise pour la fin de la colonne, et l'année se relisait amputée
 sans un mot) ; la mémoire réservée d'après l'en-tête est bornée à une
 année de M1, quoi que le fichier annonce.
 
-Le téléchargement est borné lui aussi (v0.8.2) : une réponse, ou un
+Le téléchargement est borné lui aussi (v0.8.3) : une réponse, ou un
 fichier une fois décompressé, au-delà de 64 Mo est refusé sans nouvelle
 tentative (un jour Dukascopy décompressé tient en 1 440 × 24 octets), et
 un `Retry-After` ne peut suspendre le téléchargement plus de 5 minutes
