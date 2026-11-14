@@ -198,26 +198,48 @@ restent utilisables. Séance 7 h – 20 h UTC, spread ≤ 0,25 R,
 barrière de deux heures, filtre d'actualités. **M1, M5 ou M15 seulement.**
 Détail : [`docs/martinet.md`](docs/martinet.md).
 
-| | Colibri | Troglodyte | Martinet |
-|---|---|---|---|
-| Nature | classifieur GBDT | tendance (Kalman) | règle de balayage |
-| Unités de temps | toutes | toutes | M1, M5, M15 |
-| Volume exigé | oui | non | si le calibrage retient le filtre |
-| Week-end | fermé | porté | fermé |
-| Actualités | jamais | filtre | filtre |
-| Juge | AUC et P&L OOS | P&L OOS | P&L OOS |
+**Sterne** (`sterne_v1_0`, v0.9.0) trade la **saisonnalité intrajournalière
+du dollar autour des fixings** de Tokyo, Francfort et Londres : le dollar
+s'apprécie en moyenne avant un fixing et se déprécie après (Krohn, Mueller
+et Whelan, *Journal of Finance*, 2024). Six fenêtres de deux heures, fixées
+a priori ; l'entraînement ne garde, paire par paire, que celles dont
+l'effet net du spread est significatif sur le passé — aucune, s'il n'y en
+a pas. Stop de protection à 4 ATR, sortie à l'heure. **Paires en dollar,
+M15 seulement.** Détail et mesures : [`docs/sterne.md`](docs/sterne.md) ;
+journal de la recherche : [`docs/recherche.md`](docs/recherche.md).
+
+| | Colibri | Troglodyte | Martinet | Sterne |
+|---|---|---|---|---|
+| Nature | classifieur GBDT | tendance (Kalman) | règle de balayage | horloge des fixings |
+| Unités de temps | toutes | toutes | M1, M5, M15 | M15 |
+| Paires | toutes | toutes | toutes | en dollar |
+| Volume exigé | oui | non | si le calibrage retient le filtre | non |
+| Week-end | fermé | porté | fermé | fermé |
+| Actualités | jamais | filtre | filtre | jamais |
+| Juge | AUC et P&L OOS | P&L OOS | P&L OOS | P&L OOS |
 
 Seuils, grilles et fenêtres sont des **conventions** ; le calibrage choisit
 in-sample, le walk-forward juge hors échantillon.
 
-**Mesuré sur historique réel** (v0.8.3 ; FXCM, EURUSD GBPUSD USDJPY,
-blocs de test hors échantillon du 02/01/2024 au 31/12/2025, configuration
-par défaut) : **aucun moteur mesurable n'est rentable net de coûts** sur
-cette période. Martinet : profit factor 0,88 en M15 (2 814 trades), 0,87
-en M5 (6 815), à peu près neutre AVANT coûts — c'est le spread qui le fait
-perdre. Troglodyte : 0,58 en H4 (71 trades), 0,65 en H1 (410), déjà
-perdant avant coûts. Colibri n'a pas pu être mesuré : il exige un volume
-que FXCM ne publie pas. Chiffres, formules et protocole :
+**Mesuré sur historique réel** (v0.9.0 ; FXCM, les sept paires en dollar,
+2012 → 2026, blocs de test hors échantillon du 05/06/2019 au 06/11/2026,
+configuration par défaut, commission 0) :
+
+| Moteur | Unité | trades | P&L net (USD) | profit factor | SQN |
+|---|---|---|---|---|---|
+| `sterne_v1_0` | M15 | 11 362 | +5 135,82 | 1,05 | 1,86 |
+| `troglodyte_v1_1` | H1 | 1 205 | −1 643,32 | 0,93 | −0,76 |
+| `martinet_v1_1` | M15 | 24 560 | −88 400,05 | 0,85 | −11,60 |
+
+**Sterne est le premier moteur positif net du spread, mais son avantage
+est mince et non établi** : SQN 1,86, dernier pli (05/2025 → 11/2026)
+négatif, et le résultat devient négatif dès qu'on ajoute une commission
+de 0,00002 par unité et par côté. Il ne faut pas y lire une promesse de
+gain : le coût réel du compte décide, et `gw train` affiche désormais la
+**couverture des coûts** (P&L avant coûts ÷ coûts ; 1,69 pour Sterne).
+Colibri n'a pas pu être mesuré : il exige un volume que FXCM ne publie
+pas. Chiffres, formules et protocole : [`docs/sterne.md`](docs/sterne.md),
+[`docs/recherche.md`](docs/recherche.md),
 [`docs/martinet.md`](docs/martinet.md), [`docs/troglodyte.md`](docs/troglodyte.md).
 
 ### Le filtre d'actualités
@@ -276,6 +298,8 @@ Paramètres le signale) : `GW_CONFIG_DIR`, `GW_DATA_DIR`, `GW_BROKER`,
 | [docs/colibri.md](docs/colibri.md) | Colibri : features, cible, décision, révisions, mesures |
 | [docs/troglodyte.md](docs/troglodyte.md) | Troglodyte : modèle espace-état, filtre de Kalman, estimation, calibrage, décision |
 | [docs/martinet.md](docs/martinet.md) | Martinet : zones de liquidité, balayage rejeté, filtres, calibrage |
+| [docs/sterne.md](docs/sterne.md) | Sterne : fixings du dollar, fenêtres, calibrage, mesure sur historique réel |
+| [docs/recherche.md](docs/recherche.md) | Journal de recherche : protocole, essais, ce qui a été écarté, pistes |
 | [docs/actualites.md](docs/actualites.md) | Filtre d'actualités : sources, archive, règle, honnêteté |
 | [docs/gbdt.md](docs/gbdt.md) | Le gradient boosting maison : algorithme et choix |
 | [docs/donnees.md](docs/donnees.md) | Sources (Dukascopy, FXCM, en brancher une), stockage Parquet, import Parquet/CSV, unités de temps |

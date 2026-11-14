@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -114,9 +115,12 @@ PREMIERS PAS — dans cet ordre, chaque étape a besoin de la précédente :
                                 vaut quelque chose.
                                 Moteur : strategy.name — colibri_v1_2 (défaut,
                                 classifieur, exige le volume), troglodyte_v1_1
-                                (tendance) ou martinet_v1_1 (scalping de zones de
-                                liquidité, en M1, M5 ou M15 seulement :
-                                training.timeframe ET broker.timeframe).
+                                (tendance), martinet_v1_1 (scalping de zones de
+                                liquidité, en M1, M5 ou M15 seulement) ou
+                                sterne_v1_0 (saisonnalité du dollar autour des
+                                fixings, paires en USD, M15 seulement). Martinet
+                                et Sterne : régler training.timeframe ET
+                                broker.timeframe.
   3. Inspecter un rejeu         gw backtest EURUSD
                                 (ou gw backtrain, écran 3 Backtest : r) — rejeu
                                 IN-SAMPLE, pour comprendre, pas pour juger.
@@ -528,6 +532,7 @@ func runTrain(args []string) error {
 	printSizing(a.Config.Risk, res.Aggregate)
 	printNewsComparison(res, cur)
 	printFoldErrors(res.Folds)
+	printSkipped(res)
 	if res.FinalDir != "" {
 		fmt.Printf("Modèle de production : %s\n", res.FinalDir)
 	} else if res.FinalErr != "" {
@@ -536,6 +541,21 @@ func runTrain(args []string) error {
 		fmt.Println("Aucun modèle de production écrit.")
 	}
 	return nil
+}
+
+// printSkipped nomme les paires que la stratégie a refusées : elles ont
+// été demandées, elles ne sont pas dans le résultat, et il faut le dire.
+func printSkipped(res *training.Result) {
+	if len(res.Skipped) == 0 {
+		return
+	}
+	names := make([]string, 0, len(res.Skipped))
+	for sym := range res.Skipped {
+		names = append(names, sym)
+	}
+	sort.Strings(names)
+	fmt.Printf("⚠ %d paire(s) écartée(s), ni entraînée(s) ni jugée(s) : %s\n  %s\n",
+		len(names), strings.Join(names, " "), res.Skipped[names[0]])
 }
 
 // printCosts dit ce que les coûts ont pris, et ce qu'était le résultat
@@ -553,6 +573,13 @@ func printCosts(s backtest.Stats, cur string) {
 	}
 	fmt.Printf("Coûts (spread + commission) : %.2f %s · P&L avant coûts : %+.2f %s (net + coûts)\n",
 		s.Costs, cur, s.NetPnL+s.Costs, cur)
+	// La marge d'erreur du modèle de coûts : un avantage qui ne couvre les
+	// coûts que 1,3 fois disparaît avec une commission que le backtest n'a
+	// pas facturée.
+	if cover, ok := s.CostCover(); ok {
+		fmt.Printf("Couverture des coûts : %.2f × (avant coûts ÷ coûts) — le résultat reste positif tant que "+
+			"les coûts réels ne dépassent pas %.2f fois ceux du backtest\n", cover, cover)
+	}
 }
 
 // printNewsComparison : le même walk-forward rejoué sans le filtre

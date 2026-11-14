@@ -479,6 +479,10 @@ func (v *Training) renderAggregate(res *training.Result, took time.Duration, wid
 	}
 	body := component.StatRowMax(th, cards, component.PanelContent(width), rows)
 	note := fmt.Sprintf("run %s · %d plis · graine %d", res.RunID, len(res.Folds), res.Seed)
+	if n := len(res.Skipped); n > 0 {
+		// Demandées, refusées par la stratégie : ni entraînées ni jugées.
+		note += fmt.Sprintf(" · %d paire(s) écartée(s) par %s", n, res.Strategy)
+	}
 	if res.FinalDir != "" {
 		note += " · modèle de production écrit"
 	} else {

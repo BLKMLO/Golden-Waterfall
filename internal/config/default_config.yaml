@@ -55,7 +55,9 @@ strategy:
   #   colibri_v1_2    — classifieur GBDT (exige le volume : Dukascopy) ;
   #   troglodyte_v1_1 — suivi de tendance, filtre de Kalman ;
   #   martinet_v1_1   — scalping de zones de liquidité, en M1, M5 ou M15
-  #                     SEULEMENT (training.timeframe ET broker.timeframe).
+  #                     SEULEMENT (training.timeframe ET broker.timeframe) ;
+  #   sterne_v1_0     — saisonnalité du dollar autour des fixings, paires
+  #                     en USD, en M15 SEULEMENT (les deux unités de temps).
   # Seule la dernière révision de chaque moteur est livrée. Un modèle n'est
   # chargé que par la révision qui l'a entraîné : changer ce nom demande un
   # nouvel entraînement. `gw config` liste les stratégies disponibles.
