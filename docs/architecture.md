@@ -76,10 +76,16 @@ Golden-Waterfall/
 │   │   │   ├── calibrate.go    Calibrage : rejeu de la règle comme le moteur.
 │   │   │   ├── strategy.go     Chauffe, décision, entraînement.
 │   │   │   └── model.go        Manifeste = le modèle entier, chargement vérifié.
-│   │   └── martinet/           Génération Martinet (scalping, zones de liquidité) :
-│   │       ├── revision.go     Définition figée de martinet_v1_1.
-│   │       ├── zones.go        LA règle (setupAt) : pivots, balayage rejeté.
-│   │       ├── calibrate.go    Calibrage rr × pivot × volume, rejeu comme le moteur.
+│   │   ├── martinet/           Génération Martinet (scalping, zones de liquidité) :
+│   │   │   ├── revision.go     Définition figée de martinet_v1_1.
+│   │   │   ├── zones.go        LA règle (setupAt) : pivots, balayage rejeté.
+│   │   │   ├── calibrate.go    Calibrage rr × pivot × volume, rejeu comme le moteur.
+│   │   │   ├── strategy.go     Chauffe, décision, entraînement.
+│   │   │   └── model.go        Manifeste = le modèle entier, chargement vérifié.
+│   │   └── sterne/             Génération Sterne (fixings du dollar) :
+│   │       ├── revision.go     Définition figée de sterne_v1_0, grille des fenêtres.
+│   │       ├── windows.go      LA règle (setupAt) : horloge des places, stop.
+│   │       ├── calibrate.go    Fenêtres retenues ou écartées, rejeu comme le moteur.
 │   │       ├── strategy.go     Chauffe, décision, entraînement.
 │   │       └── model.go        Manifeste = le modèle entier, chargement vérifié.
 │   │
@@ -171,7 +177,7 @@ supposaient autrefois de Colibri est désormais DÉCLARÉ par la stratégie :
 | Signal opposé ignoré tant que la position vit | `Description.ExitOnReversal` (v0.7.0) |
 | Aucun filtre d'actualités | `Description.UsesNews` (v0.7.1) ; Colibri ne le déclare jamais |
 | Volume supposé présent | `Description.UsesVolume` (v0.7.3) ; Colibri le déclare, le moteur live écrit NaN si la passerelle n'a pas de volume (`Info.SuppliesVolume`) |
-| Toute unité de temps acceptée | `Description.Timeframes` (v0.8.0) + `strategy.CheckTimeframe`, appliqué par le walk-forward, le backtest, la connexion live et les prérequis ; Martinet : M1, M5, M15 |
+| Toute unité de temps acceptée | `Description.Timeframes` (v0.8.0) + `strategy.CheckTimeframe`, appliqué par le walk-forward, le backtest, la connexion live et les prérequis ; Martinet : M1, M5, M15 ; Sterne : M15 |
 
 **Une génération ne livre que sa dernière révision** (v0.8.0). Une
 révision nouvelle remplace l'ancienne dans le code ; l'ancienne est

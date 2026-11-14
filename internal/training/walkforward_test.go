@@ -311,3 +311,33 @@ func TestRunDirsNeverCollide(t *testing.T) {
 		t.Fatalf("identifiants %q et %q", id1, id2)
 	}
 }
+
+// TestSkipsThePairsTheStrategyRefuses : Sterne ne lit que le dollar. Une
+// paire sans dollar est écartée AVANT le chargement (elle n'a ici aucun
+// historique) et nommée ; elle ne fait plus échouer les plis des autres.
+func TestSkipsThePairsTheStrategyRefuses(t *testing.T) {
+	cfg, runner := testSetup(t)
+	writeHistory(t, cfg.Paths.HistoryDir(), "EURUSD", 1.10, 101, []int{2016, 2017, 2018, 2019, 2020, 2021})
+	res, err := runner.Run(context.Background(), Request{
+		Strategy: "sterne_v1_0", Symbols: []string{"EURGBP", "EURUSD"}, Timeframe: data.M15, Folds: 2, Seed: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Symbols) != 1 || res.Symbols[0] != "EURUSD" {
+		t.Fatalf("seule EURUSD devait être traitée : %v", res.Symbols)
+	}
+	if why := res.Skipped["EURGBP"]; !strings.Contains(why, "dollar") {
+		t.Fatalf("EURGBP écartée avec sa raison attendue : %v", res.Skipped)
+	}
+	for _, f := range res.Folds {
+		if f.Err != "" {
+			t.Fatalf("pli %d en échec à cause d'une paire écartée : %s", f.Index, f.Err)
+		}
+	}
+	if _, err := runner.Run(context.Background(), Request{
+		Strategy: "sterne_v1_0", Symbols: []string{"EURGBP"}, Timeframe: data.M15, Folds: 2,
+	}); err == nil || !strings.Contains(err.Error(), "dollar") {
+		t.Fatalf("aucune paire acceptée : refus disant pourquoi attendu, reçu %v", err)
+	}
+}

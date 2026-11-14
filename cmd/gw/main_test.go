@@ -468,6 +468,16 @@ func TestPrintCostsShowsTheResultBeforeCosts(t *testing.T) {
 	if !strings.Contains(out, "100.00 USD") || !strings.Contains(out, "+20.00 USD") {
 		t.Fatalf("coûts ou P&L avant coûts absents : %q", out)
 	}
+	if !strings.Contains(out, "Couverture des coûts : 0.20 ×") {
+		t.Fatalf("couverture (net + coûts) ÷ coûts = 20 ÷ 100 attendue, même sous 1 : %q", out)
+	}
+	out, _ = capture(t, func() error {
+		printCosts(backtest.Stats{Trades: 10, NetPnL: 50, Costs: 100, CostsModelled: true}, "USD")
+		return nil
+	})
+	if !strings.Contains(out, "Couverture des coûts : 1.50 ×") {
+		t.Fatalf("couverture (net + coûts) ÷ coûts = 150 ÷ 100 attendue : %q", out)
+	}
 	out, _ = capture(t, func() error { printCosts(backtest.Stats{Trades: 10}, "USD"); return nil })
 	if !strings.Contains(out, "Aucun coût modélisé") {
 		t.Fatalf("l'absence de coûts doit être dite : %q", out)

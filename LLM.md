@@ -12,16 +12,18 @@
 
 - **Golden Waterfall** = le LOGICIEL (binaire `gw`, TUI, paquets
   `internal/`). Toute l'identité visible dit « Golden Waterfall ».
-- **Colibri**, **Troglodyte** et **Martinet** = uniquement des **moteurs
-  de décision**, entièrement dans `internal/strategy/<oiseau>/`. Ne jamais
+- **Colibri**, **Troglodyte**, **Martinet** et **Sterne** = uniquement des
+  **moteurs de décision**, entièrement dans `internal/strategy/<oiseau>/`. Ne jamais
   appeler le logiciel par le nom d'un moteur.
 - **Une GÉNÉRATION de moteur = un nom d'oiseau** : Colibri (classifieur
   GBDT) est la première, Troglodyte (suivi de tendance, filtre de
   Kalman, v0.7.0) la deuxième, Martinet (scalping de zones de liquidité,
-  v0.8.0) la troisième. Les révisions d'une génération sont numérotées.
+  v0.8.0) la troisième, Sterne (saisonnalité du dollar autour des
+  fixings, v0.9.0) la quatrième. Les révisions d'une génération sont
+  numérotées.
 - **Seule la DERNIÈRE révision d'un moteur est livrée** (règle du
   propriétaire, v0.8.0) : `colibri_v1_2` (défaut), `troglodyte_v1_1`,
-  `martinet_v1_1`. Une nouvelle révision REMPLACE la précédente : code de
+  `martinet_v1_1`, `sterne_v1_0`. Une nouvelle révision REMPLACE la précédente : code de
   l'ancienne supprimé, `strategy.Retire(ancienne, nouvelle)` dans l'`init()`
   pour qu'une config restée dessus passe D'OFFICE à la remplaçante
   (réparation annoncée, v0.8.2).
@@ -212,6 +214,10 @@ d'être vraie.
 | `Config.Save` garde la valeur du FICHIER pour une clé forcée par `GW_*` ; fichiers créés en 0600 | config, TUI Paramètres | Un `GW_MODE=live` d'un soir gravé dans config.yaml au premier enregistrement |
 | Nombres FINIS exigés (`positive`, `!(x >= 0 && x <= 100)`), bornes de `logging.buffer_size`, `ui.refresh_millis` ; saisie « 0,5 » acceptée, « nan » refusée | config, TUI Paramètres, CLI | Un plafond NaN qui ne plafonne rien, une perte journalière NaN qui bloque tout |
 | « P&L avant coûts » (net + coûts) | CLI `gw train`, TUI Entraînement | Confondre « aucun avantage » et « avantage dévoré par le spread » |
+| `Stats.CostCover` : « Couverture des coûts » = (net + coûts) ÷ coûts, dans `gw train` | backtest, CLI | Prendre pour acquis un gain qu'une commission non facturée efface (Sterne : 1,69) |
+| Modèle Sterne SANS fenêtre retenue = valide et muet, `fenetres_retenues` = 0 ; paire sans dollar refusée | sterne | Trader une fenêtre qui n'a pas passé son seuil ; chercher le dollar dans EURGBP |
+| Fenêtres à l'heure de LEUR place (`time.LoadLocation`, heure d'été) ; grille signée dans le manifeste | sterne | Un fixing décalé d'une heure six mois par an ; un modèle appliqué à une grille retouchée |
+| `strategy.SymbolFilter` + `Result.Skipped` : paire refusée écartée AVANT le chargement, nommée (CLI, note du run dans l'atelier, `run.json`) | strategy, training, CLI, TUI | Une paire sans dollar qui fait échouer les cinq plis de toutes les autres ; une paire demandée absente du résultat sans un mot |
 | `checkBar` à l'import (CSV et Parquet) ; pages Parquet corrompues = erreur ; charges HTTP et décompressions ≤ 64 Mo, `Retry-After` ≤ 5 min | data | Des colonnes décalées importées ; une année amputée relue comme entière ; une réponse démesurée qui fait tomber le programme |
 
 ## Conventions
@@ -392,6 +398,44 @@ d'être vraie.
   plafond `max_position_size` rabote souvent (104 entrées sur 149 à
   l'essai synthétique) : c'est compté (`SizeCapped`) et affiché.
 
+### Sterne (`docs/sterne.md`, `docs/recherche.md`)
+
+- **Hypothèse tirée de la littérature, pas d'un balayage** : le dollar
+  monte avant un fixing, baisse après (Krohn, Mueller, Whelan, JF 2024).
+  Six fenêtres de 2 h (avant/après Tokyo 9 h 55, Francfort 14 h 15,
+  Londres 16 h), fixées A PRIORI. Ne pas « optimiser » les heures : toute
+  retouche est une nouvelle révision ET un nouvel essai à consigner dans
+  `docs/recherche.md`.
+- **L'entrée se décide à la clôture de la bougie qui FINIT à l'heure
+  locale de la fenêtre** (`window.opens` : `bar.Time + 15 min` converti
+  dans le fuseau de la place). Sortie = barrière verticale `MaxHold` 2 h
+  (pas de signal `Exit` : la stratégie est sans état). Pas de cible
+  (`TakeProfit` 0). Stop 4 ATR(14) sur 100 bougies : protection et unité
+  de risque, CONVENTION.
+- **M15 seulement** (la durée de bougie entre dans la définition) et
+  **paires en dollar seulement** (`usdSide` ; refus à l'entraînement).
+  `tokyo_avant` n'a pas de trade le lundi : son entrée (8 h Tokyo =
+  dimanche 23 h UTC) tombe sur une bougie que l'historique n'a pas.
+- **Calibrage = retenir/écarter chaque fenêtre SEULE** : t de Student des
+  R nets du spread médian ≥ 2,0 sur ≥ 250 trades. Aucune retenue = modèle
+  valide (`"windows": []`, jamais null) qui ne trade pas. `setupAt` est
+  LA règle (OnBar ET calibrage) ; `simulateTrades` = moteur de backtest
+  (test trade par trade).
+- `francfort_apres` et `londres_avant` se chevauchent : la première
+  entrée court, la seconde est ignorée par le moteur (position ouverte).
+  Le calibrage juge chaque fenêtre seule et ne voit pas cette collision.
+- **Pas de `UsesNews`** : les fenêtres sont mesurées telles quelles.
+- ⚠ **Le backtest facture le spread MÉDIAN de la paire** : pour un moteur
+  horaire, le coût des fenêtres de Tokyo (spread plus large) est
+  sous-estimé. ⚠ Commission 0 par défaut : Sterne devient négatif à
+  0,00002 par unité et par côté. Ne jamais citer son P&L sans cette
+  réserve.
+- **Protocole de recherche** (`docs/recherche.md`) : découverte
+  2012-2019, validation 2020-2022, test final 2023-2026 regardé UNE fois,
+  définition figée avant. La période 2012-2026 est désormais CONSOMMÉE
+  pour Sterne : une `sterne_v1_1` choisie en la regardant n'aurait plus
+  de test hors échantillon avant de nouvelles données.
+
 ### Exécution et risque
 
 - **Règles de sortie dans `core/horizon.go`** (`HoldDeadline`,
@@ -516,11 +560,27 @@ Dependabot hebdomadaire, `charmbracelet/x/*` GROUPÉS.
 
 Licence **MIT**, choisie par le propriétaire du projet.
 
-## État du projet (30 septembre 2026, v0.8.3)
+## État du projet (14 novembre 2026, v0.9.0)
 
-27 paquets, suite verte avec `-race`. `cat` des fichiers `.go` :
-28155 lignes hors tests, 13972 de tests (v0.8.3, après l'audit ; couverture
-ci-dessous mesurée en v0.8.0).
+28 paquets, suite verte avec `-race`. `cat` des fichiers `.go` :
+29006 lignes hors tests, 14433 de tests (v0.9.0 ; couverture ci-dessous
+mesurée en v0.8.0, Sterne non compris). Binaire `make build` (`-s -w`,
+Linux amd64) : 16 511 160 octets.
+
+**v0.9.0 — le constat « aucun moteur ne gagne » traité comme un problème
+de RECHERCHE, pas de réglage** : historique FXCM complet téléchargé
+(25 paires, 2012 → 2026, 130 559 612 bougies M1, 2,6 Go) ; Martinet et
+Troglodyte remesurés sur les sept paires en dollar (tests 05/06/2019 →
+06/11/2026 : Martinet M15 PF 0,85 sur 24 560 trades, SQN −11,60 ;
+Troglodyte H1 PF 0,93 sur 1 205, SQN −0,76) ; quatrième génération
+**Sterne** cherchée sous protocole (découverte / validation / test final)
+et mesurée par le binaire : **PF 1,05, +5 135,82 USD, 11 362 trades,
+SQN 1,86**, plis 1,04 · 1,12 · 1,07 · 1,09 · **0,95** — premier
+walk-forward positif net du spread, avantage MINCE, non établi
+statistiquement, et NÉGATIF avec une commission de 0,00002 par unité et
+par côté (EURUSD GBPUSD AUDUSD : +5 372,91 → −1 338,11). `gw train`
+affiche la couverture des coûts. Le défaut `strategy.name` reste
+`colibri_v1_2` (choix du propriétaire).
 
 Couverture mesurée le 29 septembre 2026 (`go test -cover`) :
 `cmd/gw` 47 %, `tui/view` 62 %, `core` 65 %, `training` 72 %,
@@ -575,13 +635,21 @@ import CSV réel (fichier FXCM brut : date ambiguë refusée,
 `--time-format` accepté, `--replace` exigé) ; TUI sous tmux (écran
 Données avec source et « non publié », Live avec `✗ vol.`).
 
+En **v0.9.0**, sur le binaire et l'historique réel : `gw train` Sterne M15
+(7 paires, 19 s), une paire sans dollar écartée et nommée, refus de H4
+dans `gw config`, `gw backtest EURUSD` (rejeu in-sample, 11 191 trades).
+Sterne n'a PAS été joué en séance (`gw`, rejeu ou courtier) : à faire
+avant de s'y fier.
+
 **Jamais validé** : un téléchargement Dukascopy réel (429 le 27/09/2026 ;
-délai dépassé le 30/09/2026), Colibri sur données réelles (FXCM n'a pas
+délai dépassé le 30/09/2026 ; 429 de nouveau le 14/11/2026), Colibri sur données réelles (FXCM n'a pas
 de volume), le **filtre de volume de Martinet** (idem), une séance contre
 un vrai TWS, la règle de fin de semaine live sur un vrai flux, le filtre
 d'actualités sur une période archivée.
 
-**Mesuré sur historique réel (FXCM, tests 02/01/2024 → 31/12/2025,
+**Mesuré sur historique réel, v0.9.0** : voir l'entête de cette section
+et `docs/recherche.md` (sept paires, tests 2019 → 2026).
+**Mesure antérieure (FXCM, trois paires, tests 02/01/2024 → 31/12/2025,
 v0.8.3)** : AUCUN moteur mesurable n'est rentable net de coûts.
 `martinet_v1_1` M15 PF 0,88 (2 814 trades, SQN −2,98), M5 PF 0,87
 (6 815, SQN −4,94), à peu près NEUTRE avant coûts (−1 355 et +1 570 USD
@@ -589,6 +657,20 @@ pour 7 341 et 20 217 de coûts) ; `troglodyte_v1_1` H4 PF 0,58 (71),
 H1 PF 0,65 (410, SQN −3,07), perdant AVANT coûts.
 
 ## Reste à faire, par ordre de valeur
+
+0. **Rentabilité : le COÛT décide** (plan v0.9.0, `docs/recherche.md`).
+   (a) Mesurer le coût réel d'un compte (spread à l'heure d'entrée,
+   commission) et le régler dans `costs.commission_per_unit` avant tout
+   usage de Sterne. (b) Facturer au backtest le spread de la BOUGIE
+   D'ENTRÉE plutôt que la médiane de la paire — exact pour un moteur
+   horaire ; change des résultats publiés, donc à traiter comme un
+   changement de moteur (remesurer les quatre). (c) Commission par paire
+   ou en points de base du notionnel : `commission_per_unit` en unités de
+   prix n'a pas le même sens sur une paire en yens. (d) Exécution à cours
+   limité (modèle de remplissage à écrire). (e) Passer la commission au
+   calibrage de Sterne (`TrainRequest` ne la porte pas). (f) Suivre
+   Sterne en papier sur de NOUVELLES données : la période 2012-2026 est
+   consommée, et le dernier pli est négatif.
 
 1. **Éprouver Interactive Brokers contre un VRAI TWS papier** : entrée,
    stop, limite, sortie sur signal, redémarrage ; comparer le journal au
@@ -662,6 +744,15 @@ de défaire.
   propriétaire) — ce qui remplace « garder les révisions publiées
   reproductibles » : on ne retouche toujours jamais une définition, on la
   REMPLACE.
+- **Quatrième génération = une anomalie DOCUMENTÉE, sélectionnée paire
+  par paire** (v0.9.0) : après deux générations sans avantage avant
+  coûts, on ne cherche plus une règle « de métier » mais un effet publié
+  avec une cause économique, vérifié sous protocole, et que le moteur
+  cesse de trader si l'historique ne le montre plus (fenêtre non
+  retenue). Grille a priori et petite (6) : chaque case essayée est un
+  essai de plus à déduire de la significativité.
+- **Sterne n'est PAS le moteur par défaut** : son avantage ne couvre pas
+  une commission. Le défaut est un choix du propriétaire.
 - **Troisième génération = scalping de zones de liquidité** (demande du
   propriétaire : scalping épuré, peu d'indicateurs) : ATR seul, sans volume
   (utilisable sur FXCM et IB), une règle plutôt qu'un modèle.

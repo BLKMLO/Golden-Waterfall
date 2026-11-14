@@ -69,6 +69,8 @@ cessait d'être vraie — ce ne sont pas des intentions.
 | Une deuxième instance de `gw` est lancée | échoue proprement : la base est déjà ouverte. `gw backtrain` et les commandes de travail (`train`, `backtest`, `download`…) ne l'ouvrent pas : elles tournent pendant une séance |
 | `strategy.name` nomme une révision retirée (`colibri_v1_0`, `colibri_v1_1`, `troglodyte_v1_0`, `martinet_v1_0`) | passe d'office à sa remplaçante, annoncé ; réentraîner (la ligne Prérequis de l'écran Live le rappelle) |
 | Martinet refuse de s'entraîner ou de se connecter | il ne travaille qu'en M1, M5 ou M15 : régler `training.timeframe` ET `broker.timeframe` (`gw config` le signale) |
+| Sterne refuse de s'entraîner | il ne travaille qu'en M15 (les deux unités de temps) et sur les paires qui contiennent le dollar (EURUSD, USDJPY… ; pas EURGBP) |
+| Sterne entraîné, aucun trade | aucune fenêtre n'a passé le seuil sur cette paire (`fenetres_retenues` = 0 dans `gw train`, détail dans `metadata.json`) : le modèle est valide et s'abstient — c'est voulu |
 | Écran Live : « → manque : … » | la ligne Prérequis dit ce qui empêche la séance de trader ; `p` en donne le détail et le remède |
 | TWS injoignable, API désactivée, mauvais port | refuse la connexion en disant quoi vérifier |
 | « client id is already in use » (IB, code 326) | refuse la connexion : changer `broker.client_id` |

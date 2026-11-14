@@ -210,6 +210,17 @@ type ModelVolume interface {
 	ModelUsesVolume(symbol string) bool
 }
 
+// SymbolFilter : stratégie qui n'a de sens que sur CERTAINES paires
+// (Sterne : celles qui contiennent le dollar). Le walk-forward l'interroge
+// avant de charger quoi que ce soit et ÉCARTE les paires refusées en le
+// disant, au lieu de laisser une seule d'entre elles faire échouer tous
+// les plis des autres.
+type SymbolFilter interface {
+	// AcceptsSymbol renvoie nil si la paire peut être tradée, sinon la
+	// raison du refus.
+	AcceptsSymbol(symbol string) error
+}
+
 // Pooled : stratégie qui s'entraîne sur PLUSIEURS actifs à la fois.
 // Le walk-forward s'en sert pour savoir s'il doit lancer un entraînement
 // par actif ou un seul entraînement mutualisé.

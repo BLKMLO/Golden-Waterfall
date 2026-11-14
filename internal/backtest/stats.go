@@ -329,3 +329,23 @@ func (s Stats) NewsSummary() (string, bool) {
 	}
 	return msg, false
 }
+
+// CostCover : combien de fois le résultat AVANT coûts couvre les coûts,
+//
+//	couverture = (P&L net + coûts) ÷ coûts
+//
+// Au-dessus de 1, la règle gagne nette de coûts ; à 1,3, elle cesse de
+// gagner dès que les coûts réels dépassent de 30 % ceux du backtest — une
+// commission, un spread plus large que la médiane de l'historique. C'est
+// la marge d'erreur du modèle de coûts, dans son unité naturelle.
+//
+// Renvoie false quand le rapport ne veut rien dire : aucun coût modélisé,
+// aucun trade, ou un résultat avant coûts qui n'est pas positif (il n'y a
+// alors rien à couvrir).
+func (s Stats) CostCover() (float64, bool) {
+	gross := s.NetPnL + s.Costs
+	if !s.CostsModelled || s.Trades == 0 || !(s.Costs > 0) || !(gross > 0) {
+		return 0, false
+	}
+	return gross / s.Costs, true
+}

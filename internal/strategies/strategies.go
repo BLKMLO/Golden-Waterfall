@@ -26,4 +26,6 @@ import (
 	_ "github.com/BLKMLO/Golden-Waterfall/internal/strategy/troglodyte"
 	// Martinet — troisième génération, scalping de zones de liquidité (martinet_v1_1).
 	_ "github.com/BLKMLO/Golden-Waterfall/internal/strategy/martinet"
+	// Sterne — quatrième génération, saisonnalité du dollar autour des fixings (sterne_v1_0).
+	_ "github.com/BLKMLO/Golden-Waterfall/internal/strategy/sterne"
 )

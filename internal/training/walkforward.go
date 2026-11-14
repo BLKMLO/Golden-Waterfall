@@ -106,6 +106,10 @@ type Result struct {
 	HasMeanAUC bool    `json:"has_mean_oos_auc"`
 	// News : somme des comparaisons avec / sans filtre de tous les plis.
 	News *NewsComparison `json:"news_comparison,omitempty"`
+	// Skipped : paires demandées que la stratégie REFUSE (SymbolFilter), et
+	// pourquoi. Elles ne figurent pas dans Symbols : le run ne les a ni
+	// entraînées ni jugées, et il le dit.
+	Skipped map[string]string `json:"skipped_symbols,omitempty"`
 }
 
 // Runner exécute les walk-forwards.
@@ -149,6 +153,30 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 		return nil, err
 	}
 	desc := probe.Describe()
+	// Paires que la stratégie refuse : écartées AVANT le chargement, et
+	// nommées. Sans cela, une seule paire refusée ferait échouer chaque
+	// pli, donc le run entier des autres.
+	var skipped map[string]string
+	if filter, ok := probe.(strategy.SymbolFilter); ok {
+		var kept []string
+		for _, sym := range req.Symbols {
+			if err := filter.AcceptsSymbol(sym); err != nil {
+				if skipped == nil {
+					skipped = map[string]string{}
+				}
+				skipped[sym] = err.Error()
+				report(Progress{Phase: "chargement", Message: "écartée — " + err.Error()})
+				continue
+			}
+			kept = append(kept, sym)
+		}
+		if len(kept) == 0 {
+			probe.Shutdown()
+			return nil, fmt.Errorf("aucune des paires demandées n'est acceptée par %s : %s",
+				req.Strategy, skipped[req.Symbols[0]])
+		}
+		req.Symbols = kept
+	}
 	probe.Shutdown()
 	contextBars := desc.ContextBars
 	if err := strategy.CheckTimeframe(desc, req.Timeframe); err != nil {
@@ -279,6 +307,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 		PerSymbol: map[string]backtest.Stats{},
 		Aggregate: backtest.AggregateStats(all, r.cfg.Backtest.InitialCapital),
 		Equity:    backtest.MergeEquity(all, r.cfg.Backtest.InitialCapital, backtest.MaxEquityPoints),
+		Skipped:   skipped,
 	}
 	for sym, res := range perSymbol {
 		st := backtest.AggregateStats(res, r.cfg.Backtest.InitialCapital)
